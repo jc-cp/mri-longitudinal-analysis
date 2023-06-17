@@ -183,7 +183,7 @@ def registration(
                 path_parts = os.path.normpath(img_dir).split(os.sep)
                 patient_id = path_parts[-3]
                 scan_id = path_parts[-2]
-                new_filename = f"{patient_id}_{scan_id}_reg.nii.gz"
+                new_filename = f"{patient_id}_{scan_id}_0000.nii.gz"
                 output_path = os.path.join(output_dir, new_filename)
                 sitk.WriteImage(moving_img_resampled, output_path)
                 segmentation_loc = img_path.replace(".nii.gz", "_label.nii.gz")

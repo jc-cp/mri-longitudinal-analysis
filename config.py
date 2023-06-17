@@ -13,6 +13,6 @@ NNUNET_OUTPUT_DIR = OUPUT_DIR / "nnunet"
 TEMP_DIR = PROJ_DIR / "temp_dir"
 TEMP_IMG = TEMP_DIR / "temp_head.nii.gz"
 
-REGISTRATION = False
-EXTRACTION = True
+REGISTRATION = True
+EXTRACTION = False
 BF_CORRECTION = False
