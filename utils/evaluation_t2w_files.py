@@ -1,16 +1,27 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from collections import Counter
 import os
 import shutil
 import sys
+from collections import Counter
 from pathlib import Path
+
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
 sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
-from cfg.evaluation_cfg import CSV_FILE, DIR1_NO_COMMENTS, DIR1_WITH_COMMENTS, DIR5, OUT_FILE, DATA_FOLDER, MOVING
 from tqdm import tqdm
+
+from cfg.evaluation_cfg import (
+    CSV_FILE,
+    DATA_FOLDER,
+    DIR1_NO_COMMENTS,
+    DIR1_WITH_COMMENTS,
+    DIR5,
+    MOVING,
+    OUT_FILE,
+)
+
 
 # Define function to move files based on condition once review
 def move_files(df, condition, source_dir, destination_folder):
@@ -53,17 +64,25 @@ print("\nComments for quality rating of 1:", quality1_comments.value_counts())
 # Number of images with quality 1
 quality1_no_comments = df[(df["Quality"] == 1) & (df["Comments"].isna())]
 quality1_with_comments = df[(df["Quality"] == 1) & (df["Comments"].notna())]
-print(f"\nNumber of images with quality rating of 1 and no comments: {len(quality1_no_comments)}")
-print(f"Number of images with quality rating of 1 and with comments: {len(quality1_with_comments)}")
+print(
+    f"\nNumber of images with quality rating of 1 and no comments: {len(quality1_no_comments)}"
+)
+print(
+    f"Number of images with quality rating of 1 and with comments: {len(quality1_with_comments)}"
+)
 
 # Number of images with quality 5
 quality5_no_comments = df[(df["Quality"] == 5) & (df["Comments"].isna())]
 quality5_with_comments = df[(df["Quality"] == 5) & (df["Comments"].notna())]
-print(f"\nNumber of images with quality rating of 5 and no comments: {len(quality5_no_comments)}")
+print(
+    f"\nNumber of images with quality rating of 5 and no comments: {len(quality5_no_comments)}"
+)
 assert len(quality5_no_comments) == 0
-print(f"Number of images with quality rating of 5 and with comments: {len(quality5_with_comments)}")
+print(
+    f"Number of images with quality rating of 5 and with comments: {len(quality5_with_comments)}"
+)
 
-# Histogram of the quality 
+# Histogram of the quality
 plt.figure(figsize=(10, 6))
 quality_plot = sns.countplot(data=df, x="Quality")
 plt.title("Distribution of Quality Ratings")
@@ -73,14 +92,24 @@ df["Quality"] = df["Quality"].astype(int)
 df["Comments"] = df["Comments"].fillna("None")
 
 # Define comment categories
-comment_categories = ["FLAIR", "T1", "T1c", "OTHER", "None", "artifact", "quality", "view", "cropped"]
+comment_categories = [
+    "FLAIR",
+    "T1",
+    "T1c",
+    "OTHER",
+    "None",
+    "artifact",
+    "quality",
+    "view",
+    "cropped",
+]
 quality_list = [int(label.get_text()) for label in quality_plot.get_xticklabels()]
 legend_patches = []
 
 for i, p in enumerate(quality_plot.patches):
     # Get corresponding quality rating
     quality = quality_list[i]
-    
+
     # Annotate total count
     quality_plot.annotate(
         format(p.get_height(), ".0f"),
@@ -90,23 +119,26 @@ for i, p in enumerate(quality_plot.patches):
         xytext=(0, 10),
         textcoords="offset points",
     )
-    
+
     # Only calculate comment categories for quality ratings 1 and 5
     if quality in [1, 5]:
         # Get comments for current quality rating
         comments = df[df["Quality"] == quality]["Comments"]
-        
+
         # Count comment categories
         comment_counts = Counter(comments)
-        
+
         # Add to the legend patches list
         for category in comment_categories:
             count = comment_counts.get(category, 0)
-            legend_patches.append(mpatches.Patch(
-                color='none', label=f"Quality {quality} - {category}: {count}"))
+            legend_patches.append(
+                mpatches.Patch(
+                    color="none", label=f"Quality {quality} - {category}: {count}"
+                )
+            )
 
 # Create legend
-plt.legend(handles=legend_patches, bbox_to_anchor=(1, 1), loc='upper left')
+plt.legend(handles=legend_patches, bbox_to_anchor=(1, 1), loc="upper left")
 
 plt.tight_layout()
 plt.savefig(OUT_FILE)
@@ -127,8 +159,16 @@ if moving:
     os.makedirs(dir5, exist_ok=True)
 
     # Move the files
-    move_files(df, (df["Quality"] == 1) & (df["Comments"] == 'None'), source_dir, dir1_no_comments)
-    move_files(df, (df["Quality"] == 1) & (df["Comments"] != 'None'), source_dir, dir1_with_comments)
+    move_files(
+        df,
+        (df["Quality"] == 1) & (df["Comments"] == "None"),
+        source_dir,
+        dir1_no_comments,
+    )
+    move_files(
+        df,
+        (df["Quality"] == 1) & (df["Comments"] != "None"),
+        source_dir,
+        dir1_with_comments,
+    )
     move_files(df, df["Quality"] == 5, source_dir, dir5)
-
-

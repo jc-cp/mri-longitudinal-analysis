@@ -2,12 +2,26 @@ import glob
 import os
 import random
 import sys
+
 import SimpleITK as sitk
 from tqdm import tqdm
+
 sys.path.append("./HDBET_Code/")
 from HD_BET.hd_bet import hd_bet
 
-from config import INPUT_DIR, OUPUT_DIR, REG_DIR, PRO_DATA_DIR, NNUNET_OUTPUT_DIR, BRAIN_DIR, CORRECTION_DIR, TEMP_IMG, REGISTRATION, EXTRACTION, BF_CORRECTION
+from cfg.preprocess_cfg import (
+    BF_CORRECTION,
+    BF_CORRECTION_DIR,
+    BRAIN_EXTRACTION_DIR,
+    EXTRACTION,
+    INPUT_DIR,
+    OUPUT_DIR,
+    REG_DIR,
+    REGISTRATION,
+    SEG_PRED_DIR,
+    TEMP_IMG,
+)
+
 
 def bf_correction(input_dir, output_dir):
     """
@@ -29,7 +43,7 @@ def bf_correction(input_dir, output_dir):
             img = sitk.N4BiasFieldCorrection(img)
             ID = img_dir.split("/")[-1].split(".")[0]
             fn = ID + "_corrected.nii.gz"
-            sitk.WriteImage(img, os.path.join(correction_dir, fn))
+            sitk.WriteImage(img, os.path.join(bf_correction_dir, fn))
     print("bias field correction complete!")
 
 
@@ -48,7 +62,6 @@ def brain_extraction():
 
 
 def registration(
-    pro_data_dir,
     input_data,
     output_dir,
     nnunet_dir,
@@ -59,7 +72,6 @@ def registration(
     """
     MRI registration with SimpleITK
     Args:
-        pro_data_dir {path} -- Name of dataset
         temp_img {str} -- registration image template
         output_dir {path} -- Path to folder where the registered nrrds will be saved.
     Returns:
@@ -228,32 +240,30 @@ def get_image_files(base_dir):
 if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    register = REGISTRATION 
+    register = REGISTRATION
     extraction = EXTRACTION
     bf_correction = BF_CORRECTION
 
-    input_data_dir = INPUT_DIR  
+    input_data_dir = INPUT_DIR
     output_path = OUPUT_DIR
     reg_dir = REG_DIR
-    brain_dir = BRAIN_DIR
-    correction_dir = CORRECTION_DIR
-    nnunet_output_dir = NNUNET_OUTPUT_DIR
-    pro_data_dir = PRO_DATA_DIR
+    brain_dir = BRAIN_EXTRACTION_DIR
+    bf_correction_dir = BF_CORRECTION_DIR
+    segmentation_output_dir = SEG_PRED_DIR
 
     image_files = get_image_files(input_data_dir)
-    
 
+    # create dirs
     os.makedirs(reg_dir, exist_ok=True)
     os.makedirs(brain_dir, exist_ok=True)
-    os.makedirs(correction_dir, exist_ok=True)
-    os.makedirs(pro_data_dir, exist_ok=True)
+    os.makedirs(bf_correction_dir, exist_ok=True)
+    os.makedirs(segmentation_output_dir, exist_ok=True)
 
     if register:
         registration(
-            pro_data_dir=pro_data_dir,
             input_data=image_files,
             output_dir=reg_dir,
-            nnunet_dir=nnunet_output_dir,
+            nnunet_dir=segmentation_output_dir,
             temp_img=TEMP_IMG,
         )
 
