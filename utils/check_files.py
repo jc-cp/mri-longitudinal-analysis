@@ -1,5 +1,9 @@
 import os
 import re
+import sys
+from pathlib import Path
+sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
+from cfg.check_files_cfg import ORIGINAL_NO_OPS_DIR, INFERRED_NO_OPS_DIR
 
 def extract_ids(filenames) -> list:
     id_list = []
@@ -27,12 +31,12 @@ def compare_ids(list1, list2) -> list:
     return list(set(list1) ^ set(list2))
 
 # an225 files
-curated_no_ops = "/mnt/an225/Anna/longitudinal_nifti_BCH/curated_no_ops/"
+curated_no_ops = ORIGINAL_NO_OPS_DIR
 csv_files_an225 = find_csv_filenames(curated_no_ops)
 subfolders_an225 = find_subfolders(curated_no_ops)
 ids_an225 = extract_ids(csv_files_an225)
 
-inference_path = "/home/jc053/GIT/mri-sequence-classification/data_csv/long/curated_no_ops/"
+inference_path = INFERRED_NO_OPS_DIR
 csv_files_inf = find_csv_filenames(inference_path)
 ids_inf = extract_ids(csv_files_inf)
 
