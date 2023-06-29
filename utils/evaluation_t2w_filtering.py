@@ -4,6 +4,19 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from collections import Counter
+import os
+import shutil
+
+
+# Define function to move files based on condition
+def move_files(df, condition, destination_folder):
+    filenames = df[condition]["Image_Name"]
+    for filename in filenames:
+        source_path = os.path.join(source_dir, filename)
+        destination_path = os.path.join(destination_folder, filename)
+        if os.path.isfile(source_path):
+            shutil.move(source_path, destination_path)
+
 
 # Define csv_file
 csv_file = "/home/jc053/GIT/mri-longitudinal-segmentation/data/t2w/annotations.csv"
@@ -117,3 +130,26 @@ plt.legend(handles=legend_patches, bbox_to_anchor=(1, 1), loc='upper left')
 
 plt.tight_layout()
 plt.savefig("output_evaluation_t2w.png")
+
+
+
+
+
+moving = False
+if moving:
+    dir1_no_comments = "/path/to/destination/1_no_comments"
+    dir1_with_comments = "/path/to/destination/1_with_comments"
+    dir5 = "/path/to/destination/5"
+
+    os.makedirs(dir1_no_comments, exist_ok=True)
+    os.makedirs(dir1_with_comments, exist_ok=True)
+    os.makedirs(dir5, exist_ok=True)
+
+    # Source directory
+    source_dir = "/path/to/source/"
+
+    # Move the files
+    move_files(df, (df["Quality"] == 1) & (df["Comments"].isna()), dir1_no_comments)
+    move_files(df, (df["Quality"] == 1) & (df["Comments"].notna()), dir1_with_comments)
+    move_files(df, df["Quality"] == 5, dir5)
+
