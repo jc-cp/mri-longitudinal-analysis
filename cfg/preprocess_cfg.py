@@ -16,3 +16,6 @@ TEMP_IMG = TEMP_DIR / "temp_head.nii.gz"
 REGISTRATION = True
 EXTRACTION = False
 BF_CORRECTION = False
+
+
+LIMIT_LOADING = 5 

@@ -20,6 +20,7 @@ from cfg.preprocess_cfg import (
     REGISTRATION,
     SEG_PRED_DIR,
     TEMP_IMG,
+    LIMIT_LOADING
 )
 
 
@@ -33,7 +34,7 @@ def bf_correction(input_dir, output_dir):
         Images in nii.gz format
     """
 
-    for img_dir in sorted(glob.glob(brain_dir + "/*.nii.gz")):
+    for img_dir in sorted(glob.glob(input_dir + "/*.nii.gz")):
         ID = img_dir.split("/")[-1].split(".")[0]
         if ID[-1] == "k":
             continue
@@ -42,12 +43,12 @@ def bf_correction(input_dir, output_dir):
             img = sitk.ReadImage(img_dir, sitk.sitkFloat32)
             img = sitk.N4BiasFieldCorrection(img)
             ID = img_dir.split("/")[-1].split(".")[0]
-            fn = ID + "_corrected.nii.gz"
-            sitk.WriteImage(img, os.path.join(bf_correction_dir, fn))
+            fn = ID + "_bf_corrected.nii.gz"
+            sitk.WriteImage(img, os.path.join(output_dir, fn))
     print("bias field correction complete!")
 
 
-def brain_extraction():
+def brain_extraction(input_dir, output_dir):
     """
     Brain extraction using HDBET package (UNet based DL method)
     Args:
@@ -56,9 +57,10 @@ def brain_extraction():
     Returns:
         Brain images
     """
-    print(reg_dir, brain_dir)
-    hd_bet(reg_dir, brain_dir, device="0", mode="fast", tta=0)
-    print("brain extraction complete!")
+    print("Input directory:", input_dir)
+    print("Output directory:", output_dir)
+    hd_bet(input_dir, output_dir, device="0", mode="fast", tta=0)
+    print("Brain Extraction with HD-BET complete!")
 
 
 def registration(
@@ -234,6 +236,9 @@ def get_image_files(base_dir):
         for file in files:
             if file.endswith(".nii.gz") and "label" not in file:
                 image_files.append(os.path.join(root, file))
+                # Break when limit is reached
+                if len(image_files) >= LIMIT_LOADING:
+                    return image_files
     return image_files
 
 
@@ -268,7 +273,7 @@ if __name__ == "__main__":
         )
 
     if extraction:
-        brain_extraction()
+        brain_extraction(input_dir=reg_dir, output_dir=brain_dir)
 
     if bf_correction:
-        bf_correction()
+        bf_correction(input_dir=brain_dir, output_dir=bf_correction_dir)
