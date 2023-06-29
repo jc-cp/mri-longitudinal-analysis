@@ -6,25 +6,28 @@ import matplotlib.patches as mpatches
 from collections import Counter
 import os
 import shutil
+import sys
+from pathlib import Path
+sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
+from cfg.evaluation_cfg import CSV_FILE, DIR1_NO_COMMENTS, DIR1_WITH_COMMENTS, DIR5, OUT_FILE, DATA_FOLDER, MOVING
+from tqdm import tqdm
 
-
-# Define function to move files based on condition
-def move_files(df, condition, destination_folder):
+# Define function to move files based on condition once review
+def move_files(df, condition, source_dir, destination_folder):
     filenames = df[condition]["Image_Name"]
-    for filename in filenames:
+    for filename in tqdm(filenames, desc="Moving files"):
         source_path = os.path.join(source_dir, filename)
         destination_path = os.path.join(destination_folder, filename)
         if os.path.isfile(source_path):
             shutil.move(source_path, destination_path)
 
 
-# Define csv_file
-csv_file = "/home/jc053/GIT/mri-longitudinal-segmentation/data/t2w/annotations.csv"
+# START SCRIPT: Define csv_file
+csv_file = CSV_FILE
 
 # Define column names and load
 column_names = ["Image_Name", "Quality", "Comments"]
 df = pd.read_csv(csv_file, names=column_names)
-
 
 # Compute some statistics
 df["Quality"] = df["Quality"].astype(int)
@@ -57,6 +60,7 @@ print(f"Number of images with quality rating of 1 and with comments: {len(qualit
 quality5_no_comments = df[(df["Quality"] == 5) & (df["Comments"].isna())]
 quality5_with_comments = df[(df["Quality"] == 5) & (df["Comments"].notna())]
 print(f"\nNumber of images with quality rating of 5 and no comments: {len(quality5_no_comments)}")
+assert len(quality5_no_comments) == 0
 print(f"Number of images with quality rating of 5 and with comments: {len(quality5_with_comments)}")
 
 # Histogram of the quality 
@@ -70,33 +74,9 @@ df["Comments"] = df["Comments"].fillna("None")
 
 # Define comment categories
 comment_categories = ["FLAIR", "T1", "T1c", "OTHER", "None", "artifact", "quality", "view", "cropped"]
-
 quality_list = [int(label.get_text()) for label in quality_plot.get_xticklabels()]
-
-# # Iterate over the patches (bars)
-# for i, p in enumerate(quality_plot.patches):
-#     # Get corresponding quality rating
-#     quality = quality_list[i]
-    
-#     # Get comments for current quality rating
-#     comments = df[df["Quality"] == quality]["Comments"]
-    
-#     # Count comment categories
-#     comment_counts = Counter(comments)
-    
-#     # Create annotation text: each line will have format "Comment: Count"
-#     annotation_text = "\n".join(f"{category}: {comment_counts.get(category, 0)}"
-#                                 for category in comment_categories)
-    
-#     # Add annotation to the bar
-#     quality_plot.text(
-#         p.get_x() + p.get_width() / 2.0, p.get_height(),
-#         annotation_text,
-#         ha="center", va="center",
-#         fontsize=8, color='black',
-#         bbox=dict(facecolor='none', edgecolor='black', boxstyle='round,pad=0.5')
-#     )
 legend_patches = []
+
 for i, p in enumerate(quality_plot.patches):
     # Get corresponding quality rating
     quality = quality_list[i]
@@ -129,27 +109,26 @@ for i, p in enumerate(quality_plot.patches):
 plt.legend(handles=legend_patches, bbox_to_anchor=(1, 1), loc='upper left')
 
 plt.tight_layout()
-plt.savefig("output_evaluation_t2w.png")
+plt.savefig(OUT_FILE)
 
 
-
-
-
-moving = False
+# Moving Files if needed
+moving = MOVING
 if moving:
-    dir1_no_comments = "/path/to/destination/1_no_comments"
-    dir1_with_comments = "/path/to/destination/1_with_comments"
-    dir5 = "/path/to/destination/5"
+    # Folder variables
+    source_dir = DATA_FOLDER
+    dir1_no_comments = DIR1_NO_COMMENTS
+    dir1_with_comments = DIR1_WITH_COMMENTS
+    dir5 = DIR5
 
+    # Make dirs
     os.makedirs(dir1_no_comments, exist_ok=True)
     os.makedirs(dir1_with_comments, exist_ok=True)
     os.makedirs(dir5, exist_ok=True)
 
-    # Source directory
-    source_dir = "/path/to/source/"
-
     # Move the files
-    move_files(df, (df["Quality"] == 1) & (df["Comments"].isna()), dir1_no_comments)
-    move_files(df, (df["Quality"] == 1) & (df["Comments"].notna()), dir1_with_comments)
-    move_files(df, df["Quality"] == 5, dir5)
+    move_files(df, (df["Quality"] == 1) & (df["Comments"] == 'None'), source_dir, dir1_no_comments)
+    move_files(df, (df["Quality"] == 1) & (df["Comments"] != 'None'), source_dir, dir1_with_comments)
+    move_files(df, df["Quality"] == 5, source_dir, dir5)
+
 
