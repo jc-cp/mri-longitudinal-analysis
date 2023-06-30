@@ -3,7 +3,7 @@ import os
 from collections import defaultdict
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
-
+import numpy as np
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
@@ -49,10 +49,14 @@ class VolumeEstimator:
             plt.plot(dates, volumes, marker="o")
 
             # volume changes
-            volume_changes = [0] + [
-                ((v - volumes[i - 1]) / volumes[i - 1]) * 100
-                for i, v in enumerate(volumes[1:], 1)
-            ]
+            volume_changes = [0]
+            for i, v in enumerate(volumes[1:], 1):
+                if volumes[i - 1] != 0:
+                    volume_change = ((v - volumes[i - 1]) / volumes[i - 1]) * 100
+                else:
+                    volume_change = np.nan  # or another value of your choice
+                volume_changes.append(volume_change)
+
             for i, (date, volume, volume_change) in enumerate(
                 zip(dates, volumes, volume_changes)
             ):
@@ -87,7 +91,7 @@ class VolumeEstimator:
 
 if __name__ == "__main__":
     ve = VolumeEstimator(
-        "/home/jc053/GIT/mri-longitudinal-segmentation/data/output/predictions/"
+        "/home/jc053/GIT/mri-longitudinal-segmentation/data/output/seg_predictions/"
     )
     print("Getting prediction masks.")
     ve.process_files()
