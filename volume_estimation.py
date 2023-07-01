@@ -8,6 +8,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
+from cfg.volume_est_cfg import SEG_DIR, PLOTS_DIR
 
 class VolumeEstimator:
     def __init__(self, path):
@@ -90,12 +91,8 @@ class VolumeEstimator:
 
 
 if __name__ == "__main__":
-    ve = VolumeEstimator(
-        "/home/jc053/GIT/mri-longitudinal-segmentation/data/output/seg_predictions/"
-    )
+    ve = VolumeEstimator(SEG_DIR)
     print("Getting prediction masks.")
     ve.process_files()
     print("Saving data.")
-    ve.plot_volumes(
-        output_path="/home/jc053/GIT/mri-longitudinal-segmentation/data/output/plots/"
-    )
+    ve.plot_volumes(output_path=PLOTS_DIR)
