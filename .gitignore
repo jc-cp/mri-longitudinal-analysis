@@ -162,3 +162,5 @@ output/
 data/
 .vscode/*
 models/pretrained/*
+HDBET_Code/*
+nnUNet/*
