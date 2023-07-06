@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import SimpleITK as sitk
 import pandas as pd
 
-from cfg.volume_est_cfg import SEG_DIR, PLOTS_DIR, REDCAP_FILE, LIMIT_LOADING
+from cfg.volume_est_cfg import SEG_DIR, PLOTS_DIR, REDCAP_FILE, LIMIT_LOADING, POLY_SMOOTHING
 
 class VolumeEstimator:
     def __init__(self, path, dob_file):
@@ -19,11 +19,10 @@ class VolumeEstimator:
         # Process the .csv with clinical data
         self.dob_df = pd.read_csv(dob_file, sep=',', encoding='UTF-8') 
         self.dob_df = self.dob_df[self.dob_df['no ops cohort'] == 'NAN']
-        print(f"The length of the filtered dataset is: {len(self.dob_df)}")
+        print(f"The length of the total csv dataset is: {len(self.dob_df)}")
         if len(self.dob_df) != 60:
             print("Warning: The length of the filtered dataset is not 60")
-        self.dob_df['Date of Birth'] = pd.to_datetime(self.dob_df['Date of Birth'], dayfirst=False)
-        print(self.dob_df['Date of Birth'].unique())
+        self.dob_df['Date of Birth'] = pd.to_datetime(self.dob_df['Date of Birth'], dayfirst=True)
         self.dob_df['BCH MRN'] = self.dob_df['BCH MRN'].astype(int)
         
         self.volumes = defaultdict(list)
@@ -53,7 +52,7 @@ class VolumeEstimator:
         filtered_file_paths = [fp for fp in file_paths if os.path.basename(fp).split("_")[0] in patient_ids]
         filtered_df = self.dob_df[self.dob_df['BCH MRN'].astype(str).isin(patient_ids)]
 
-        print(len(filtered_df))
+        print(f"The length of the filtered dataset is: {len(filtered_df)}")
 
         with Pool(cpu_count()) as p:
             results = p.map(self.estimate_volume, filtered_file_paths)
@@ -75,71 +74,139 @@ class VolumeEstimator:
             dates, volumes, ages = zip(*volumes)  # unzip to two lists
             os.makedirs(output_path, exist_ok=True)
 
-            #plt.figure(figsize=(12, 8))
-            #plt.plot(dates, volumes, marker="o")
-            fig, ax1 = plt.subplots(figsize=(12, 8))
+            if POLY_SMOOTHING:
+                # Check if there are at least 2 unique dates for interpolation
+                if len(set(dates)) < 5:
+                    continue
+                # Polynomial interpolation
+                poly_degree = 5  # Degree of the polynomial
+                poly_coeff = np.polyfit(mdates.date2num(dates), volumes, poly_degree)
+                poly_interp = np.poly1d(poly_coeff)
 
-            color = 'tab:blue'
-            ax1.set_xlabel('Scan Date')
-            ax1.set_ylabel('Volume (mm³)', color=color)
-            ax1.plot(dates, volumes, color=color, marker="o")
-            ax1.tick_params(axis='y', labelcolor=color)
-            
-            ax1.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d/%Y"))
-            ax1.set_xticks(dates)
-            ax1.set_xticklabels([dt.strftime('%m/%d/%Y') for dt in dates], rotation=90, fontsize=8)
-            ax1.xaxis.set_tick_params(pad=5)
+                # Generate interpolated values
+                num_points = 50  # Number of points for interpolation
+                start = mdates.date2num(min(dates))
+                end = mdates.date2num(max(dates))
+                interpolated_dates = mdates.num2date(np.linspace(start, end, num_points))
+                interpolated_volumes_poly = poly_interp(mdates.date2num(interpolated_dates))
 
-            ax2 = ax1.twiny()
-            ax2.xaxis.set_ticks_position('top') 
-            ax2.xaxis.set_label_position('top')
-            ax2.set_xlabel('Patient Age (Years)')
-            ax2.set_xlim(ax1.get_xlim())
-            date_nums = mdates.date2num(dates)
-            ax2.set_xticks(date_nums)
-            ax2.set_xticklabels([f"{age:.1f}" for age in ages])
-            ax2.xaxis.set_tick_params(labelsize=8)
 
-            # volume changes
-            volume_changes = [0]
-            for i, v in enumerate(volumes[1:], 1):
-                if volumes[i - 1] != 0:
-                    volume_change = ((v - volumes[i - 1]) / volumes[i - 1]) * 100
-                else:
-                    volume_change = np.nan  # or another value of your choice
-                volume_changes.append(volume_change)
+                fig, ax1 = plt.subplots(figsize=(12, 8))
 
-            for i, (date, volume, volume_change, age) in enumerate(
-                zip(dates, volumes, volume_changes, ages)
-            ):
-                ax1.text(
-                    date,
-                    volume,
-                    f"{volume_change:.2f}%",
-                    fontsize=8,
-                    va="bottom",
-                    ha="left",
+                color = 'tab:blue'
+                ax1.set_xlabel('Scan Date')
+                ax1.set_ylabel('Volume (mm³)', color=color)
+                ax1.plot(interpolated_dates, interpolated_volumes_poly, color=color, marker="o")
+                ax1.tick_params(axis='y', labelcolor=color)
+                
+                ax1.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d/%Y"))
+                ax1.set_xticks(dates)
+                ax1.set_xticklabels([dt.strftime('%m/%d/%Y') for dt in dates], rotation=90, fontsize=8)
+                ax1.xaxis.set_tick_params(pad=5)
+
+                ax2 = ax1.twiny()
+                ax2.xaxis.set_ticks_position('top') 
+                ax2.xaxis.set_label_position('top')
+                ax2.set_xlabel('Patient Age (Years)')
+                ax2.set_xlim(ax1.get_xlim())
+                date_nums = mdates.date2num(dates)
+                ax2.set_xticks(date_nums)
+                ax2.set_xticklabels([f"{age:.1f}" for age in ages])
+                ax2.xaxis.set_tick_params(labelsize=8)
+
+                # volume changes
+                volume_changes = [0]
+                for i, v in enumerate(volumes[1:], 1):
+                    if volumes[i - 1] != 0:
+                        volume_change = ((v - volumes[i - 1]) / volumes[i - 1]) * 100
+                    else:
+                        volume_change = np.nan  # or another value of your choice
+                    volume_changes.append(volume_change)
+
+                for i, (date, volume, volume_change, age) in enumerate(
+                    zip(dates, volumes, volume_changes, ages)
+                ):
+                    ax1.text(
+                        date,
+                        volume,
+                        f"{volume_change:.2f}%",
+                        fontsize=8,
+                        va="bottom",
+                        ha="left",
+                    )
+                
+
+
+                plt.title(f"Patient ID: {patient_id}")
+
+                fig.tight_layout()
+
+                date_range = (
+                    f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
                 )
+                plt.savefig(
+                    os.path.join(output_path, f"volume_{patient_id}_{date_range}.png")
+                )
+                plt.close()
+            else:
+                fig, ax1 = plt.subplots(figsize=(12, 8))
+
+                color = 'tab:blue'
+                ax1.set_xlabel('Scan Date')
+                ax1.set_ylabel('Volume (mm³)', color=color)
+                ax1.plot(dates, volumes, color=color, marker="o")
+                ax1.tick_params(axis='y', labelcolor=color)
+                
+                ax1.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d/%Y"))
+                ax1.set_xticks(dates)
+                ax1.set_xticklabels([dt.strftime('%m/%d/%Y') for dt in dates], rotation=90, fontsize=8)
+                ax1.xaxis.set_tick_params(pad=5)
+
+                ax2 = ax1.twiny()
+                ax2.xaxis.set_ticks_position('top') 
+                ax2.xaxis.set_label_position('top')
+                ax2.set_xlabel('Patient Age (Years)')
+                ax2.set_xlim(ax1.get_xlim())
+                date_nums = mdates.date2num(dates)
+                ax2.set_xticks(date_nums)
+                ax2.set_xticklabels([f"{age:.1f}" for age in ages])
+                ax2.xaxis.set_tick_params(labelsize=8)
+
+                # volume changes
+                volume_changes = [0]
+                for i, v in enumerate(volumes[1:], 1):
+                    if volumes[i - 1] != 0:
+                        volume_change = ((v - volumes[i - 1]) / volumes[i - 1]) * 100
+                    else:
+                        volume_change = np.nan  # or another value of your choice
+                    volume_changes.append(volume_change)
+
+                for i, (date, volume, volume_change, age) in enumerate(
+                    zip(dates, volumes, volume_changes, ages)
+                ):
+                    ax1.text(
+                        date,
+                        volume,
+                        f"{volume_change:.2f}%",
+                        fontsize=8,
+                        va="bottom",
+                        ha="left",
+                    )
+                
 
 
-            plt.title(f"Patient ID: {patient_id}")
-            #plt.xlabel("Scan Date / Patient Age")
-            #plt.ylabel("Volume (mm³)")
+                plt.title(f"Patient ID: {patient_id}")
 
-            # Format x-axis to show dates
-            #plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%m/%d/%Y"))
-            #plt.xticks(ticks=dates, rotation=90, fontsize=8)
-            #plt.gca().xaxis.set_tick_params(pad=5)
+                fig.tight_layout()
 
-            fig.tight_layout()
+                date_range = (
+                    f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
+                )
+                plt.savefig(
+                    os.path.join(output_path, f"volume_{patient_id}_{date_range}.png")
+                )
+                plt.close()
 
-            date_range = (
-                f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
-            )
-            plt.savefig(
-                os.path.join(output_path, f"volume_{patient_id}_{date_range}.png")
-            )
-            plt.close()
 
 
 if __name__ == "__main__":
