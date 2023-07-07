@@ -9,19 +9,10 @@ from tqdm import tqdm
 sys.path.append("./HDBET_Code/")
 from HD_BET.hd_bet import hd_bet
 
-from cfg.preprocess_cfg import (
-    BF_CORRECTION,
-    BF_CORRECTION_DIR,
-    BRAIN_EXTRACTION_DIR,
-    EXTRACTION,
-    INPUT_DIR,
-    OUPUT_DIR,
-    REG_DIR,
-    REGISTRATION,
-    SEG_PRED_DIR,
-    TEMP_IMG,
-    LIMIT_LOADING
-)
+from cfg.preprocess_cfg import (BF_CORRECTION, BF_CORRECTION_DIR,
+                                BRAIN_EXTRACTION_DIR, EXTRACTION, INPUT_DIR,
+                                LIMIT_LOADING, OUPUT_DIR, REG_DIR,
+                                REGISTRATION, SEG_PRED_DIR, TEMP_IMG)
 
 
 def bf_correction(input_dir, output_dir):
@@ -95,7 +86,7 @@ def registration(
             problematic_ID = os.path.splitext(img_path)[0]
             problematic_IDs.append(problematic_ID)
             print(f"Could not preload image {problematic_ID}. Error: {e}")
-            
+
     print("Problematic IDs: ", problematic_IDs)
 
     random.shuffle(input_data)
@@ -158,9 +149,7 @@ def registration(
             registration_method.SetMetricAsMattesMutualInformation(
                 numberOfHistogramBins=50
             )
-            registration_method.SetMetricSamplingStrategy(
-                registration_method.RANDOM
-            )
+            registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
             registration_method.SetMetricSamplingPercentage(0.01)
             registration_method.SetInterpolator(sitk.sitkLinear)
             registration_method.SetOptimizerAsGradientDescent(
@@ -171,9 +160,7 @@ def registration(
             )
             registration_method.SetOptimizerScalesFromPhysicalShift()
             registration_method.SetShrinkFactorsPerLevel(shrinkFactors=[4, 2, 1])
-            registration_method.SetSmoothingSigmasPerLevel(
-                smoothingSigmas=[2, 1, 0]
-            )
+            registration_method.SetSmoothingSigmasPerLevel(smoothingSigmas=[2, 1, 0])
             registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
             registration_method.SetInitialTransform(transform)
             final_transform = registration_method.Execute(fixed_img, moving_img)
@@ -190,13 +177,15 @@ def registration(
 
             # get the file names
             filename = os.path.basename(img_path)  # Get filename from the full path
-            filename_parts = os.path.splitext(filename)[0].split("_")  # Split filename without extension on underscores
+            filename_parts = os.path.splitext(filename)[0].split(
+                "_"
+            )  # Split filename without extension on underscores
             patient_id = filename_parts[0]
             scan_id = filename_parts[1]
             new_filename = f"{patient_id}_{scan_id}_0000.nii.gz"
             output_path = os.path.join(output_dir, new_filename)
             sitk.WriteImage(moving_img_resampled, output_path)
-            
+
             segmentation_loc = img_path.replace(".nii.gz", "_label.nii.gz")
             if not os.path.isfile(segmentation_loc):
                 print(f"No corresponding label file for {img_path}")
@@ -249,7 +238,7 @@ if __name__ == "__main__":
 
     input_data_dir = INPUT_DIR
     output_path = OUPUT_DIR
-    
+
     reg_dir = REG_DIR
     brain_dir = BRAIN_EXTRACTION_DIR
     bf_correction_dir = BF_CORRECTION_DIR

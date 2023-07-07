@@ -1,4 +1,5 @@
 from pathlib import Path
+
 # General path of the repo
 PROJ_DIR = Path("/home/jc053/GIT/mri-longitudinal-segmentation")
 
@@ -22,7 +23,9 @@ TEMP_IMG = TEMP_DIR / "temp_head.nii.gz"
 
 REGISTRATION = True
 EXTRACTION = True
-BF_CORRECTION = False       #beware,there is a predefined BF in the registration process already
+BF_CORRECTION = (
+    False  # beware,there is a predefined BF in the registration process already
+)
 
 
-LIMIT_LOADING = 1000 
+LIMIT_LOADING = 1000

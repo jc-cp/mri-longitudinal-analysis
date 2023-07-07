@@ -12,15 +12,8 @@ import seaborn as sns
 sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
 from tqdm import tqdm
 
-from cfg.evaluation_cfg import (
-    CSV_FILE,
-    DATA_FOLDER,
-    DIR1_NO_COMMENTS,
-    DIR1_WITH_COMMENTS,
-    DIR5,
-    MOVING,
-    OUT_FILE,
-)
+from cfg.evaluation_cfg import (CSV_FILE, DATA_FOLDER, DIR1_NO_COMMENTS,
+                                DIR1_WITH_COMMENTS, DIR5, MOVING, OUT_FILE)
 
 
 # Define function to move files based on condition once review

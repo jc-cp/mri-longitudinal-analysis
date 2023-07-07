@@ -3,28 +3,33 @@ import os
 from collections import defaultdict
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
-import numpy as np
-import matplotlib.dates as mdates
-import matplotlib.ticker as ticker
-import matplotlib.pyplot as plt
-import SimpleITK as sitk
-import pandas as pd
 
-from cfg.volume_est_cfg import SEG_DIR, PLOTS_DIR, REDCAP_FILE, LIMIT_LOADING, POLY_SMOOTHING
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import numpy as np
+import pandas as pd
+import SimpleITK as sitk
+
+from cfg.volume_est_cfg import (LIMIT_LOADING, PLOTS_DIR, POLY_SMOOTHING,
+                                REDCAP_FILE, SEG_DIR)
+
 
 class VolumeEstimator:
     def __init__(self, path, dob_file):
         self.path = path
 
         # Process the .csv with clinical data
-        self.dob_df = pd.read_csv(dob_file, sep=',', encoding='UTF-8') 
-        self.dob_df = self.dob_df[self.dob_df['no ops cohort'] == 'NAN']
+        self.dob_df = pd.read_csv(dob_file, sep=",", encoding="UTF-8")
+        self.dob_df = self.dob_df[self.dob_df["no ops cohort"] == "NAN"]
         print(f"The length of the total csv dataset is: {len(self.dob_df)}")
         if len(self.dob_df) != 60:
             print("Warning: The length of the filtered dataset is not 60")
-        self.dob_df['Date of Birth'] = pd.to_datetime(self.dob_df['Date of Birth'], dayfirst=True)
-        self.dob_df['BCH MRN'] = self.dob_df['BCH MRN'].astype(int)
-        
+        self.dob_df["Date of Birth"] = pd.to_datetime(
+            self.dob_df["Date of Birth"], dayfirst=True
+        )
+        self.dob_df["BCH MRN"] = self.dob_df["BCH MRN"].astype(int)
+
         self.volumes = defaultdict(list)
 
     @staticmethod
@@ -49,8 +54,10 @@ class VolumeEstimator:
         if max_patients is not None and max_patients < len(patient_ids):
             patient_ids = list(patient_ids)[:max_patients]
 
-        filtered_file_paths = [fp for fp in file_paths if os.path.basename(fp).split("_")[0] in patient_ids]
-        filtered_df = self.dob_df[self.dob_df['BCH MRN'].astype(str).isin(patient_ids)]
+        filtered_file_paths = [
+            fp for fp in file_paths if os.path.basename(fp).split("_")[0] in patient_ids
+        ]
+        filtered_df = self.dob_df[self.dob_df["BCH MRN"].astype(str).isin(patient_ids)]
 
         print(f"The length of the filtered dataset is: {len(filtered_df)}")
 
@@ -63,9 +70,11 @@ class VolumeEstimator:
             date_str = date_str.replace(".nii.gz", "")
             date = datetime.strptime(date_str, "%Y%m%d")
 
-            if patient_id in filtered_df['BCH MRN'].astype(str).values:
-                dob = self.dob_df.loc[self.dob_df['BCH MRN'] == int(patient_id), 'Date of Birth'].iloc[0]
-                age = (date - dob).days / 365.25        
+            if patient_id in filtered_df["BCH MRN"].astype(str).values:
+                dob = self.dob_df.loc[
+                    self.dob_df["BCH MRN"] == int(patient_id), "Date of Birth"
+                ].iloc[0]
+                age = (date - dob).days / 365.25
                 self.volumes[patient_id].append((date, volume, age))
 
     def plot_volumes(self, output_path):
@@ -87,27 +96,37 @@ class VolumeEstimator:
                 num_points = 50  # Number of points for interpolation
                 start = mdates.date2num(min(dates))
                 end = mdates.date2num(max(dates))
-                interpolated_dates = mdates.num2date(np.linspace(start, end, num_points))
-                interpolated_volumes_poly = poly_interp(mdates.date2num(interpolated_dates))
-
+                interpolated_dates = mdates.num2date(
+                    np.linspace(start, end, num_points)
+                )
+                interpolated_volumes_poly = poly_interp(
+                    mdates.date2num(interpolated_dates)
+                )
 
                 fig, ax1 = plt.subplots(figsize=(12, 8))
 
-                color = 'tab:blue'
-                ax1.set_xlabel('Scan Date')
-                ax1.set_ylabel('Volume (mm³)', color=color)
-                ax1.plot(interpolated_dates, interpolated_volumes_poly, color=color, marker="o")
-                ax1.tick_params(axis='y', labelcolor=color)
-                
+                color = "tab:blue"
+                ax1.set_xlabel("Scan Date")
+                ax1.set_ylabel("Volume (mm³)", color=color)
+                ax1.plot(
+                    interpolated_dates,
+                    interpolated_volumes_poly,
+                    color=color,
+                    marker="o",
+                )
+                ax1.tick_params(axis="y", labelcolor=color)
+
                 ax1.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d/%Y"))
                 ax1.set_xticks(dates)
-                ax1.set_xticklabels([dt.strftime('%m/%d/%Y') for dt in dates], rotation=90, fontsize=8)
+                ax1.set_xticklabels(
+                    [dt.strftime("%m/%d/%Y") for dt in dates], rotation=90, fontsize=8
+                )
                 ax1.xaxis.set_tick_params(pad=5)
 
                 ax2 = ax1.twiny()
-                ax2.xaxis.set_ticks_position('top') 
-                ax2.xaxis.set_label_position('top')
-                ax2.set_xlabel('Patient Age (Years)')
+                ax2.xaxis.set_ticks_position("top")
+                ax2.xaxis.set_label_position("top")
+                ax2.set_xlabel("Patient Age (Years)")
                 ax2.set_xlim(ax1.get_xlim())
                 date_nums = mdates.date2num(dates)
                 ax2.set_xticks(date_nums)
@@ -134,8 +153,6 @@ class VolumeEstimator:
                         va="bottom",
                         ha="left",
                     )
-                
-
 
                 plt.title(f"Patient ID: {patient_id}")
 
@@ -151,21 +168,23 @@ class VolumeEstimator:
             else:
                 fig, ax1 = plt.subplots(figsize=(12, 8))
 
-                color = 'tab:blue'
-                ax1.set_xlabel('Scan Date')
-                ax1.set_ylabel('Volume (mm³)', color=color)
+                color = "tab:blue"
+                ax1.set_xlabel("Scan Date")
+                ax1.set_ylabel("Volume (mm³)", color=color)
                 ax1.plot(dates, volumes, color=color, marker="o")
-                ax1.tick_params(axis='y', labelcolor=color)
-                
+                ax1.tick_params(axis="y", labelcolor=color)
+
                 ax1.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d/%Y"))
                 ax1.set_xticks(dates)
-                ax1.set_xticklabels([dt.strftime('%m/%d/%Y') for dt in dates], rotation=90, fontsize=8)
+                ax1.set_xticklabels(
+                    [dt.strftime("%m/%d/%Y") for dt in dates], rotation=90, fontsize=8
+                )
                 ax1.xaxis.set_tick_params(pad=5)
 
                 ax2 = ax1.twiny()
-                ax2.xaxis.set_ticks_position('top') 
-                ax2.xaxis.set_label_position('top')
-                ax2.set_xlabel('Patient Age (Years)')
+                ax2.xaxis.set_ticks_position("top")
+                ax2.xaxis.set_label_position("top")
+                ax2.set_xlabel("Patient Age (Years)")
                 ax2.set_xlim(ax1.get_xlim())
                 date_nums = mdates.date2num(dates)
                 ax2.set_xticks(date_nums)
@@ -192,8 +211,6 @@ class VolumeEstimator:
                         va="bottom",
                         ha="left",
                     )
-                
-
 
                 plt.title(f"Patient ID: {patient_id}")
 
@@ -206,7 +223,6 @@ class VolumeEstimator:
                     os.path.join(output_path, f"volume_{patient_id}_{date_range}.png")
                 )
                 plt.close()
-
 
 
 if __name__ == "__main__":
