@@ -1,8 +1,6 @@
 # mri-longitudinal-segmentation
 
 ## To Do's
-- [ ] Remember postprocessing being diabled in run.py
-- [ ] Adjust preprocessing, e.g. preprocessed in name shouldnt be processed, labels
 - [ ] Check the whole BF correction properly as well the order, currently done in the registration
 - [ ] Add instruction for HD-BET installation, considering adjustments and Aydans installment, e.g. branch
 - [ ] Add instruction for nnUnet installation
