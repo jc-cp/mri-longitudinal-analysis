@@ -13,7 +13,7 @@ sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
 from tqdm import tqdm
 
 from cfg.evaluation_cfg import (CSV_FILE, DATA_FOLDER, DIR1_NO_COMMENTS,
-                                DIR1_WITH_COMMENTS, DIR5, MOVING, OUT_FILE)
+                                DIR1_WITH_COMMENTS, DIR5, MOVING, OUT_FILE, REVIEWED_FOLDER)
 
 
 # Define function to move files based on condition once review
@@ -23,7 +23,9 @@ def move_files(df, condition, source_dir, destination_folder):
         source_path = os.path.join(source_dir, filename)
         destination_path = os.path.join(destination_folder, filename)
         if os.path.isfile(source_path):
-            shutil.move(source_path, destination_path)
+            shutil.copyfile(source_path, destination_path)
+        else:
+            print(f"File {source_path} does not exist.")
 
 
 # START SCRIPT: Define csv_file
@@ -122,26 +124,32 @@ moving = MOVING
 if moving:
     # Folder variables
     source_dir = DATA_FOLDER
+
+    reviewed_dir = REVIEWED_FOLDER
     dir1_no_comments = DIR1_NO_COMMENTS
     dir1_with_comments = DIR1_WITH_COMMENTS
     dir5 = DIR5
 
     # Make dirs
+    os.makedirs(reviewed_dir, exist_ok=True)
     os.makedirs(dir1_no_comments, exist_ok=True)
     os.makedirs(dir1_with_comments, exist_ok=True)
     os.makedirs(dir5, exist_ok=True)
 
     # Move the files
-    move_files(
-        df,
-        (df["Quality"] == 1) & (df["Comments"] == "None"),
-        source_dir,
-        dir1_no_comments,
-    )
-    move_files(
-        df,
-        (df["Quality"] == 1) & (df["Comments"] != "None"),
-        source_dir,
-        dir1_with_comments,
-    )
-    move_files(df, df["Quality"] == 5, source_dir, dir5)
+    try:
+        move_files(
+            df,
+            (df["Quality"] == 1) & (df["Comments"] == "Valid Images"),
+            source_dir,
+            dir1_no_comments,
+        )
+        move_files(
+            df,
+            (df["Quality"] == 1) & (df["Comments"] != "Valid Images"),
+            source_dir,
+            dir1_with_comments,
+        )
+        move_files(df, df["Quality"] == 5, source_dir, dir5)
+    except IOError as e:
+        print(e)
