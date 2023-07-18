@@ -75,63 +75,43 @@ print(
     f"Number of images with quality rating of 5 and with comments: {len(quality5_with_comments)}"
 )
 
-# Histogram of the quality
-plt.figure(figsize=(10, 6))
-quality_plot = sns.countplot(data=df, x="Quality")
-plt.title("Distribution of Quality Ratings")
 
 # Compute some statistics
 df["Quality"] = df["Quality"].astype(int)
-df["Comments"] = df["Comments"].fillna("None")
+df["Comments"] = df["Comments"].fillna("Valid Images")
 
 # Define comment categories
 comment_categories = [
+    "tricky"
     "FLAIR",
     "T1",
     "T1c",
     "OTHER",
-    "None",
-    "artifact",
+    "Valid Images",
+    "other body part",
     "quality",
     "view",
     "cropped",
 ]
-quality_list = [int(label.get_text()) for label in quality_plot.get_xticklabels()]
-legend_patches = []
 
-for i, p in enumerate(quality_plot.patches):
-    # Get corresponding quality rating
-    quality = quality_list[i]
+# New column to hold the category
+df["Category"] = df["Quality"].astype(str) + "-" + df["Comments"].map(str)
 
-    # Annotate total count
-    quality_plot.annotate(
-        format(p.get_height(), ".0f"),
-        (p.get_x() + p.get_width() / 2.0, p.get_height()),
-        ha="center",
-        va="center",
-        xytext=(0, 10),
-        textcoords="offset points",
-    )
+# Only consider records with Quality as 1 or 5, and Comments in comment_categories
+df_filtered = df[df["Quality"].isin([1, 5]) & df["Quality"]==1]# df["Comments"].isin(comment_categories)]
 
-    # Only calculate comment categories for quality ratings 1 and 5
-    if quality in [1, 5]:
-        # Get comments for current quality rating
-        comments = df[df["Quality"] == quality]["Comments"]
+# Histogram of the quality
+plt.figure(figsize=(12, 8))
+plt.title("Distribution of Quality Ratings")
+ax = sns.countplot(data=df_filtered, x="Quality", hue="Comments")
 
-        # Count comment categories
-        comment_counts = Counter(comments)
-
-        # Add to the legend patches list
-        for category in comment_categories:
-            count = comment_counts.get(category, 0)
-            legend_patches.append(
-                mpatches.Patch(
-                    color="none", label=f"Quality {quality} - {category}: {count}"
-                )
-            )
-
-# Create legend
-plt.legend(handles=legend_patches, bbox_to_anchor=(1, 1), loc="upper left")
+# Iterate over the bars, and add a label for each
+for p in ax.patches:
+    ax.annotate(format(p.get_height(), '.0f'),
+                (p.get_x() + p.get_width() / 2., p.get_height()),
+                ha='center', va='center',
+                xytext=(0, 10), textcoords='offset points')
+    
 
 plt.tight_layout()
 plt.savefig(OUT_FILE)
