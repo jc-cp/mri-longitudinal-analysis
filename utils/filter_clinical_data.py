@@ -10,28 +10,31 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from cfg.filter_clinical_data_cfg import (CSV_FILE, DIAGNOSIS_PLOT,
-                                          MUTATION_PLOT, OUTPUT_DIAGNOSIS,
-                                          OUTPUT_FILE, OUTPUT_FILE_NAME,
-                                          OUTPUT_MUTATION, OUTPUT_TREATMENT,
-                                          TREATMENT_PLOT, DELETING_SURGERY, DATA_DIR)
-
+from cfg import filter_clinical_data_cfg
 
 class ClinicalData:
     def __init__(self, file_path):
         self.file_path = file_path
-        self.treatment_plot = TREATMENT_PLOT
-        self.mutation_plot = MUTATION_PLOT
-        self.diagnosis_plot = DIAGNOSIS_PLOT
-        self.output_file = OUTPUT_FILE
-        self.delete_post_op_data = DELETING_SURGERY
+
+        os.makedirs(filter_clinical_data_cfg.OUTPUT_DIR, exist_ok=True)
+
+        self.treatment_plot = filter_clinical_data_cfg.TREATMENT_PLOT
+        self.mutation_plot = filter_clinical_data_cfg.MUTATION_PLOT
+        self.diagnosis_plot = filter_clinical_data_cfg.DIAGNOSIS_PLOT
+
+        self.output_file = filter_clinical_data_cfg.OUTPUT_FILE
+        self.delete_post_op_data = filter_clinical_data_cfg.DELETING_SURGERY
+        self.visualization = filter_clinical_data_cfg.VISUALIZE_DATA
+
 
     def load_file(self):
         try:
             df = pd.read_csv(self.file_path, encoding='utf-8')
+            print(df.head())
             return df
         except FileNotFoundError:
             print("File not found. Please check the file path.")
+            sys.exit(1)
         except Exception as e:
             print("An unexpected error occurred.", e)
 
@@ -146,7 +149,7 @@ class ClinicalData:
 
             plt.tight_layout()
 
-            plt.savefig(OUTPUT_TREATMENT)
+            plt.savefig(filter_clinical_data_cfg.OUTPUT_TREATMENT)
 
         if self.mutation_plot:
             # Data for additional plots
@@ -163,7 +166,7 @@ class ClinicalData:
             self.annotate_plot(ax1)
             plt.legend(title='BRAF Mutation Status')
             plt.tight_layout()
-            plt.savefig(OUTPUT_MUTATION)
+            plt.savefig(filter_clinical_data_cfg.OUTPUT_MUTATION)
 
         if self.diagnosis_plot:
             diagnoses = [info['Pathologic diagnosis'] for info in data.values() if 'Pathologic diagnosis' in info]
@@ -182,7 +185,7 @@ class ClinicalData:
                 plt.xticks(rotation=90)  
                 self.annotate_plot(ax2)
                 plt.tight_layout()
-                plt.savefig(OUTPUT_DIAGNOSIS)
+                plt.savefig(filter_clinical_data_cfg.OUTPUT_DIAGNOSIS)
 
     def annotate_plot(self, ax):
         for p in ax.patches:
@@ -200,12 +203,18 @@ class ClinicalData:
                     f.write(f'\t{key}: {value}\n')
                 f.write('\n')
 
-    def print_post_surgery_files(patient_data, directory):
+    def print_post_surgery_files(self, patient_data, directory):
         for patient_id in patient_data:
             if 'Surgery' in patient_data[patient_id] and 'Date of first surgery' in patient_data[patient_id]:
-                surgery_date = datetime.strptime(patient_data[patient_id]['Date of first surgery'], '%Y-%m-%d')
+                try:
+                    # Attempt to parse the date in the expected format
+                    surgery_date = datetime.strptime(patient_data[patient_id]['Date of first surgery'], '%d/%m/%y')
+                except ValueError:
+                    # If the above fails, try to parse in the 'day/month/year' format
+                    surgery_date = datetime.strptime(patient_data[patient_id]['Date of first surgery'], '%Y-%m-%d')
+                
                 for filename in os.listdir(directory):
-                    if patient_id in filename:
+                    if str(patient_id) in filename:
                         file_date_str = filename.split('_')[1].split('.')[0]
                         file_date = datetime.strptime(file_date_str, '%Y%m%d')
                         if file_date > surgery_date:
@@ -216,14 +225,16 @@ class ClinicalData:
     def main(self):
         df = self.load_file()
         patient_data = self.parse_data(df)
-        self.visualize_data(patient_data)
+        
+        if self.visualization:
+            self.visualize_data(patient_data)
 
         if self.output_file:
-            self.write_dict_to_file(patient_data, OUTPUT_FILE_NAME)
+            self.write_dict_to_file(patient_data, filter_clinical_data_cfg.OUTPUT_FILE_NAME)
 
         if self.delete_post_op_data:
-            self.print_post_surgery_files(patient_data, DATA_DIR)
+            self.print_post_surgery_files(patient_data, filter_clinical_data_cfg.DATA_DIR)
 
 if __name__ == '__main__':
-    cd = ClinicalData(file_path=CSV_FILE)
+    cd = ClinicalData(file_path=filter_clinical_data_cfg.CSV_FILE)
     cd.main()
