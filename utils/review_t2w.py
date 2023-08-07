@@ -153,7 +153,7 @@ class Review():
                         source_path = os.path.join(root, filename)
                         destination_path = os.path.join(artifact_dir, filename)
                         if os.path.isfile(source_path):
-                            #shutil.move(source_path, destination_path)
+                            shutil.move(source_path, destination_path)
                             print(f"Moved artifact patient with file {filename} to {destination_path}")
 
     def add_zero_id(self, patient_id):
@@ -214,14 +214,15 @@ class Review():
                 self.move_valid_images(source_dir, dest_dir, csv_file_after_review)
                 print("Moved images for full dataset!")
 
-            # Moving files containing massive artifacts
-            delete_artifacts = review_cfg.DELETE_ARTIFACTS
-            if delete_artifacts:
+        # Moving files containing massive artifacts
+        delete_artifacts = review_cfg.DELETE_ARTIFACTS
+        if delete_artifacts:
+                print("Removing artifacts!")
                 for t2_dir in [review_cfg.DIR1_NO_COMMENTS_60, review_cfg.DIR1_NO_COMMENTS_29]:
                     self.remove_artifacts(t2_dir)
 
-            compare_ids = review_cfg.COMPARE_IDS
-            if compare_ids:
+        compare_ids = review_cfg.COMPARE_IDS
+        if compare_ids:
                 print("Comparing IDs!")
                 for t2_dir in [review_cfg.DIR1_NO_COMMENTS_60, review_cfg.DIR1_NO_COMMENTS_29]:
                     self.compare_ids_and_flag(t2_dir)

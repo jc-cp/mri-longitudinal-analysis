@@ -43,12 +43,12 @@ MOVING_4_DATASET = False
 ############################################################################################################################
 
 # condition flag to remove patients with massive artifacts
-DELETE_ARTIFACTS = True
+DELETE_ARTIFACTS = False
 PATIENTS_WITH_ARTIFACTS = ['4073188', '4303399', '4394032', '1194890']
 
 ############################################################################################################################
 
 # condition flag to compare IDs and select images with the best resolution
-COMPARE_IDS = False
+COMPARE_IDS = True
 
 ############################################################################################################################

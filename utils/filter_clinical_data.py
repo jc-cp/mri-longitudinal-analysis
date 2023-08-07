@@ -6,7 +6,7 @@ import pandas as pd
 sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
 import os
 from datetime import datetime
-
+import shutil
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -204,6 +204,9 @@ class ClinicalData:
                 f.write('\n')
 
     def print_post_surgery_files(self, patient_data, directory):
+        post_surgery_folder = os.path.join(directory, 'post_surgery_files')
+        os.makedirs(post_surgery_folder, exist_ok=True)
+        
         for patient_id in patient_data:
             if 'Surgery' in patient_data[patient_id] and 'Date of first surgery' in patient_data[patient_id]:
                 try:
@@ -213,12 +216,17 @@ class ClinicalData:
                     # If the above fails, try to parse in the 'day/month/year' format
                     surgery_date = datetime.strptime(patient_data[patient_id]['Date of first surgery'], '%Y-%m-%d')
                 
+                patient_folder = os.path.join(post_surgery_folder, str(patient_id))
+                os.makedirs(patient_folder, exist_ok=True) 
+                
                 for filename in os.listdir(directory):
                     if str(patient_id) in filename:
+                        file_path = os.path.join(directory, filename)
                         file_date_str = filename.split('_')[1].split('.')[0]
                         file_date = datetime.strptime(file_date_str, '%Y%m%d')
                         if file_date > surgery_date:
                             print(filename)
+                            shutil.move(file_path, os.path.join(patient_folder, filename))
             else:
                 print(f"No surgery data found for patient {patient_id}.")
 

@@ -11,7 +11,7 @@ OUTPUT_DIR = Path(
 )
 
 # Plots of clinical data
-VISUALIZE_DATA = True
+VISUALIZE_DATA = False
 OUTPUT_TREATMENT = OUTPUT_DIR / "treatment_clinical_data.png"
 TREATMENT_PLOT = True
 OUTPUT_MUTATION = OUTPUT_DIR / "mutational_clinical_data.png"
@@ -21,7 +21,7 @@ DIAGNOSIS_PLOT = True
 
 # Output file
 OUTPUT_FILE_NAME = OUTPUT_DIR / "output.txt"
-OUTPUT_FILE = True
+OUTPUT_FILE = False
 
 # Deleting after surgery data points
 DELETING_SURGERY = True
