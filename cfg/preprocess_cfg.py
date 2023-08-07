@@ -4,7 +4,7 @@ from pathlib import Path
 PROJ_DIR = Path("/home/jc053/GIT/mri-longitudinal-segmentation")
 
 # For remote data on the drive
-DATA_DIR = Path("/mnt/93E8-0534/JuanCarlos/mri-long-segmentation/T2")
+DATA_DIR = Path("/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/curated_no_ops_29_surgery_cohort_reviewed")
 INPUT_DIR = DATA_DIR / "1_no_comments"
 OUPUT_DIR = DATA_DIR / "output"
 
