@@ -216,16 +216,15 @@ def registration(
     count = index + 1
     print("Registered", count, "scans.")
 
-
 def get_image_files(base_dir):
     image_files = []
-    for root, dirs, files in os.walk(base_dir):
-        for file in files:
-            if file.endswith(".nii.gz") and "label" not in file:
-                image_files.append(os.path.join(root, file))
-                # Break when limit is reached
-                if len(image_files) >= LIMIT_LOADING:
-                    return image_files
+    for file in os.listdir(base_dir):
+        full_path = os.path.join(base_dir, file)
+        if os.path.isfile(full_path) and file.endswith(".nii.gz") and "label" not in file:
+            image_files.append(full_path)
+            # Break when limit is reached
+            if len(image_files) >= LIMIT_LOADING:
+                return image_files
     return image_files
 
 
