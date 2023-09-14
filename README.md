@@ -1,4 +1,4 @@
-# mri-longitudinal-segmentation
+# mri-longitudinal-analysis
 
 
 
