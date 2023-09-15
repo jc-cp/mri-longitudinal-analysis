@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 import csv
+import sys
 
 from cfg.volume_est_cfg import (LIMIT_LOADING, PLOTS_DIR, POLY_SMOOTHING,
                                 REDCAP_FILE, SEG_DIR, TEST_DATA, CSV_DIR)
@@ -24,16 +25,17 @@ class VolumeEstimator:
             try:
                 # Process the redacap .csv with clinical data
                 self.dob_df = pd.read_csv(dob_file, sep=",", encoding="UTF-8")
-                self.dob_df = self.dob_df[self.dob_df["no ops cohort"] == "NAN"]
                 print(f"The length of the total csv dataset is: {len(self.dob_df)}")
                 if len(self.dob_df) != 89:
-                    print("Warning: The length of the filtered dataset is not 60")
+                    print("Warning: The length of the filtered dataset is not 89. Check the csv again.")
+                    sys.exit(1)
                 self.dob_df["Date of Birth"] = pd.to_datetime(
-                    self.dob_df["Date of Birth"], dayfirst=True
+                    self.dob_df["Date of Birth"], format="%d/%m/%y"
                 )
                 self.dob_df["BCH MRN"] = self.dob_df["BCH MRN"].astype(int)
             except Exception as e:
                 print(f"Error processing DOB file: {e}")
+                sys.exit(1)
 
         self.volumes = defaultdict(list)
 
@@ -48,7 +50,7 @@ class VolumeEstimator:
             total_volume = num_voxels * voxel_volume
         except Exception as e:
             print(f"Error estimating volume for {segmentation_path}: {e}")
-            return None
+            sys.exit(1)
 
         return total_volume
 
@@ -235,6 +237,8 @@ class VolumeEstimator:
 
 if __name__ == "__main__":
     ve = VolumeEstimator(SEG_DIR, REDCAP_FILE)
+    print("Volume Estimator initialized.")
+
     print("Getting prediction masks.")
     ve.process_files(max_patients=LIMIT_LOADING)
     print("Saving data.")
