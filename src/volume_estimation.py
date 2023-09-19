@@ -1,18 +1,19 @@
+import csv
 import glob
 import os
+import sys
 from collections import defaultdict
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
-from PIL import Image
+from pathlib import Path
+
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
-import csv
-import sys
-from pathlib import Path
+from PIL import Image
 
 sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
 

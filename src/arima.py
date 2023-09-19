@@ -1,23 +1,16 @@
 import os
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from pandas.plotting import autocorrelation_plot
 from PIL import Image
-from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.graphics.tsaplots import plot_pacf
+from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.stattools import adfuller, pacf
-import numpy as np
 
-
-from cfg.arima_cfg import (
-    LOADING_LIMIT,
-    OUTPUT_DIR,
-    PLOTS_DIR,
-    FROM_IMAGES,
-    FROM_DATA,
-    TIME_SERIES_DIR,
-)
+from cfg.arima_cfg import (FROM_DATA, FROM_IMAGES, LOADING_LIMIT, OUTPUT_DIR,
+                           PLOTS_DIR, TIME_SERIES_DIR)
 
 # Constants
 PLOT_TYPE_AUTO = "autocorrelation"

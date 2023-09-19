@@ -1,11 +1,12 @@
-import sys
-from pathlib import Path
-import pandas as pd
+import fnmatch
 import os
 import shutil
-from tqdm import tqdm
+import sys
+from pathlib import Path
+
 import nibabel as nib
-import fnmatch
+import pandas as pd
+from tqdm import tqdm
 
 sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
 

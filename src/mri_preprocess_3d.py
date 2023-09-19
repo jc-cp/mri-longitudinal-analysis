@@ -9,19 +9,10 @@ from tqdm import tqdm
 sys.path.append("./HDBET_Code/")
 from HD_BET.hd_bet import hd_bet
 
-from cfg.preprocess_cfg import (
-    BF_CORRECTION,
-    BF_CORRECTION_DIR,
-    BRAIN_EXTRACTION_DIR,
-    EXTRACTION,
-    INPUT_DIR,
-    LIMIT_LOADING,
-    OUPUT_DIR,
-    REG_DIR,
-    REGISTRATION,
-    SEG_PRED_DIR,
-    TEMP_IMG,
-)
+from cfg.preprocess_cfg import (BF_CORRECTION, BF_CORRECTION_DIR,
+                                BRAIN_EXTRACTION_DIR, EXTRACTION, INPUT_DIR,
+                                LIMIT_LOADING, OUPUT_DIR, REG_DIR,
+                                REGISTRATION, SEG_PRED_DIR, TEMP_IMG)
 
 
 def bf_correction(input_dir, output_dir):

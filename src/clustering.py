@@ -1,18 +1,19 @@
 import os
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans, DBSCAN
-from sklearn.manifold import TSNE
-from sklearn.metrics import silhouette_score
-from matplotlib.patches import Ellipse
-from matplotlib import colormaps
-import matplotlib.pyplot as plt
-import umap
+
 import faiss
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
 import torch
 import torch.nn as nn
+import umap
+from matplotlib import colormaps
+from matplotlib.patches import Ellipse
+from sklearn.cluster import DBSCAN, KMeans
+from sklearn.manifold import TSNE
+from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 

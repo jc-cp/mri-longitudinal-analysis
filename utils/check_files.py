@@ -1,17 +1,12 @@
+import csv
 import os
 import re
 import sys
-import csv
 from pathlib import Path
 
 sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
-from cfg.check_files_cfg import (
-    INFERRED_NO_OPS_DIR,
-    ORIGINAL_NO_OPS_DIR,
-    VOLUMES_29_DIR,
-    VOLUMES_60_DIR,
-    REDCAP_FILE,
-)
+from cfg.check_files_cfg import (INFERRED_NO_OPS_DIR, ORIGINAL_NO_OPS_DIR,
+                                 REDCAP_FILE, VOLUMES_29_DIR, VOLUMES_60_DIR)
 
 
 class CheckFiles:
