@@ -17,8 +17,8 @@ class Review():
             "29": review_cfg.CSV_FILE_29
         }
     
-    # Define function to move files based on condition once review
     def move_files(df, condition, source_dir, destination_folder):
+        # Define function to move files based on condition once review
         filenames = df[condition]["Image_Name"]
         for filename in tqdm(filenames, desc="Moving files"):
             source_path = os.path.join(source_dir, filename)
@@ -163,7 +163,6 @@ class Review():
         else:
             return patient_id
             pass
-
 
     def main(self):
         for suffix, csv_file in self.csv_files.items():

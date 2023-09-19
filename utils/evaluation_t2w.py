@@ -110,7 +110,6 @@ class Evaluation():
         plt.tight_layout()
         plt.savefig(f'{prefix}_{suffix}_cohort.png')
 
-
     def main(self):
         for suffix, csv_file in self.files.items():
             df = self.read_file(csv_file)

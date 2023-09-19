@@ -12,16 +12,17 @@ import pandas as pd
 import SimpleITK as sitk
 import csv
 import sys
+from pathlib import Path
+sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
 
-from cfg.volume_est_cfg import (LIMIT_LOADING, PLOTS_DIR, POLY_SMOOTHING,
-                                REDCAP_FILE, SEG_DIR, TEST_DATA, CSV_DIR)
+from cfg import volume_est_cfg 
 
 
 class VolumeEstimator:
     def __init__(self, segmentations_path, dob_file):
         self.path = segmentations_path
 
-        if not TEST_DATA:
+        if not volume_est_cfg.TEST_DATA:
             try:
                 # Process the redacap .csv with clinical data
                 self.dob_df = pd.read_csv(dob_file, sep=",", encoding="UTF-8")
@@ -70,7 +71,7 @@ class VolumeEstimator:
             fp for fp in file_paths if os.path.basename(fp).split("_")[0] in patient_ids
         ]
 
-        if not TEST_DATA:
+        if not volume_est_cfg.TEST_DATA:
             filtered_df = self.dob_df[self.dob_df["BCH MRN"].astype(str).isin(patient_ids)]
             print(f"The length of the filtered dataset is: {len(filtered_df)}")
 
@@ -83,7 +84,7 @@ class VolumeEstimator:
             date_str = date_str.replace(".nii.gz", "")
             date = datetime.strptime(date_str, "%Y%m%d")
 
-            if not TEST_DATA and patient_id in filtered_df["BCH MRN"].astype(str).values:
+            if not volume_est_cfg.TEST_DATA and patient_id in filtered_df["BCH MRN"].astype(str).values:
                 dob = self.dob_df.loc[
                     self.dob_df["BCH MRN"] == int(patient_id), "Date of Birth"
                 ].iloc[0]
@@ -157,8 +158,8 @@ class VolumeEstimator:
         for patient_id, volumes_data in self.volumes.items():
             volumes_data.sort(key=lambda x: x[0])  # sort by date
             
-            if POLY_SMOOTHING:
-                if not TEST_DATA:
+            if volume_est_cfg.POLY_SMOOTHING:
+                if not volume_est_cfg.TEST_DATA:
                     dates, volumes, ages = zip(*volumes_data)  # unzip to three lists
                     fig = self.plot_with_poly_smoothing(patient_id, dates, volumes, ages)
                 else:
@@ -167,7 +168,7 @@ class VolumeEstimator:
             else:
                 fig, ax1 = self.setup_plot_base()
                 
-                if not TEST_DATA:
+                if not volume_est_cfg.TEST_DATA:
                     dates, volumes, ages = zip(*volumes_data)
                     ax1.plot(dates, volumes, color="tab:blue", marker="o")
                     self.add_volume_change_to_plot(ax1, dates, volumes)
@@ -207,7 +208,7 @@ class VolumeEstimator:
                 csv_writer = csv.writer(csvfile)
 
                 # CSV header
-                if not TEST_DATA:
+                if not volume_est_cfg.TEST_DATA:
                     csv_writer.writerow(["Date", "Volume", "Age", "Growth[%]"])
                 else:
                     csv_writer.writerow(["Date", "Volume", "Growth[%]"]) 
@@ -217,7 +218,7 @@ class VolumeEstimator:
 
                 previous_volume = None
                 for entry in sorted_volume_data:
-                    if not TEST_DATA:
+                    if not volume_est_cfg.TEST_DATA:
                         date, volume, age = entry
                         if previous_volume:
                             percentage_growth = ((volume - previous_volume) / previous_volume) * 100
@@ -236,12 +237,11 @@ class VolumeEstimator:
                         previous_volume = volume
 
 if __name__ == "__main__":
-    ve = VolumeEstimator(SEG_DIR, REDCAP_FILE)
+    ve = VolumeEstimator(volume_est_cfg.SEG_DIR, volume_est_cfg.REDCAP_FILE)
     print("Volume Estimator initialized.")
-
     print("Getting prediction masks.")
-    ve.process_files(max_patients=LIMIT_LOADING)
+    ve.process_files(max_patients=volume_est_cfg.LIMIT_LOADING)
     print("Saving data.")
-    ve.plot_volumes(output_path=PLOTS_DIR)
+    ve.plot_volumes(output_path=volume_est_cfg.PLOTS_DIR)
     print("Generating time-series csv's.")
-    ve.generate_csv(output_folder=CSV_DIR)
+    ve.generate_csv(output_folder=volume_est_cfg.CSV_DIR)

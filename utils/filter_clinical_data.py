@@ -26,7 +26,6 @@ class ClinicalData:
         self.delete_post_op_data = filter_clinical_data_cfg.DELETING_SURGERY
         self.visualization = filter_clinical_data_cfg.VISUALIZE_DATA
 
-
     def load_file(self):
         try:
             df = pd.read_csv(self.file_path, encoding='utf-8')

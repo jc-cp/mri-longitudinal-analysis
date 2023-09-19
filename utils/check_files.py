@@ -46,7 +46,6 @@ class CheckFiles():
     def compare_ids(list1, list2) -> list:
         return list(set(list1) ^ set(list2))
 
-
     def check_files_harddrive(self):
         curated_no_ops = ORIGINAL_NO_OPS_DIR
         csv_files_an225 = self.find_csv_filenames(curated_no_ops)
@@ -67,7 +66,6 @@ class CheckFiles():
         print("Number of parsed files", len(csv_files_inf))
         print("Number of different files", len(diff_csv_files))
         print("Mismatching csv's (aka not processed ones)", diff_csv_files)
-
 
     def check_files_segmentation(self):    
         files60 = [f for f in os.listdir(VOLUMES_60_DIR) if os.path.isfile(os.path.join(VOLUMES_60_DIR, f))]
