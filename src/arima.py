@@ -10,7 +10,14 @@ from statsmodels.tsa.stattools import adfuller, pacf
 import numpy as np
 
 
-from cfg.arima_cfg import LOADING_LIMIT, OUTPUT_DIR, PLOTS_DIR, FROM_IMAGES, FROM_DATA, TIME_SERIES_DIR
+from cfg.arima_cfg import (
+    LOADING_LIMIT,
+    OUTPUT_DIR,
+    PLOTS_DIR,
+    FROM_IMAGES,
+    FROM_DATA,
+    TIME_SERIES_DIR,
+)
 
 # Constants
 PLOT_TYPE_AUTO = "autocorrelation"
@@ -25,7 +32,9 @@ class Arima_prediction:
         self.image_directory = image_directory
         self.loading_limit = loading_limit
         self.time_series_directory = time_series_directory
-        self.time_series_list = self._load_time_series() if time_series_directory else []        
+        self.time_series_list = (
+            self._load_time_series() if time_series_directory else []
+        )
         self.images = []
         self.filenames = []
         os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -51,9 +60,7 @@ class Arima_prediction:
                 )
                 self.images.append(list(img.getdata()))
                 print("Got filename", filename)
-                self.filenames.append(
-                    os.path.splitext(filename)[0]
-                )
+                self.filenames.append(os.path.splitext(filename)[0])
                 loaded_images += 1
                 if self.loading_limit and loaded_images >= self.loading_limit:
                     break
@@ -66,14 +73,20 @@ class Arima_prediction:
             for filename in os.listdir(self.time_series_directory):
                 if filename.endswith(".csv"):
                     filepath = os.path.join(self.time_series_directory, filename)
-                    ts_data = pd.read_csv(filepath, usecols=[0, 1], parse_dates=[0], index_col=0)
+                    ts_data = pd.read_csv(
+                        filepath, usecols=[0, 1], parse_dates=[0], index_col=0
+                    )
                     time_series_list.append(ts_data.squeeze())
 
         # Check if the path is a file
-        elif os.path.isfile(self.time_series_directory) and self.time_series_directory.endswith(".csv"):
-            ts_data = pd.read_csv(self.time_series_directory, usecols=[0, 1], parse_dates=[0], index_col=0)
+        elif os.path.isfile(
+            self.time_series_directory
+        ) and self.time_series_directory.endswith(".csv"):
+            ts_data = pd.read_csv(
+                self.time_series_directory, usecols=[0, 1], parse_dates=[0], index_col=0
+            )
             time_series_list.append(ts_data.squeeze())
-        
+
         return time_series_list
 
     def _generate_plot(self, data, plot_type, source):
@@ -97,7 +110,7 @@ class Arima_prediction:
             residuals.plot(title=f"Residuals Plot for {filename}")
             plt.xlabel("Date/Time")
             plt.ylabel("Residuals")
-            
+
         elif plot_type == PLOT_TYPE_DENSITY:
             residuals = pd.Series(data)
             residuals.plot(kind="kde", title=f"Density Plot for {filename}")
@@ -119,7 +132,9 @@ class Arima_prediction:
         else:
             raise ValueError(f"Unknown source type: {source}")
 
-    def arima_prediction(self, p=None, d=1, q=0, from_image=True, data=None, forecast_steps=10, source):
+    def arima_prediction(
+        self, p=None, d=1, q=0, from_image=True, data=None, forecast_steps=10
+    ):  # , source):
         if from_image:
             series_list = [pd.Series(img) for img in self.images]
             suffix = "_from_image"
@@ -130,7 +145,6 @@ class Arima_prediction:
 
         try:
             for i, data in enumerate(series_list):
-                
                 # Make series stationary and get the differencing order
                 stationary_data, d = self.make_series_stationary(data)
 
@@ -143,7 +157,7 @@ class Arima_prediction:
 
                 model = ARIMA(stationary_data, order=(p, d, q))
                 model_fit = model.fit()
-                
+
                 # Display AIC and BIC metrics
                 print(f"ARIMA AIC for image {i+1}: {model_fit.aic}")
                 print(f"ARIMA BIC for image {i+1}: {model_fit.bic}")
@@ -153,11 +167,16 @@ class Arima_prediction:
                 # Forecast next `forecast_steps` points
                 forecast = model_fit.forecast(steps=forecast_steps)
                 forecast_series = pd.Series(forecast, name="Predictions")
-                
+
                 # Save the forecast to a CSV file
-                filename = self.filenames[i] if from_image else "time_series_data_{}".format(i)
-                forecast_series.to_csv(os.path.join(OUTPUT_DIR, f"{filename}{suffix}_forecast.csv"), index=False)
-                
+                filename = (
+                    self.filenames[i] if from_image else "time_series_data_{}".format(i)
+                )
+                forecast_series.to_csv(
+                    os.path.join(OUTPUT_DIR, f"{filename}{suffix}_forecast.csv"),
+                    index=False,
+                )
+
                 # plot residual errors
                 self._generate_plot(model_fit.resid, PLOT_TYPE_RESIDUALS, source)
                 self._generate_plot(model_fit.resid, PLOT_TYPE_DENSITY, source)
@@ -165,7 +184,7 @@ class Arima_prediction:
                 # optional description
                 residuals = model_fit.resid
                 print(residuals.describe())
-        
+
         except Exception as e:
             print("An error occurred:", str(e))
 
@@ -182,14 +201,17 @@ class Arima_prediction:
         for i, data in enumerate(series_list):
             # Augmented Dickey-Fuller test
             result = adfuller(data)
-            filename = self.filenames[i] if from_image else "time_series_data_{}".format(i)
-        
-            with open(os.path.join(OUTPUT_DIR, f"{filename}{suffix}_adf_test.txt"), "w") as file:
+            filename = (
+                self.filenames[i] if from_image else "time_series_data_{}".format(i)
+            )
+
+            with open(
+                os.path.join(OUTPUT_DIR, f"{filename}{suffix}_adf_test.txt"), "w"
+            ) as file:
                 file.write(f"ADF Statistic for image {i+1}: {result[0]}\n")
                 file.write(f"p-value for image {i+1}: {result[1]}\n")
                 for key, value in result[4].items():
                     file.write(f"Critical Value ({key}) for image {i+1}: {value}\n")
-                
 
             print(f"ADF Statistic for image {i+1}: {result[0]}")
             print(f"p-value for image {i+1}: {result[1]}")
@@ -217,10 +239,10 @@ class Arima_prediction:
         Returns the forecast frequency based on the size of the dataset.
         """
         n = len(data)
-        # Forecast proportionally based on data length. 
+        # Forecast proportionally based on data length.
         # This takes 5% of data length as forecast steps. Adjust as needed.
         return max(1, int(n * 0.05))
-    
+
     def determine_p_from_pacf(self, data, alpha=0.05):
         """
         Returns the optimal p value for ARIMA based on PACF.
@@ -237,9 +259,10 @@ class Arima_prediction:
             return significant_lags[-1]
         return 1  # Default to 1 if none are significant
 
+
 if __name__ == "__main__":
     image_analysis = Arima_prediction(LOADING_LIMIT, PLOTS_DIR, TIME_SERIES_DIR)
-    
+
     if FROM_IMAGES:
         image_analysis._load_images()
         image_analysis._process_series(image_analysis.images, "from_image")

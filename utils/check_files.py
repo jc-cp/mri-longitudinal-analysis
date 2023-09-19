@@ -5,20 +5,27 @@ import csv
 from pathlib import Path
 
 sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
-from cfg.check_files_cfg import INFERRED_NO_OPS_DIR, ORIGINAL_NO_OPS_DIR, VOLUMES_29_DIR, VOLUMES_60_DIR, REDCAP_FILE
+from cfg.check_files_cfg import (
+    INFERRED_NO_OPS_DIR,
+    ORIGINAL_NO_OPS_DIR,
+    VOLUMES_29_DIR,
+    VOLUMES_60_DIR,
+    REDCAP_FILE,
+)
 
 
-class CheckFiles():
-
+class CheckFiles:
     @staticmethod
     def extract_ids(filenames) -> list:
         id_list = []
         for filename in filenames:
             # Search for a sequence of digits between underscores and at the beginning of the filename.
-            match = re.search(r'_(\d+)_', filename) or re.match(r"^(\d+)(?=[._])", filename)
-            #print(f"Filename: {filename}, Match: {match}")
+            match = re.search(r"_(\d+)_", filename) or re.match(
+                r"^(\d+)(?=[._])", filename
+            )
+            # print(f"Filename: {filename}, Match: {match}")
             if match:
-                #print(f"Match group 1: {match.group(1)}")
+                # print(f"Match group 1: {match.group(1)}")
                 id = match.group(1)
                 if len(id) == 6:
                     id = "0" + id
@@ -67,30 +74,38 @@ class CheckFiles():
         print("Number of different files", len(diff_csv_files))
         print("Mismatching csv's (aka not processed ones)", diff_csv_files)
 
-    def check_files_segmentation(self):    
-        files60 = [f for f in os.listdir(VOLUMES_60_DIR) if os.path.isfile(os.path.join(VOLUMES_60_DIR, f))]
-        files29 = [f for f in os.listdir(VOLUMES_29_DIR) if os.path.isfile(os.path.join(VOLUMES_29_DIR, f))]
+    def check_files_segmentation(self):
+        files60 = [
+            f
+            for f in os.listdir(VOLUMES_60_DIR)
+            if os.path.isfile(os.path.join(VOLUMES_60_DIR, f))
+        ]
+        files29 = [
+            f
+            for f in os.listdir(VOLUMES_29_DIR)
+            if os.path.isfile(os.path.join(VOLUMES_29_DIR, f))
+        ]
 
         all_files = files60 + files29
         print("Number of files with a plot: ", len(all_files))
-        
+
         extracted_ids = self.extract_ids(all_files)
         print("Number of extracted IDs from plots: ", len(extracted_ids))
-        #print("List of extracted IDs from plots:", extracted_ids)
+        # print("List of extracted IDs from plots:", extracted_ids)
 
         csv_ids = []
         csv_file_path = REDCAP_FILE
-        with open(csv_file_path, mode='r') as file:
+        with open(csv_file_path, mode="r") as file:
             csv_reader = csv.DictReader(file)
             for row in csv_reader:
-                id = row['BCH MRN']
+                id = row["BCH MRN"]
                 if len(id) == 6:
                     id = "0" + id
 
                 csv_ids.append(id)
-        
+
         print("Number of csv IDs:", len(csv_ids))
-        #print("List of extracted IDs from csv:", csv_ids)
+        # print("List of extracted IDs from csv:", csv_ids)
 
         difference = self.compare_ids(extracted_ids, csv_ids)
         print(f"{len(difference)} files not having plots. Exact files:", difference)
@@ -102,7 +117,7 @@ if __name__ == "__main__":
     print("Checking mismatching files between hard drive and processed ones!")
     print("-----------------------------------------------------------------")
     cf.check_files_harddrive()
-    
+
     print("-----------------------------------------------------------------")
     print("Checking mismatching files between gen. plots and segmentations! ")
     print("-----------------------------------------------------------------")

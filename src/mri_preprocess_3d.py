@@ -9,10 +9,19 @@ from tqdm import tqdm
 sys.path.append("./HDBET_Code/")
 from HD_BET.hd_bet import hd_bet
 
-from cfg.preprocess_cfg import (BF_CORRECTION, BF_CORRECTION_DIR,
-                                BRAIN_EXTRACTION_DIR, EXTRACTION, INPUT_DIR,
-                                LIMIT_LOADING, OUPUT_DIR, REG_DIR,
-                                REGISTRATION, SEG_PRED_DIR, TEMP_IMG)
+from cfg.preprocess_cfg import (
+    BF_CORRECTION,
+    BF_CORRECTION_DIR,
+    BRAIN_EXTRACTION_DIR,
+    EXTRACTION,
+    INPUT_DIR,
+    LIMIT_LOADING,
+    OUPUT_DIR,
+    REG_DIR,
+    REGISTRATION,
+    SEG_PRED_DIR,
+    TEMP_IMG,
+)
 
 
 def bf_correction(input_dir, output_dir):
@@ -216,11 +225,16 @@ def registration(
     count = index + 1
     print("Registered", count, "scans.")
 
+
 def get_image_files(base_dir):
     image_files = []
     for file in os.listdir(base_dir):
         full_path = os.path.join(base_dir, file)
-        if os.path.isfile(full_path) and file.endswith(".nii.gz") and "label" not in file:
+        if (
+            os.path.isfile(full_path)
+            and file.endswith(".nii.gz")
+            and "label" not in file
+        ):
             image_files.append(full_path)
             # Break when limit is reached
             if len(image_files) >= LIMIT_LOADING:

@@ -25,4 +25,6 @@ OUTPUT_FILE = False
 
 # Deleting after surgery data points
 DELETING_SURGERY = False
-DATA_DIR = Path("/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/curated_no_ops_29_surgery_cohort_reviewed/1_no_comments")
+DATA_DIR = Path(
+    "/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/curated_no_ops_29_surgery_cohort_reviewed/1_no_comments"
+)

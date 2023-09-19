@@ -13,9 +13,10 @@ import SimpleITK as sitk
 import csv
 import sys
 from pathlib import Path
+
 sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
 
-from cfg import volume_est_cfg 
+from cfg import volume_est_cfg
 
 
 class VolumeEstimator:
@@ -28,7 +29,9 @@ class VolumeEstimator:
                 self.dob_df = pd.read_csv(dob_file, sep=",", encoding="UTF-8")
                 print(f"The length of the total csv dataset is: {len(self.dob_df)}")
                 if len(self.dob_df) != 89:
-                    print("Warning: The length of the filtered dataset is not 89. Check the csv again.")
+                    print(
+                        "Warning: The length of the filtered dataset is not 89. Check the csv again."
+                    )
                     sys.exit(1)
                 self.dob_df["Date of Birth"] = pd.to_datetime(
                     self.dob_df["Date of Birth"], format="%d/%m/%y"
@@ -72,7 +75,9 @@ class VolumeEstimator:
         ]
 
         if not volume_est_cfg.TEST_DATA:
-            filtered_df = self.dob_df[self.dob_df["BCH MRN"].astype(str).isin(patient_ids)]
+            filtered_df = self.dob_df[
+                self.dob_df["BCH MRN"].astype(str).isin(patient_ids)
+            ]
             print(f"The length of the filtered dataset is: {len(filtered_df)}")
 
         with Pool(cpu_count()) as p:
@@ -84,7 +89,10 @@ class VolumeEstimator:
             date_str = date_str.replace(".nii.gz", "")
             date = datetime.strptime(date_str, "%Y%m%d")
 
-            if not volume_est_cfg.TEST_DATA and patient_id in filtered_df["BCH MRN"].astype(str).values:
+            if (
+                not volume_est_cfg.TEST_DATA
+                and patient_id in filtered_df["BCH MRN"].astype(str).values
+            ):
                 dob = self.dob_df.loc[
                     self.dob_df["BCH MRN"] == int(patient_id), "Date of Birth"
                 ].iloc[0]
@@ -92,7 +100,7 @@ class VolumeEstimator:
                 self.volumes[patient_id].append((date, volume, age))
             else:
                 self.volumes[patient_id].append((date, volume))
-    
+
     def plot_with_poly_smoothing(self, patient_id, dates, volumes, ages=None):
         # Polynomial interpolation
         poly_degree = 5  # Degree of the polynomial
@@ -108,9 +116,13 @@ class VolumeEstimator:
 
         fig, ax1 = self.setup_plot_base()
 
-        ax1.plot(interpolated_dates, interpolated_volumes_poly, color="tab:blue", marker="o")
+        ax1.plot(
+            interpolated_dates, interpolated_volumes_poly, color="tab:blue", marker="o"
+        )
         ax1.set_xticks(dates)
-        ax1.set_xticklabels([dt.strftime("%m/%d/%Y") for dt in dates], rotation=90, fontsize=8)
+        ax1.set_xticklabels(
+            [dt.strftime("%m/%d/%Y") for dt in dates], rotation=90, fontsize=8
+        )
 
         self.add_volume_change_to_plot(ax1, dates, volumes)
 
@@ -138,8 +150,17 @@ class VolumeEstimator:
                 volume_change = np.nan
             volume_changes.append(volume_change)
 
-        for i, (date, volume, volume_change) in enumerate(zip(dates, volumes, volume_changes)):
-            ax.text(date, volume, f"{volume_change:.2f}%", fontsize=8, va="bottom", ha="left")
+        for i, (date, volume, volume_change) in enumerate(
+            zip(dates, volumes, volume_changes)
+        ):
+            ax.text(
+                date,
+                volume,
+                f"{volume_change:.2f}%",
+                fontsize=8,
+                va="bottom",
+                ha="left",
+            )
 
     def add_age_to_plot(self, ax, dates, ages):
         ax2 = ax.twiny()
@@ -157,17 +178,19 @@ class VolumeEstimator:
 
         for patient_id, volumes_data in self.volumes.items():
             volumes_data.sort(key=lambda x: x[0])  # sort by date
-            
+
             if volume_est_cfg.POLY_SMOOTHING:
                 if not volume_est_cfg.TEST_DATA:
                     dates, volumes, ages = zip(*volumes_data)  # unzip to three lists
-                    fig = self.plot_with_poly_smoothing(patient_id, dates, volumes, ages)
+                    fig = self.plot_with_poly_smoothing(
+                        patient_id, dates, volumes, ages
+                    )
                 else:
                     dates, volumes = zip(*volumes_data)
                     fig = self.plot_with_poly_smoothing(patient_id, dates, volumes)
             else:
                 fig, ax1 = self.setup_plot_base()
-                
+
                 if not volume_est_cfg.TEST_DATA:
                     dates, volumes, ages = zip(*volumes_data)
                     ax1.plot(dates, volumes, color="tab:blue", marker="o")
@@ -182,8 +205,12 @@ class VolumeEstimator:
 
             fig.tight_layout()
 
-            date_range = f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
-            plt.savefig(os.path.join(output_path, f"volume_{patient_id}_{date_range}.png"))
+            date_range = (
+                f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
+            )
+            plt.savefig(
+                os.path.join(output_path, f"volume_{patient_id}_{date_range}.png")
+            )
             plt.close()
 
     def calculate_volume_change(self, previous, current):
@@ -192,7 +219,7 @@ class VolumeEstimator:
     def generate_csv(self, output_folder):
         """
         Generate .csv files for each patient with time series volume data.
-        
+
         Parameters:
             - output_folder: Path to the folder where the .csv files should be saved.
         """
@@ -203,15 +230,15 @@ class VolumeEstimator:
 
         for patient_id, volume_data in self.volumes.items():
             csv_file_path = os.path.join(output_folder, f"{patient_id}.csv")
-            
-            with open(csv_file_path, 'w', newline='') as csvfile:
+
+            with open(csv_file_path, "w", newline="") as csvfile:
                 csv_writer = csv.writer(csvfile)
 
                 # CSV header
                 if not volume_est_cfg.TEST_DATA:
                     csv_writer.writerow(["Date", "Volume", "Age", "Growth[%]"])
                 else:
-                    csv_writer.writerow(["Date", "Volume", "Growth[%]"]) 
+                    csv_writer.writerow(["Date", "Volume", "Growth[%]"])
 
                 # Sort data by date to ensure time series is in order
                 sorted_volume_data = sorted(volume_data, key=lambda x: x[0])
@@ -221,20 +248,29 @@ class VolumeEstimator:
                     if not volume_est_cfg.TEST_DATA:
                         date, volume, age = entry
                         if previous_volume:
-                            percentage_growth = ((volume - previous_volume) / previous_volume) * 100
+                            percentage_growth = (
+                                (volume - previous_volume) / previous_volume
+                            ) * 100
                         else:
                             percentage_growth = 0  # No growth for the first data point
-                        csv_writer.writerow([date.strftime('%Y-%m-%d'), volume, age, percentage_growth])
+                        csv_writer.writerow(
+                            [date.strftime("%Y-%m-%d"), volume, age, percentage_growth]
+                        )
                         previous_volume = volume
 
                     else:
                         date, volume = entry
                         if previous_volume:
-                            percentage_growth = ((volume - previous_volume) / previous_volume) * 100
+                            percentage_growth = (
+                                (volume - previous_volume) / previous_volume
+                            ) * 100
                         else:
                             percentage_growth = 0  # No growth for the first data point
-                        csv_writer.writerow([date.strftime('%Y-%m-%d'), volume, percentage_growth])
+                        csv_writer.writerow(
+                            [date.strftime("%Y-%m-%d"), volume, percentage_growth]
+                        )
                         previous_volume = volume
+
 
 if __name__ == "__main__":
     ve = VolumeEstimator(volume_est_cfg.SEG_DIR, volume_est_cfg.REDCAP_FILE)

@@ -9,11 +9,12 @@ sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
 
 from cfg import evaluation_cfg
 
-class Evaluation():
+
+class Evaluation:
     def __init__(self):
         self.files = {
             "60": evaluation_cfg.CSV_FILE_60,
-            "29": evaluation_cfg.CSV_FILE_29
+            "29": evaluation_cfg.CSV_FILE_29,
         }
         self.out_file_prefix = evaluation_cfg.OUT_FILE_PREFIX
 
@@ -21,7 +22,7 @@ class Evaluation():
         column_names = ["Image_Name", "Quality", "Comments"]
         df = pd.read_csv(csv_file, names=column_names)
         return df
-    
+
     def parse_df(self, df):
         # Compute some statistics
         df["Quality"] = df["Quality"].astype(int)
@@ -36,7 +37,6 @@ class Evaluation():
         # Get all unique comments
         all_comments = df["Comments"].unique()
         print(f"All types of annotations: {all_comments}")
-
 
         # Filter comments for quality 5
         quality5_comments = df[df["Quality"] == 5]["Comments"]
@@ -65,15 +65,13 @@ class Evaluation():
             f"Number of images with quality rating of 5 and with comments: {len(quality5_with_comments)}"
         )
 
-
         # Compute some statistics
         df["Quality"] = df["Quality"].astype(int)
         df["Comments"] = df["Comments"].fillna("Valid Images")
 
         # Define comment categories
         comment_categories = [
-            "tricky"
-            "FLAIR",
+            "tricky" "FLAIR",
             "T1",
             "T1c",
             "OTHER",
@@ -88,7 +86,9 @@ class Evaluation():
         df["Category"] = df["Quality"].astype(str) + "-" + df["Comments"].map(str)
 
         # Only consider records with Quality as 1 or 5, and Comments in comment_categories
-        df_filtered = df[df["Quality"].isin([1, 5]) & df["Quality"]==1]# df["Comments"].isin(comment_categories)]
+        df_filtered = df[
+            df["Quality"].isin([1, 5]) & df["Quality"] == 1
+        ]  # df["Comments"].isin(comment_categories)]
         return df_filtered
 
     def hist_plot(self, df_filtered, suffix):
@@ -101,14 +101,17 @@ class Evaluation():
 
         # Iterate over the bars, and add a label for each
         for p in ax.patches:
-            ax.annotate(format(p.get_height(), '.0f'),
-                        (p.get_x() + p.get_width() / 2., p.get_height()),
-                        ha='center', va='center',
-                        xytext=(0, 10), textcoords='offset points')
-            
+            ax.annotate(
+                format(p.get_height(), ".0f"),
+                (p.get_x() + p.get_width() / 2.0, p.get_height()),
+                ha="center",
+                va="center",
+                xytext=(0, 10),
+                textcoords="offset points",
+            )
 
         plt.tight_layout()
-        plt.savefig(f'{prefix}_{suffix}_cohort.png')
+        plt.savefig(f"{prefix}_{suffix}_cohort.png")
 
     def main(self):
         for suffix, csv_file in self.files.items():
@@ -116,6 +119,7 @@ class Evaluation():
             filtered_df = self.parse_df(df)
             self.hist_plot(filtered_df, suffix)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     ev = Evaluation()
     ev.main()

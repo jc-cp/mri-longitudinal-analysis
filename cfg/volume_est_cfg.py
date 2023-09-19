@@ -5,7 +5,9 @@ SEG_DIR = Path(
 )
 
 
-OUTPUT_DIR = Path("/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/curated_no_ops_60_cohort_reviewed/output")
+OUTPUT_DIR = Path(
+    "/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/curated_no_ops_60_cohort_reviewed/output"
+)
 
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series_csv"
