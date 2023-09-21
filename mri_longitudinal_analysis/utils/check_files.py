@@ -41,8 +41,8 @@ class CheckFiles:
         """
         id_list = []
         for filename in filenames:
-            #Search for a sequence of digits between underscores and
-            #at the beginning of the filename.
+            # Search for a sequence of digits between underscores and
+            # at the beginning of the filename.
             match = re.search(r"_(\d+)_", filename) or re.match(
                 r"^(\d+)(?=[._])", filename
             )
