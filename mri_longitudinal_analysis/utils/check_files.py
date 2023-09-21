@@ -20,7 +20,7 @@ import csv
 import os
 import re
 
-from mri_longitudinal_analysis.cfg import check_files_cfg
+from cfg import check_files_cfg
 
 
 class CheckFiles:
