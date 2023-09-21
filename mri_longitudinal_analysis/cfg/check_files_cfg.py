@@ -17,5 +17,5 @@ VOLUMES_60_DIR = Path(
 )
 
 REDCAP_FILE = Path(
-    "/home/jc053/GIT/mri-longitudinal-analysis/data/redcap/redcap_full_89_cohort.csv"
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_89_cohort.csv"
 )

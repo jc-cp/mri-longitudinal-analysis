@@ -17,7 +17,7 @@ PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series_csv"
 
 REDCAP_FILE = Path(
-    "/home/jc053/GIT/mri-longitudinal-analysis/data/redcap/redcap_full_89_cohort.csv"
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_89_cohort.csv"
 )
 LIMIT_LOADING = None
 

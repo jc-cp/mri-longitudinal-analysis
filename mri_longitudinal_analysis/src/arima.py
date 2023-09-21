@@ -1,16 +1,18 @@
+"""
+This script provides functionality for ARIMA-based time series prediction.
+It supports loading data from both images and CSV files.
+"""
 import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from cfg import arima_cfg
 from pandas.plotting import autocorrelation_plot
 from PIL import Image
 from statsmodels.graphics.tsaplots import plot_pacf
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.stattools import adfuller, pacf
-
-from cfg.arima_cfg import (FROM_DATA, FROM_IMAGES, LOADING_LIMIT, OUTPUT_DIR,
-                           PLOTS_DIR, TIME_SERIES_DIR)
 
 # Constants
 PLOT_TYPE_AUTO = "autocorrelation"
@@ -19,20 +21,29 @@ PLOT_TYPE_RESIDUALS = "residuals"
 PLOT_TYPE_DENSITY = "density"
 
 
-# Look at the AIC, BIC, and HQIC metrics
-class Arima_prediction:
+class ArimaPrediction:
+    """
+    A class to handle ARIMA-based time series prediction.
+    """
+
     def __init__(self, loading_limit, image_directory, time_series_directory):
+        """
+        Constructor for the Arima_prediction class.
+
+        Parameters:
+        - loading_limit (int): The limit for loading images or time series data.
+        - image_directory (str): Path to the directory containing images.
+        - time_series_directory (str): Path to the directory containing time series data.
+        """
         self.image_directory = image_directory
         self.loading_limit = loading_limit
         self.time_series_directory = time_series_directory
-        self.time_series_list = (
-            self._load_time_series() if time_series_directory else []
-        )
+        self.time_series_list = self._load_time_series() if time_series_directory else []
         self.images = []
         self.filenames = []
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        os.makedirs(arima_cfg.OUTPUT_DIR, exist_ok=True)
 
-    def _process_series(self, series_list, source):
+    def process_series(self, series_list, source):
         """
         Main method to handle series for both images and csv data.
         :param series_list: List of series data.
@@ -41,16 +52,15 @@ class Arima_prediction:
         for ts_data in series_list:
             self._generate_plot(ts_data, PLOT_TYPE_AUTO, source)
             self._generate_plot(ts_data, PLOT_TYPE_PACF, source)
-            self.dickey_fuller_test(data=ts_data, source=source)
-            self.arima_prediction(data=ts_data, source=source)
+            self._dickey_fuller_test(data=ts_data, source=source)
+            self._arima_prediction(data=ts_data, source=source)
 
-    def _load_images(self):
+    def load_images(self):
+        """Loads images from the specified directory up to the loading limit."""
         loaded_images = 0
         for filename in os.listdir(self.image_directory):
             if filename.endswith(".png"):
-                img = Image.open(os.path.join(self.image_directory, filename)).convert(
-                    "L"
-                )
+                img = Image.open(os.path.join(self.image_directory, filename)).convert("L")
                 self.images.append(list(img.getdata()))
                 print("Got filename", filename)
                 self.filenames.append(os.path.splitext(filename)[0])
@@ -59,6 +69,12 @@ class Arima_prediction:
                     break
 
     def _load_time_series(self):
+        """
+        Loads time series data either from a directory or from a specified file.
+
+        Returns:
+        - list: A list of loaded time series data.
+        """
         time_series_list = []
 
         # Check if the path is a directory
@@ -66,15 +82,13 @@ class Arima_prediction:
             for filename in os.listdir(self.time_series_directory):
                 if filename.endswith(".csv"):
                     filepath = os.path.join(self.time_series_directory, filename)
-                    ts_data = pd.read_csv(
-                        filepath, usecols=[0, 1], parse_dates=[0], index_col=0
-                    )
+                    ts_data = pd.read_csv(filepath, usecols=[0, 1], parse_dates=[0], index_col=0)
                     time_series_list.append(ts_data.squeeze())
 
         # Check if the path is a file
-        elif os.path.isfile(
-            self.time_series_directory
-        ) and self.time_series_directory.endswith(".csv"):
+        elif os.path.isfile(self.time_series_directory) and self.time_series_directory.endswith(
+            ".csv"
+        ):
             ts_data = pd.read_csv(
                 self.time_series_directory, usecols=[0, 1], parse_dates=[0], index_col=0
             )
@@ -83,6 +97,14 @@ class Arima_prediction:
         return time_series_list
 
     def _generate_plot(self, data, plot_type, source):
+        """
+        Generates and saves various plots based on the provided data and plot type.
+
+        Parameters:
+        - data (Series): Time series data.
+        - plot_type (str): Type of the plot to generate.
+        - source (str): Source of data (e.g., from_image or from_csv).
+        """
         filename = self._get_filename(data, source)
         plt.figure(figsize=(10, 6))
 
@@ -113,21 +135,19 @@ class Arima_prediction:
         plt.legend([f"{plot_type.capitalize()} of {filename}"])
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, f"{filename}_{source}_{plot_type}.png"))
+        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}_{source}_{plot_type}.png"))
         plt.close()
 
     def _get_filename(self, data, source):
-        # Retrieve filename based on data and source
+        """Retrieve filename based on data and source."""
         if source == "from_image":
             return self.filenames[self.images.index(data)]
-        elif source == "from_csv":
-            return "time_series_data_{}".format(self.time_series_list.index(data))
-        else:
-            raise ValueError(f"Unknown source type: {source}")
+        if source == "from_csv":
+            return f"time_series_data_{self.time_series_list.index(data)}"
+        raise ValueError(f"Unknown source type: {source}")
 
-    def arima_prediction(
-        self, p=None, d=1, q=0, from_image=True, data=None, forecast_steps=10
-    ):  # , source):
+    def _arima_prediction(
+        self, p=None, d=1, q=0, from_image=True, data=None, forecast_steps=10, source):
         if from_image:
             series_list = [pd.Series(img) for img in self.images]
             suffix = "_from_image"
@@ -162,11 +182,9 @@ class Arima_prediction:
                 forecast_series = pd.Series(forecast, name="Predictions")
 
                 # Save the forecast to a CSV file
-                filename = (
-                    self.filenames[i] if from_image else "time_series_data_{}".format(i)
-                )
+                filename = self.filenames[i] if from_image else "time_series_data_{}".format(i)
                 forecast_series.to_csv(
-                    os.path.join(OUTPUT_DIR, f"{filename}{suffix}_forecast.csv"),
+                    os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}{suffix}_forecast.csv"),
                     index=False,
                 )
 
@@ -181,7 +199,7 @@ class Arima_prediction:
         except Exception as e:
             print("An error occurred:", str(e))
 
-    def dickey_fuller_test(self, from_image=True, data=None):
+    def _dickey_fuller_test(self, from_image=True, data=None):
         if from_image:
             series_list = [pd.Series(img) for img in self.images]
             suffix = "_from_image"
@@ -194,13 +212,9 @@ class Arima_prediction:
         for i, data in enumerate(series_list):
             # Augmented Dickey-Fuller test
             result = adfuller(data)
-            filename = (
-                self.filenames[i] if from_image else "time_series_data_{}".format(i)
-            )
+            filename = self.filenames[i] if from_image else "time_series_data_{}".format(i)
 
-            with open(
-                os.path.join(OUTPUT_DIR, f"{filename}{suffix}_adf_test.txt"), "w"
-            ) as file:
+            with open(os.path.join(OUTPUT_DIR, f"{filename}{suffix}_adf_test.txt"), "w") as file:
                 file.write(f"ADF Statistic for image {i+1}: {result[0]}\n")
                 file.write(f"p-value for image {i+1}: {result[1]}\n")
                 for key, value in result[4].items():
@@ -211,32 +225,33 @@ class Arima_prediction:
             for key, value in result[4].items():
                 print(f"Critical Value ({key}) for image {i+1}: {value}")
 
-    def make_series_stationary(self, data, max_diff=3):
+    def _make_series_stationary(self, data, max_diff=3):
         """
-        Returns the differenced series until it becomes stationary or reaches max allowed differencing.
+        Returns the differenced series until it becomes stationary or reaches max
+        allowed differencing.
         """
-        d = 0  # Track differencing order
+        d_value = 0  # Track differencing order
         p_value = 1
         result = adfuller(data)
 
-        while p_value >= 0.05 and d < max_diff:
+        while p_value >= 0.05 and d_value < max_diff:
             data = data.diff().dropna()
             result = adfuller(data)
             p_value = result[1]
-            d += 1
+            d_value += 1
 
-        return data, d
+        return data, d_value
 
-    def get_adaptive_forecast_steps(self, data):
+    def _get_adaptive_forecast_steps(self, data):
         """
         Returns the forecast frequency based on the size of the dataset.
         """
-        n = len(data)
+        n_steps = len(data)
         # Forecast proportionally based on data length.
         # This takes 5% of data length as forecast steps. Adjust as needed.
-        return max(1, int(n * 0.05))
+        return max(1, int(n_steps * 0.05))
 
-    def determine_p_from_pacf(self, data, alpha=0.05):
+    def _determine_p_from_pacf(self, data, alpha=0.05):
         """
         Returns the optimal p value for ARIMA based on PACF.
         """
@@ -254,11 +269,13 @@ class Arima_prediction:
 
 
 if __name__ == "__main__":
-    image_analysis = Arima_prediction(LOADING_LIMIT, PLOTS_DIR, TIME_SERIES_DIR)
+    image_analysis = ArimaPrediction(
+        arima_cfg.LOADING_LIMIT, arima_cfg.PLOTS_DIR, arima_cfg.TIME_SERIES_DIR
+    )
 
-    if FROM_IMAGES:
-        image_analysis._load_images()
-        image_analysis._process_series(image_analysis.images, "from_image")
+    if arima_cfg.FROM_IMAGES:
+        image_analysis.load_images()
+        image_analysis.process_series(image_analysis.images, "from_image")
 
-    if FROM_DATA:
-        image_analysis._process_series(image_analysis.time_series_list, "from_csv")
+    if arima_cfg.FROM_DATA:
+        image_analysis.process_series(image_analysis.time_series_list, "from_csv")
