@@ -141,8 +141,9 @@ class Review:
 
     def compare_ids_and_flag(self, t2_dir):
         """
-        Compares multiple versions of the same scan for each patient, flags the one with the highest resolution,
-        and moves the other versions to a 'lower resolution' directory.
+        Compares multiple versions of the same scan for each patient,
+        flags the one with the highest resolution, and moves the other
+        versions to a 'lower resolution' directory.
         :param t2_dir: Path to the T2 directory.
         """
         # Gather all file paths in the T2 directory
