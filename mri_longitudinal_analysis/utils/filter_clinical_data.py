@@ -41,13 +41,14 @@ class ClinicalData:
         """
         try:
             d_f = pd.read_csv(self.file_path, encoding="utf-8")
-            print(d_f.head())
+            # print(d_f.head())
             return d_f
         except FileNotFoundError:
             print("File not found. Please check the file path.")
-            sys.exit(1)
+            return sys.exit(1)
         except pd.errors.ParserError as excp:
             print("An unexpected error occurred.", excp)
+            return sys.exit(1)
 
     def parse_data(self, d_f) -> dict:
         """Parse patient data from a DataFrame.
@@ -98,42 +99,32 @@ class ClinicalData:
 
             # Handle 'Pathologic diagnosis'
             if "optic" in pathologic_diagnosis.lower():
-                patient_data[patient_id][
-                    "Pathologic diagnosis"
-                ] = "Optic Glioma"
+                patient_data[patient_id]["Pathologic diagnosis"] = "Optic Glioma"
             elif "astrocytoma" in pathologic_diagnosis.lower():
                 patient_data[patient_id]["Pathologic diagnosis"] = "Astrocytoma"
             elif "tectal" in pathologic_diagnosis.lower():
-                patient_data[patient_id][
-                    "Pathologic diagnosis"
-                ] = "Tectal Glioma"
+                patient_data[patient_id]["Pathologic diagnosis"] = "Tectal Glioma"
             elif (
                 "low grade glioma" in pathologic_diagnosis.lower()
                 or "low-grade glioma" in pathologic_diagnosis.lower()
             ):
-                patient_data[patient_id][
-                    "Pathologic diagnosis"
-                ] = "Plain Low Grade Glioma"
+                patient_data[patient_id]["Pathologic diagnosis"] = "Plain Low Grade Glioma"
             else:
                 patient_data[patient_id]["Pathologic diagnosis"] = "Other"
 
             if row["Surgical Resection"] == "Yes":
                 patient_data[patient_id]["Surgery"] = "Yes"
-                patient_data[patient_id]["Date of first surgery"] = row[
-                    "Date of first surgery"
-                ]
+                patient_data[patient_id]["Date of first surgery"] = row["Date of first surgery"]
 
             if row["Systemic therapy before radiation"] == "Yes":
                 patient_data[patient_id]["Chemotherapy"] = "Yes"
-                patient_data[patient_id][
+                patient_data[patient_id]["Date of Systemic Therapy Start"] = row[
                     "Date of Systemic Therapy Start"
-                ] = row["Date of Systemic Therapy Start"]
+                ]
 
             if row["Radiation as part of initial treatment"] == "Yes":
                 patient_data[patient_id]["Radiation"] = "Yes"
-                patient_data[patient_id]["Start Date of Radiation"] = row[
-                    "Start Date of Radiation"
-                ]
+                patient_data[patient_id]["Start Date of Radiation"] = row["Start Date of Radiation"]
 
         return patient_data
 
@@ -183,9 +174,7 @@ class ClinicalData:
                 align="center",
                 color="skyblue",
             )
-            plt.xticks(
-                range(len(counts)), list(counts.keys()), rotation="vertical"
-            )
+            plt.xticks(range(len(counts)), list(counts.keys()), rotation="vertical")
 
             for bar_ in bars:
                 yval = bar_.get_height()
@@ -307,9 +296,7 @@ class ClinicalData:
                         "%Y-%m-%d",
                     )
 
-                patient_folder = os.path.join(
-                    post_surgery_folder, str(patient_id)
-                )
+                patient_folder = os.path.join(post_surgery_folder, str(patient_id))
                 os.makedirs(patient_folder, exist_ok=True)
 
                 for filename in os.listdir(directory):
@@ -335,14 +322,10 @@ class ClinicalData:
             self.visualize_data(patient_data)
 
         if self.output_file:
-            self.write_dict_to_file(
-                patient_data, filter_clinical_data_cfg.OUTPUT_FILE_NAME
-            )
+            self.write_dict_to_file(patient_data, filter_clinical_data_cfg.OUTPUT_FILE_NAME)
 
         if self.delete_post_op_data:
-            self.print_post_surgery_files(
-                patient_data, filter_clinical_data_cfg.DATA_DIR
-            )
+            self.print_post_surgery_files(patient_data, filter_clinical_data_cfg.DATA_DIR)
 
 
 if __name__ == "__main__":
