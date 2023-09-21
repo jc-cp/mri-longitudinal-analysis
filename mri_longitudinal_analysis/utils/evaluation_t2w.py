@@ -109,19 +109,6 @@ class Evaluation:
         d_f["Quality"] = d_f["Quality"].astype(int)
         d_f["Comments"] = d_f["Comments"].fillna("Valid Images")
 
-        # Define comment categories
-        comment_categories = [
-            "tricky" "FLAIR",
-            "T1",
-            "T1c",
-            "OTHER",
-            "Valid Images",
-            "other body part",
-            "quality",
-            "view",
-            "cropped",
-        ]
-
         # New column to hold the category
         d_f["Category"] = (
             d_f["Quality"].astype(str) + "-" + d_f["Comments"].map(str)
@@ -147,10 +134,10 @@ class Evaluation:
         a_x = sns.countplot(data=df_filtered, x="Quality", hue="Comments")
 
         # Iterate over the bars, and add a label for each
-        for p in a_x.patches:
+        for patch in a_x.patches:
             a_x.annotate(
-                format(p.get_height(), ".0f"),
-                (p.get_x() + p.get_width() / 2.0, p.get_height()),
+                format(patch.get_height(), ".0f"),
+                (patch.get_x() + patch.get_width() / 2.0, patch.get_height()),
                 ha="center",
                 va="center",
                 xytext=(0, 10),
