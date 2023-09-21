@@ -255,10 +255,10 @@ class ClinicalData:
         Args:
             a_x (matplotlib.axis): The axis object to be annotated.
         """
-        for p in a_x.patches:
-            height = p.get_height()
+        for patch in a_x.patches:
+            height = patch.get_height()
             a_x.text(
-                x=p.get_x() + (p.get_width() / 2),
+                x=patch.get_x() + (patch.get_width() / 2),
                 y=height,
                 s=f"{height:.0f}",
                 ha="center",
@@ -271,12 +271,12 @@ class ClinicalData:
             data_dict (dict): The dictionary to write.
             filename (str): The name of the output file.
         """
-        with open(filename, "w", encoding="utf-8") as f:
+        with open(filename, "w", encoding="utf-8") as file:
             for patient_id, patient_info in data_dict.items():
-                f.write(f"Patient ID: {patient_id}\n")
+                file.write(f"Patient ID: {patient_id}\n")
                 for key, value in patient_info.items():
-                    f.write(f"\t{key}: {value}\n")
-                f.write("\n")
+                    file.write(f"\t{key}: {value}\n")
+                file.write("\n")
 
     def print_post_surgery_files(self, patient_data, directory):
         """Print the files related to post-surgery cases.
