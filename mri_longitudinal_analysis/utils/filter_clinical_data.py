@@ -1,21 +1,26 @@
-import sys
-from pathlib import Path
+"""Module for processing and visualizing clinical data."""
 
-import pandas as pd
-
-sys.path.append(sys.path.append(str(Path(__file__).resolve().parent.parent)))
 import os
 import shutil
+import sys
 from datetime import datetime
 
 import matplotlib.pyplot as plt
+import pandas as pd
 import seaborn as sns
 
 from cfg import filter_clinical_data_cfg
 
 
 class ClinicalData:
+    """Class to handle operations related to clinical data."""
+
     def __init__(self, file_path):
+        """Initialize a new ClinicalData object.
+
+        Args:
+            file_path (str): The path to the clinical data CSV file.
+        """
         self.file_path = file_path
 
         os.makedirs(filter_clinical_data_cfg.OUTPUT_DIR, exist_ok=True)
@@ -28,22 +33,35 @@ class ClinicalData:
         self.delete_post_op_data = filter_clinical_data_cfg.DELETING_SURGERY
         self.visualization = filter_clinical_data_cfg.VISUALIZE_DATA
 
-    def load_file(self):
+    def load_file(self) -> pd.DataFrame:
+        """Load clinical data from a CSV file.
+
+        Returns:
+            pd.DataFrame or None: The loaded DataFrame if successful, or None otherwise.
+        """
         try:
-            df = pd.read_csv(self.file_path, encoding="utf-8")
-            print(df.head())
-            return df
+            d_f = pd.read_csv(self.file_path, encoding="utf-8")
+            print(d_f.head())
+            return d_f
         except FileNotFoundError:
             print("File not found. Please check the file path.")
             sys.exit(1)
-        except Exception as e:
-            print("An unexpected error occurred.", e)
+        except pd.errors.ParserError as excp:
+            print("An unexpected error occurred.", excp)
 
-    def parse_data(self, df) -> dict:
+    def parse_data(self, d_f) -> dict:
+        """Parse patient data from a DataFrame.
+
+        Args:
+            d_f (pd.DataFrame): The DataFrame containing the clinical data.
+
+        Returns:
+            dict: A dictionary containing the parsed data.
+        """
         # create a dictionary to hold the parsed data
         patient_data = {}
 
-        for index, row in df.iterrows():
+        for index, row in d_f.iterrows():
             patient_id = row["BCH MRN"]
             dob = row["Date of Birth"]
             clinical_status = row["Clinical status at last follow-up"]
@@ -80,11 +98,15 @@ class ClinicalData:
 
             # Handle 'Pathologic diagnosis'
             if "optic" in pathologic_diagnosis.lower():
-                patient_data[patient_id]["Pathologic diagnosis"] = "Optic Glioma"
+                patient_data[patient_id][
+                    "Pathologic diagnosis"
+                ] = "Optic Glioma"
             elif "astrocytoma" in pathologic_diagnosis.lower():
                 patient_data[patient_id]["Pathologic diagnosis"] = "Astrocytoma"
             elif "tectal" in pathologic_diagnosis.lower():
-                patient_data[patient_id]["Pathologic diagnosis"] = "Tectal Glioma"
+                patient_data[patient_id][
+                    "Pathologic diagnosis"
+                ] = "Tectal Glioma"
             elif (
                 "low grade glioma" in pathologic_diagnosis.lower()
                 or "low-grade glioma" in pathologic_diagnosis.lower()
@@ -103,9 +125,9 @@ class ClinicalData:
 
             if row["Systemic therapy before radiation"] == "Yes":
                 patient_data[patient_id]["Chemotherapy"] = "Yes"
-                patient_data[patient_id]["Date of Systemic Therapy Start"] = row[
+                patient_data[patient_id][
                     "Date of Systemic Therapy Start"
-                ]
+                ] = row["Date of Systemic Therapy Start"]
 
             if row["Radiation as part of initial treatment"] == "Yes":
                 patient_data[patient_id]["Radiation"] = "Yes"
@@ -116,6 +138,11 @@ class ClinicalData:
         return patient_data
 
     def visualize_data(self, data):
+        """Visualize the clinical data.
+
+        Args:
+            data (dict): A dictionary containing the parsed data.
+        """
         if self.treatment_plot:
             # Initialize counts
             counts = {
@@ -130,7 +157,7 @@ class ClinicalData:
             }
 
             # Count occurrences
-            for patient_id, patient_info in data.items():
+            for _, patient_info in data.items():  # omitted is the patient_id
                 treatments = [
                     t
                     for t in ["Surgery", "Chemotherapy", "Radiation"]
@@ -156,12 +183,14 @@ class ClinicalData:
                 align="center",
                 color="skyblue",
             )
-            plt.xticks(range(len(counts)), list(counts.keys()), rotation="vertical")
+            plt.xticks(
+                range(len(counts)), list(counts.keys()), rotation="vertical"
+            )
 
-            for bar in bars:
-                yval = bar.get_height()
+            for bar_ in bars:
+                yval = bar_.get_height()
                 plt.text(
-                    bar.get_x() + bar.get_width() / 2,
+                    bar_.get_x() + bar_.get_width() / 2,
                     yval + 0.1,
                     yval,
                     ha="center",
@@ -188,11 +217,11 @@ class ClinicalData:
             # Plot Mutation Distribution by Sex
             plt.figure(figsize=(10, 6))
             plt.rcParams.update({"font.size": 10})
-            ax1 = sns.countplot(x=sexes, hue=mutations)
+            a_x1 = sns.countplot(x=sexes, hue=mutations)
             plt.title("Mutation Distribution by Sex")
             plt.xlabel("Sex")
             plt.ylabel("Count")
-            self.annotate_plot(ax1)
+            self.annotate_plot(a_x1)
             plt.legend(title="BRAF Mutation Status")
             plt.tight_layout()
             plt.savefig(filter_clinical_data_cfg.OUTPUT_MUTATION)
@@ -211,27 +240,38 @@ class ClinicalData:
                 # Plot Pathologic Diagnosis Distribution
                 plt.figure(figsize=(10, 6))
                 plt.rcParams.update({"font.size": 10})
-                ax2 = sns.countplot(x=diagnoses)
+                a_x2 = sns.countplot(x=diagnoses)
                 plt.title("Pathologic Diagnosis Distribution")
                 plt.xlabel("Diagnosis")
                 plt.ylabel("Count")
                 plt.xticks(rotation=90)
-                self.annotate_plot(ax2)
+                self.annotate_plot(a_x2)
                 plt.tight_layout()
                 plt.savefig(filter_clinical_data_cfg.OUTPUT_DIAGNOSIS)
 
-    def annotate_plot(self, ax):
-        for p in ax.patches:
+    def annotate_plot(self, a_x):
+        """Annotate the bar plot with the respective heights.
+
+        Args:
+            a_x (matplotlib.axis): The axis object to be annotated.
+        """
+        for p in a_x.patches:
             height = p.get_height()
-            ax.text(
+            a_x.text(
                 x=p.get_x() + (p.get_width() / 2),
                 y=height,
-                s="{:.0f}".format(height),
+                s=f"{height:.0f}",
                 ha="center",
             )
 
     def write_dict_to_file(self, data_dict, filename):
-        with open(filename, "w") as f:
+        """Write a dictionary to a file.
+
+        Args:
+            data_dict (dict): The dictionary to write.
+            filename (str): The name of the output file.
+        """
+        with open(filename, "w", encoding="utf-8") as f:
             for patient_id, patient_info in data_dict.items():
                 f.write(f"Patient ID: {patient_id}\n")
                 for key, value in patient_info.items():
@@ -239,7 +279,14 @@ class ClinicalData:
                 f.write("\n")
 
     def print_post_surgery_files(self, patient_data, directory):
+        """Print the files related to post-surgery cases.
+
+        Args:
+            patient_data (dict): A dictionary containing patient data.
+            directory (str): The directory where the files are located.
+        """
         post_surgery_folder = os.path.join(directory, "post_surgery_files")
+
         os.makedirs(post_surgery_folder, exist_ok=True)
 
         for patient_id in patient_data:
@@ -250,15 +297,19 @@ class ClinicalData:
                 try:
                     # Attempt to parse the date in the expected format
                     surgery_date = datetime.strptime(
-                        patient_data[patient_id]["Date of first surgery"], "%d/%m/%y"
+                        patient_data[patient_id]["Date of first surgery"],
+                        "%d/%m/%y",
                     )
                 except ValueError:
                     # If the above fails, try to parse in the 'day/month/year' format
                     surgery_date = datetime.strptime(
-                        patient_data[patient_id]["Date of first surgery"], "%Y-%m-%d"
+                        patient_data[patient_id]["Date of first surgery"],
+                        "%Y-%m-%d",
                     )
 
-                patient_folder = os.path.join(post_surgery_folder, str(patient_id))
+                patient_folder = os.path.join(
+                    post_surgery_folder, str(patient_id)
+                )
                 os.makedirs(patient_folder, exist_ok=True)
 
                 for filename in os.listdir(directory):
@@ -269,14 +320,16 @@ class ClinicalData:
                         if file_date > surgery_date:
                             print(filename)
                             shutil.move(
-                                file_path, os.path.join(patient_folder, filename)
+                                file_path,
+                                os.path.join(patient_folder, filename),
                             )
             else:
                 print(f"No surgery data found for patient {patient_id}.")
 
     def main(self):
-        df = self.load_file()
-        patient_data = self.parse_data(df)
+        """Main function to handle loading, parsing, and possibly visualizing the clinical data."""
+        d_f = self.load_file()
+        patient_data = self.parse_data(d_f)
 
         if self.visualization:
             self.visualize_data(patient_data)
