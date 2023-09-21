@@ -147,7 +147,15 @@ class ArimaPrediction:
         raise ValueError(f"Unknown source type: {source}")
 
     def _arima_prediction(
-        self, p=None, d=1, q=0, from_image=True, data=None, forecast_steps=10, source):
+        self,
+        p_value=None,
+        d_value=1,
+        q_value=0,
+        from_image=True,
+        data=None,
+        forecast_steps=10,
+        source=None,
+    ):
         if from_image:
             series_list = [pd.Series(img) for img in self.images]
             suffix = "_from_image"
@@ -159,16 +167,16 @@ class ArimaPrediction:
         try:
             for i, data in enumerate(series_list):
                 # Make series stationary and get the differencing order
-                stationary_data, d = self.make_series_stationary(data)
+                stationary_data, d_value = self._make_series_stationary(data)
 
                 # If p isn't provided, determine it using PACF
-                if p is None:
-                    p = self.determine_p_from_pacf(stationary_data)
+                if p_value is None:
+                    p_value = self._determine_p_from_pacf(stationary_data)
 
                 # Get adaptive forecast steps
-                forecast_steps = self.get_adaptive_forecast_steps(stationary_data)
+                forecast_steps = self._get_adaptive_forecast_steps(stationary_data)
 
-                model = ARIMA(stationary_data, order=(p, d, q))
+                model = ARIMA(stationary_data, order=(p_value, d_value, q_value))
                 model_fit = model.fit()
 
                 # Display AIC and BIC metrics
@@ -182,7 +190,7 @@ class ArimaPrediction:
                 forecast_series = pd.Series(forecast, name="Predictions")
 
                 # Save the forecast to a CSV file
-                filename = self.filenames[i] if from_image else "time_series_data_{}".format(i)
+                filename = self.filenames[i] if from_image else f"time_series_data_{i}."
                 forecast_series.to_csv(
                     os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}{suffix}_forecast.csv"),
                     index=False,
@@ -196,10 +204,10 @@ class ArimaPrediction:
                 residuals = model_fit.resid
                 print(residuals.describe())
 
-        except Exception as e:
-            print("An error occurred:", str(e))
+        except IOError as error:
+            print("An error occurred:", str(error))
 
-    def _dickey_fuller_test(self, from_image=True, data=None):
+    def _dickey_fuller_test(self, from_image=True, data=None, source=None):
         if from_image:
             series_list = [pd.Series(img) for img in self.images]
             suffix = "_from_image"
@@ -212,9 +220,13 @@ class ArimaPrediction:
         for i, data in enumerate(series_list):
             # Augmented Dickey-Fuller test
             result = adfuller(data)
-            filename = self.filenames[i] if from_image else "time_series_data_{}".format(i)
+            filename = self.filenames[i] if from_image else f"time_series_data_{i}."
 
-            with open(os.path.join(OUTPUT_DIR, f"{filename}{suffix}_adf_test.txt"), "w") as file:
+            with open(
+                os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}{suffix}_adf_test.txt"),
+                "w",
+                encoding="utf-8",
+            ) as file:
                 file.write(f"ADF Statistic for image {i+1}: {result[0]}\n")
                 file.write(f"p-value for image {i+1}: {result[1]}\n")
                 for key, value in result[4].items():
