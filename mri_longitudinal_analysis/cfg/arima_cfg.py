@@ -1,3 +1,5 @@
+"""Config file for the script arima.py"""
+
 from pathlib import Path
 
 PLOTS_DIR = Path("/home/jc053/GITmri_longitudinal_analysis/data/test_data/output/volume_plots")
