@@ -1,6 +1,6 @@
 """
 This script provides functionality for ARIMA-based time series prediction.
-It supports loading data from both images and CSV files.
+It supports loading data from both images and .csv files.
 """
 import os
 
@@ -34,9 +34,13 @@ class DataHandler:
         :param file_names: List of filenames
         """
         for idx, ts_data in enumerate(series_list):
+            print(f"Creating Autocorrelation plot for: {file_names[idx]}")
             arima_pred.generate_plot(ts_data, "autocorrelation", file_names[idx])
+            print(f"Creating Partial Autocorrelation plot for: {file_names[idx]}")
             arima_pred.generate_plot(ts_data, "partial_autocorrelation", file_names[idx])
+            print("Checking stationarity through ADF test.")
             arima_pred.perform_dickey_fuller_test(data=ts_data)
+            print("Starting prediction!")
             arima_pred.arima_prediction(data=ts_data)
 
     def load_data_generator(self):
@@ -53,6 +57,7 @@ class ImageDataHandler(DataHandler):
         file_names = []
         try:
             loaded_images = 0
+            print("Loading data!")
             for filename in os.listdir(self.directory):
                 if filename.endswith(".png"):
                     img = Image.open(os.path.join(self.directory, filename)).convert("L")
@@ -92,6 +97,7 @@ class TimeSeriesDataHandler(DataHandler):
         file_names = []
         try:
             if os.path.isdir(self.directory):
+                print("Loading data!")
                 for filename in os.listdir(self.directory):
                     if filename.endswith(".csv"):
                         filepath = os.path.join(self.directory, filename)
@@ -101,6 +107,7 @@ class TimeSeriesDataHandler(DataHandler):
                         time_series_list.append(ts_data.squeeze())
                         file_names.append(os.path.splitext(filename)[0])
             elif os.path.isfile(self.directory) and self.directory.endswith(".csv"):
+                print("Loading data!")
                 ts_data = pd.read_csv(self.directory, usecols=[0, 1], parse_dates=[0], index_col=0)
                 time_series_list.append(ts_data.squeeze())
                 file_names.append(os.path.splitext(self.directory)[0])
@@ -447,11 +454,15 @@ if __name__ == "__main__":
     arima_prediction = ArimaPrediction()
 
     if arima_cfg.FROM_IMAGES:
+        print("Starting ARIMA from images.")
         image_handler = ImageDataHandler(arima_cfg.PLOTS_DIR, arima_cfg.LOADING_LIMIT)
         images, filenames = image_handler.load_data()
+        print("Data loaded!")
         image_handler.process_series(images, arima_prediction, filenames)
 
     if arima_cfg.FROM_DATA:
+        print("Starting ARIMA from time series csv's.")
         ts_handler = TimeSeriesDataHandler(arima_cfg.TIME_SERIES_DIR, arima_cfg.LOADING_LIMIT)
         ts_data_list = ts_handler.load_data()
+        print("Data loaded!")
         ts_handler.process_series(ts_data_list, arima_prediction, filenames)
