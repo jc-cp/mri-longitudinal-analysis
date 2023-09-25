@@ -11,5 +11,5 @@ OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/test_data/outp
 
 LOADING_LIMIT = 5
 
-FROM_IMAGES = True
-FROM_DATA = False
+FROM_IMAGES = False
+FROM_DATA = True

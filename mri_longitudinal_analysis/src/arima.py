@@ -10,7 +10,6 @@ import pandas as pd
 from cfg import arima_cfg
 from pandas.plotting import autocorrelation_plot
 from PIL import Image
-from statsmodels.graphics.tsaplots import plot_pacf
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.stattools import adfuller, pacf
 
@@ -39,9 +38,9 @@ class DataHandler:
             print(f"Creating Partial Autocorrelation plot for: {file_names[idx]}")
             arima_pred.generate_plot(ts_data, "partial_autocorrelation", file_names[idx])
             print("Checking stationarity through ADF test.")
-            arima_pred.perform_dickey_fuller_test(data=ts_data)
+            arima_pred.perform_dickey_fuller_test(data=ts_data, filename=file_names[idx])
             print("Starting prediction!")
-            arima_pred.arima_prediction(data=ts_data)
+            arima_pred.arima_prediction(data=ts_data, filename=file_names[idx])
 
     def load_data_generator(self):
         """Generate data on-the-fly for memory efficiency. Should be implemented by subclasses."""
@@ -134,37 +133,6 @@ class ArimaPrediction:
     A class to handle ARIMA-based time series prediction.
     """
 
-    PLOT_TYPES = {
-        "autocorrelation": {
-            "function": autocorrelation_plot,
-            "title": "Autocorrelation Plot",
-            "xlabel": "Lag",
-            "ylabel": "Autocorrelation",
-        },
-        "partial_autocorrelation": {
-            "function": plot_pacf,
-            "title": "Partial Autocorrelation Plot",
-            "xlabel": "Lag",
-            "ylabel": "Partial Autocorrelation",
-        },
-        "residuals": {
-            "function": lambda data: pd.Series(
-                data
-            ).plot(),  # Use lambda to adapt the plot() method
-            "title": "Residuals Plot",
-            "xlabel": "Date/Time",
-            "ylabel": "Residuals",
-        },
-        "density": {
-            "function": lambda data: pd.Series(data).plot(
-                kind="kde"
-            ),  # Use lambda for density plot
-            "title": "Density Plot",
-            "xlabel": "Residual Value",
-            "ylabel": "Density",
-        },
-    }
-
     def __init__(self):
         """
         Constructor for the Arima_prediction class.
@@ -172,6 +140,56 @@ class ArimaPrediction:
         self.images = []
         self.filenames = []
         os.makedirs(arima_cfg.OUTPUT_DIR, exist_ok=True)
+
+        self.plot_types = {
+            "autocorrelation": {
+                "function": autocorrelation_plot,
+                "title": "Autocorrelation Plot",
+                "xlabel": "Lag",
+                "ylabel": "Autocorrelation",
+            },
+            "partial_autocorrelation": {
+                "function": self.custom_plot_pacf,
+                "title": "Partial Autocorrelation Plot",
+                "xlabel": "Lag",
+                "ylabel": "Partial Autocorrelation",
+            },
+            "residuals": {
+                "function": lambda data: pd.Series(
+                    data
+                ).plot(),  # Use lambda to adapt the plot() method
+                "title": "Residuals Plot",
+                "xlabel": "Date/Time",
+                "ylabel": "Residuals",
+            },
+            "density": {
+                "function": lambda data: pd.Series(data).plot(
+                    kind="kde"
+                ),  # Use lambda for density plot
+                "title": "Density Plot",
+                "xlabel": "Residual Value",
+                "ylabel": "Density",
+            },
+        }
+
+    def custom_plot_pacf(self, data):
+        """
+        Plots the Partial Autocorrelation Function (PACF) of the given time series data
+        along with the confidence intervals. The function avoids the limitations of
+        standard PACF plotting tools by generating a custom plot.
+
+        Parameters:
+        - data (array-like): Time series data.
+        - alpha (float, optional): Significance level used to compute the confidence intervals.
+        Defaults to 0.05, indicating 95% confidence intervals.
+
+        Returns:
+        None. The function directly plots the PACF using matplotlib.
+        """
+        nlags = min(len(data) // 2 - 1, 10)
+        values, confint = pacf(data, nlags=nlags, alpha=0.05)
+        plt.bar(range(len(values)), values)
+        plt.fill_between(range(len(confint)), confint[:, 0], confint[:, 1], color="pink", alpha=0.3)
 
     def generate_plot(self, data, plot_type, filename):
         """
@@ -184,12 +202,12 @@ class ArimaPrediction:
         """
         plt.figure(figsize=(10, 6))
 
-        plot_func = self.PLOT_TYPES[plot_type]["function"]
+        plot_func = self.plot_types[plot_type]["function"]
         plot_func(data)
 
-        plt.title(self.PLOT_TYPES[plot_type]["title"] + f" for {filename}")
-        plt.xlabel(self.PLOT_TYPES[plot_type]["xlabel"])
-        plt.ylabel(self.PLOT_TYPES[plot_type]["ylabel"])
+        plt.title(self.plot_types[plot_type]["title"] + f" for {filename}")
+        plt.xlabel(self.plot_types[plot_type]["xlabel"])
+        plt.ylabel(self.plot_types[plot_type]["ylabel"])
 
         plt.grid(True)
         plt.tight_layout()
@@ -204,7 +222,7 @@ class ArimaPrediction:
         p_value=None,
         d_value=None,
         q_value=None,
-        forecast_steps=10,
+        forecast_steps=2,
         p_range=range(5),
         q_range=range(5),
     ):
@@ -214,6 +232,7 @@ class ArimaPrediction:
         suffix = "from_image" if "image" in filename else "from_csv"
 
         # Make series stationary and get the differencing d_value
+        print("Making data stationary!")
         stationary_data, d_value = self._make_series_stationary(data)
 
         # Get p_value from partial correlation
@@ -240,14 +259,16 @@ class ArimaPrediction:
             print(f"ARIMA model summary for image {filename}:\n{model_fit.summary()}")
 
             # Forecast next `forecast_steps` points
-            forecast, _, conf_int = model_fit.forecast(steps=forecast_steps)
-            self._diagnostics(model_fit, filename)
+            # forecast, _, conf_int = model_fit.forecast(steps=forecast_steps)
+            forecast = model_fit.forecast(steps=forecast_steps)
+
+            # self._diagnostics(model_fit, filename)
 
             forecast = ArimaPrediction.invert_differencing(data, forecast, d_value)
             forecast_series = pd.Series(forecast, name="Predictions")
 
             # Save forecasts
-            self._save_forecast_fig(data, forecast, forecast_steps, conf_int, filename)
+            # self._save_forecast_fig(data, forecast, forecast_steps, conf_int, filename)
             self._save_forecast_csv(forecast_series, filename, suffix)
 
             # plot residual errors
@@ -295,7 +316,7 @@ class ArimaPrediction:
 
     def _diagnostics(self, model_fit, filename):
         """Saves the diagnostics plot."""
-        model_fit.plot_diagnostics(figsize=(12, 8), legend=True)
+        model_fit.plot_diagnostics(figsize=(12, 8))
         plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}_diagnostics_plot.png"))
         plt.close()
 
@@ -358,7 +379,7 @@ class ArimaPrediction:
         - p value
         """
 
-        pacf_vals, confint = pacf(data, alpha=alpha, nlags=len(data) - 1)
+        pacf_vals, confint = pacf(data, alpha=alpha, nlags=min(len(data) // 2 - 1, 10))
         significant_lags = np.where(pacf_vals > confint[:, 1]) or np.where(
             pacf_vals < confint[:, 0]
         )
@@ -463,6 +484,6 @@ if __name__ == "__main__":
     if arima_cfg.FROM_DATA:
         print("Starting ARIMA from time series csv's.")
         ts_handler = TimeSeriesDataHandler(arima_cfg.TIME_SERIES_DIR, arima_cfg.LOADING_LIMIT)
-        ts_data_list = ts_handler.load_data()
+        ts_data_list, filenames = ts_handler.load_data()
         print("Data loaded!")
         ts_handler.process_series(ts_data_list, arima_prediction, filenames)
