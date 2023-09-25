@@ -1,3 +1,48 @@
+"""
+Cluster Analysis Script
+========================
+
+This script is dedicated to performing cluster analysis on a given dataset.
+The primary class, ClusterAnalysis, supports various clustering methods including K-means,
+DBSCAN, Faiss clustering, and a custom deep clustering method, and provides utility functions
+to visualize the results through UMAP and t-SNE projections, heatmaps, and silhouette scores.
+
+Usage:
+    To use this script, initialize the ClusterAnalysis class with appropriate parameters
+    and call the desired methods to perform clustering and generate visualizations and metrics.
+
+Functions and Methods:
+    - standardize_data: Standardizes the numerical data.
+    - apply_umap: Applies UMAP to reduce dimensions of the data.
+    - apply_tsne: Applies t-SNE to reduce dimensions of the data.
+    - perform_kmeans_clustering: Applies K-means clustering on the data.
+    - perform_faiss_clustering: Applies Faiss clustering on the data.
+    - deep_clustering: Applies deep clustering using a simple neural network.
+    - evaluate_silhouette_score: Evaluates and stores the silhouette score for a clustering method.
+    - save_metrics: Saves the silhouette scores to a file.
+    - plot_clusters: Generates UMAP and t-SNE scatter plots of the clusters.
+    - perform_dbscan_clustering: Applies DBSCAN clustering on the data.
+    - add_cluster_ellipses: Adds ellipses around clusters in scatter plots.
+    - plot_clusters_with_boundaries: Generates UMAP and t-SNE scatter plots with ellipses.
+    - plot_heatmap: Generates a heatmap of the data sorted by cluster labels.
+
+Attributes:
+    - The script assumes the input DataFrame contains a patient_id_column and feature columns.
+    - The paths for saving plots and metrics are specified through 
+    output_path and metrics_output_path respectively.
+
+Example:
+    Initialize the class object and apply clustering methods and visualizations as follows:
+    
+    cluster_analysis = ClusterAnalysis(dataframe, 'patient_id', 'path_to_save_plots', 
+                                       'path_to_save_metrics')
+    cluster_analysis.standardize_data()
+    cluster_analysis.apply_umap()
+    cluster_analysis.apply_tsne()
+    cluster_analysis.perform_kmeans_clustering()
+    cluster_analysis.plot_clusters('kmeans_plot_suffix')
+"""
+
 import os
 
 import faiss

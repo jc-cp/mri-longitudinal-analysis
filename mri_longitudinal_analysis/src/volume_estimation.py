@@ -91,51 +91,57 @@ class VolumeEstimator:
         return total_volume
 
     def process_files(self, max_patients=None):
-        """
-        Process segmentation files, estimating volume for each one.
-
-        Args:
-            max_patients (int, optional): Maximum number of patients to process. Defaults to None.
-        """
         file_paths = glob.glob(os.path.join(self.path, "*.nii.gz"))
 
-        patient_ids = set()
-        for file_path in file_paths:
-            file_name = os.path.basename(file_path)
-            patient_id, _ = file_name.split("_")[0], file_name.split("_")[1]  # scan_id irrelevant
-            patient_ids.add(patient_id)
+        valid_scans = defaultdict(list)  # Holds valid scans for each patient
+        all_scans = defaultdict(list)
 
-        if max_patients is not None and max_patients < len(patient_ids):
-            patient_ids = list(patient_ids)[:max_patients]
+        # Calculate volumes and filter out NaN ones first
+        with Pool(cpu_count()) as pool:
+            for file_path, volume in zip(file_paths, pool.map(self.estimate_volume, file_paths)):
+                patient_id, scan_id = os.path.basename(file_path).split("_")[:2]
+                all_scans[patient_id].append(scan_id)  # Store all scans for later
+                if not volume == 0:  # Only consider valid volumes
+                    valid_scans[patient_id].append(
+                        (file_path, volume)
+                    )  # Store valid file paths and volumes per patient
 
-        filtered_file_paths = [
-            fp for fp in file_paths if os.path.basename(fp).split("_")[0] in patient_ids
-        ]
+        # Write to file the patients with less than three valid scans and remove them from valid_scans dictionary
+        with open(volume_est_cfg.FEW_SCANS_FILE, "w", encoding="utf-8") as file:
+            for patient_id, scans in list(
+                all_scans.items()
+            ):  # Using list() to avoid RuntimeError due to dictionary size change during iteration
+                if len(valid_scans.get(patient_id, [])) < 3:
+                    file.write(f"{patient_id}\n")
+                    for scan_id in scans:
+                        file.write(f"---- {scan_id}\n")
+                    if patient_id in valid_scans:  # Remove from valid_scans if present
+                        del valid_scans[patient_id]
+
+        if max_patients is not None and max_patients < len(valid_scans):
+            valid_scans = dict(list(valid_scans.items())[:max_patients])
 
         if not volume_est_cfg.TEST_DATA:
-            filtered_df = self.dob_df[self.dob_df["BCH MRN"].astype(str).isin(patient_ids)]
+            filtered_df = self.dob_df[self.dob_df["BCH MRN"].astype(str).isin(valid_scans.keys())]
             print(f"The length of the filtered dataset is: {len(filtered_df)}")
 
-        with Pool(cpu_count()) as pool:
-            results = pool.map(self.estimate_volume, filtered_file_paths)
+        # Process the remaining valid scans
+        for patient_id, scans in valid_scans.items():
+            for file_path, volume in scans:
+                date_str = os.path.basename(file_path).split("_")[1].replace(".nii.gz", "")
+                date = datetime.strptime(date_str, "%Y%m%d")
 
-        for file_path, volume in zip(filtered_file_paths, results):
-            file_name = os.path.basename(file_path)
-            patient_id, date_str = file_name.split("_")[0], file_name.split("_")[1]
-            date_str = date_str.replace(".nii.gz", "")
-            date = datetime.strptime(date_str, "%Y%m%d")
-
-            if (
-                not volume_est_cfg.TEST_DATA
-                and patient_id in filtered_df["BCH MRN"].astype(str).values
-            ):
-                dob = self.dob_df.loc[
-                    self.dob_df["BCH MRN"] == int(patient_id), "Date of Birth"
-                ].iloc[0]
-                age = (date - dob).days / 365.25
-                self.volumes[patient_id].append((date, volume, age))
-            else:
-                self.volumes[patient_id].append((date, volume))
+                if (
+                    not volume_est_cfg.TEST_DATA
+                    and patient_id in filtered_df["BCH MRN"].astype(str).values
+                ):
+                    dob = self.dob_df.loc[
+                        self.dob_df["BCH MRN"] == int(patient_id), "Date of Birth"
+                    ].iloc[0]
+                    age = (date - dob).days / 365.25
+                    self.volumes[patient_id].append((date, volume, age))
+                else:
+                    self.volumes[patient_id].append((date, volume))
 
     def plot_with_poly_smoothing(self, patient_id, dates, volumes, ages=None):
         """
