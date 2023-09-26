@@ -20,11 +20,18 @@ REDCAP_FILE = Path(
 )
 FEW_SCANS_FILE = OUTPUT_DIR / "patients_with_few_scans.txt"
 
+NUMBER_TOTAL_PATIENTS = 89
+
 # Options for creating the plots
 LIMIT_LOADING = None
-KERNEL_SMOOTHING = False
-POLY_SMOOTHING = False
-NORMALIZATION = False
+
+RAW = True
+FILTERED = True
+POLY_SMOOTHING = True
+POLY_SMOOTHING_DEGREE = 5
+KERNEL_SMOOTHING = True
+BANDWITH = 10
+PLOT_COMPARISON = False
 
 # If test data is being used or not
 TEST_DATA = False

@@ -8,7 +8,6 @@ exports the results to specified directories.
 import csv
 import glob
 import os
-import sys
 from collections import defaultdict
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
@@ -18,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
+from scipy.stats import norm
 from cfg import volume_est_cfg
 
 
@@ -44,27 +44,33 @@ class VolumeEstimator:
             dob_file (str): Path to the CSV file containing date of birth data.
         """
         self.path = segmentations_path
+        self.raw_data = defaultdict(list)
+        self.filtered_data = defaultdict(list)
+        self.poly_smoothing_data = defaultdict(list)
+        self.kernel_smoothing_data = defaultdict(list)
+        self.data_sources = {
+            "raw": {},
+            "filtered": {},
+            "poly_smoothing": {},
+            "kernel_smoothing": {},
+        }
 
         if not volume_est_cfg.TEST_DATA:
             try:
                 # Process the redacap .csv with clinical data
                 self.dob_df = pd.read_csv(dob_file, sep=",", encoding="UTF-8")
                 print(f"The length of the total csv dataset is: {len(self.dob_df)}")
-                if len(self.dob_df) != 89:
-                    print(
-                        "Warning: The length of the filtered dataset is not 89. Check the csv"
-                        " again."
+                if len(self.dob_df) != volume_est_cfg.NUMBER_TOTAL_PATIENTS:
+                    raise ValueError(
+                        "Warning: The length of the filtered dataset is not"
+                        f" {volume_est_cfg.NUMBER_TOTAL_PATIENTS}. Check the csv again."
                     )
-                    sys.exit(1)
                 self.dob_df["Date of Birth"] = pd.to_datetime(
                     self.dob_df["Date of Birth"], format="%d/%m/%y"
                 )
                 self.dob_df["BCH MRN"] = self.dob_df["BCH MRN"].astype(int)
             except FileNotFoundError as error:
                 print(f"Error processing DOB file: {error}")
-                sys.exit(1)
-
-        self.volumes = defaultdict(list)
 
     @staticmethod
     def estimate_volume(segmentation_path):
@@ -86,101 +92,85 @@ class VolumeEstimator:
             total_volume = num_voxels * voxel_volume
         except FileNotFoundError as error:
             print(f"Error estimating volume for {segmentation_path}: {error}")
-            sys.exit(1)
 
         return total_volume
+
+    @staticmethod
+    def calculate_volume_change(previous, current):
+        """
+        Calculate the percentage change in volume from previous to current.
+
+        Args:
+            previous (float): Previous volume.
+            current (float): Current volume.
+
+        Returns:
+            float: Percentage change in volume.
+        """
+        return ((current - previous) / previous) * 100 if previous != 0 else 0
 
     def process_files(self, max_patients=None):
         file_paths = glob.glob(os.path.join(self.path, "*.nii.gz"))
 
-        valid_scans = defaultdict(list)  # Holds valid scans for each patient
+        all_ids = defaultdict(list)
         all_scans = defaultdict(list)
+        filtered_scans = defaultdict(list)
 
         # Calculate volumes and filter out NaN ones first
         with Pool(cpu_count()) as pool:
             for file_path, volume in zip(file_paths, pool.map(self.estimate_volume, file_paths)):
                 patient_id, scan_id = os.path.basename(file_path).split("_")[:2]
-                all_scans[patient_id].append(scan_id)  # Store all scans for later
-                if not volume == 0:  # Only consider valid volumes
-                    valid_scans[patient_id].append(
-                        (file_path, volume)
-                    )  # Store valid file paths and volumes per patient
 
-        # Write to file the patients with less than three valid scans and remove them from valid_scans dictionary
-        with open(volume_est_cfg.FEW_SCANS_FILE, "w", encoding="utf-8") as file:
-            for patient_id, scans in list(
-                all_scans.items()
-            ):  # Using list() to avoid RuntimeError due to dictionary size change during iteration
-                if len(valid_scans.get(patient_id, [])) < 3:
-                    file.write(f"{patient_id}\n")
-                    for scan_id in scans:
-                        file.write(f"---- {scan_id}\n")
-                    if patient_id in valid_scans:  # Remove from valid_scans if present
-                        del valid_scans[patient_id]
+                # take into account the ones for filtering
+                all_ids[patient_id].append(scan_id)
+                all_scans[patient_id].append((file_path, volume))
+                if volume != 0:
+                    filtered_scans[patient_id].append((file_path, volume))
 
-        if max_patients is not None and max_patients < len(valid_scans):
-            valid_scans = dict(list(valid_scans.items())[:max_patients])
+        self.raw_data = self.process_scans(all_scans)
+        self.data_sources["raw"] = self.raw_data
 
-        if not volume_est_cfg.TEST_DATA:
-            filtered_df = self.dob_df[self.dob_df["BCH MRN"].astype(str).isin(valid_scans.keys())]
-            print(f"The length of the filtered dataset is: {len(filtered_df)}")
+        if max_patients is not None and max_patients < len(self.raw_data):
+            self.raw_data = dict(list(self.raw_data.items())[:max_patients])
 
-        # Process the remaining valid scans
-        for patient_id, scans in valid_scans.items():
+        print(f"Set the max number of patient to be loaded to: {max_patients}")
+        print(f"The length of the filtered dataset is: {len(self.raw_data)}")
+
+        # Additional logic to process and store other states of data
+        # (filtered, poly-smoothed, kernel-smoothed)
+        if volume_est_cfg.FILTERED:
+            self.filtered_data = self.apply_filtering(all_ids, filtered_scans)
+            self.data_sources["filtered"] = self.filtered_data
+        if volume_est_cfg.POLY_SMOOTHING:
+            self.poly_smoothing_data = self.apply_polysmoothing(
+                poly_degree=volume_est_cfg.POLY_SMOOTHING_DEGREE
+            )
+            self.data_sources["poly_smoothing"] = self.poly_smoothing_data
+        if volume_est_cfg.KERNEL_SMOOTHING:
+            self.kernel_smoothing_data = self.apply_kernel_smoothing(
+                bandwith=volume_est_cfg.BANDWITH
+            )
+            self.data_sources["kernel_smoothing"] = self.kernel_smoothing_data
+
+    def process_scans(self, all_scans) -> defaultdict(list):
+        scan_dict = defaultdict(list)
+        for patient_id, scans in all_scans.items():
             for file_path, volume in scans:
                 date_str = os.path.basename(file_path).split("_")[1].replace(".nii.gz", "")
                 date = datetime.strptime(date_str, "%Y%m%d")
 
                 if (
                     not volume_est_cfg.TEST_DATA
-                    and patient_id in filtered_df["BCH MRN"].astype(str).values
+                    and patient_id in self.dob_df["BCH MRN"].astype(str).values
                 ):
                     dob = self.dob_df.loc[
                         self.dob_df["BCH MRN"] == int(patient_id), "Date of Birth"
                     ].iloc[0]
                     age = (date - dob).days / 365.25
-                    self.volumes[patient_id].append((date, volume, age))
+                    scan_dict[patient_id].append((date, volume, age))
                 else:
-                    self.volumes[patient_id].append((date, volume))
-
-    def plot_with_poly_smoothing(self, patient_id, dates, volumes, ages=None):
-        """
-        Create a plot for the given patient data using polynomial smoothing.
-
-        Args:
-            patient_id (str): ID of the patient.
-            dates (list): List of dates corresponding to volumes.
-            volumes (list): List of volumes for each date.
-            ages (list, optional): List of ages for each date. Defaults to None.
-
-        Returns:
-            matplotlib.figure.Figure: Figure object containing the plot.
-        """
-        # Polynomial interpolation
-        poly_degree = 5  # Degree of the polynomial
-        poly_coeff = np.polyfit(mdates.date2num(dates), volumes, poly_degree)
-        poly_interp = np.poly1d(poly_coeff)
-
-        # Generate interpolated values
-        num_points = 50  # Number of points for interpolation
-        start = mdates.date2num(min(dates))
-        end = mdates.date2num(max(dates))
-        interpolated_dates = mdates.num2date(np.linspace(start, end, num_points))
-        interpolated_volumes_poly = poly_interp(mdates.date2num(interpolated_dates))
-
-        fig, a_x1 = self.setup_plot_base()
-
-        a_x1.plot(interpolated_dates, interpolated_volumes_poly, color="tab:blue", marker="o")
-        a_x1.set_xticks(dates)
-        a_x1.set_xticklabels([dt.strftime("%m/%d/%Y") for dt in dates], rotation=90, fontsize=8)
-
-        self.add_volume_change_to_plot(a_x1, dates, volumes)
-
-        if ages:
-            self.add_age_to_plot(a_x1, dates, ages)
-
-        plt.title(f"Patient ID: {patient_id}")
-        return fig
+                    scan_dict[patient_id].append((date, volume))
+        return scan_dict
 
     def setup_plot_base(self):
         """
@@ -206,13 +196,11 @@ class VolumeEstimator:
             dates (list): List of dates.
             volumes (list): List of volumes.
         """
-        volume_changes = [0]
-        for i, vol in enumerate(volumes[1:], 1):
-            if volumes[i - 1] != 0:
-                volume_change = ((vol - volumes[i - 1]) / volumes[i - 1]) * 100
-            else:
-                volume_change = np.nan
-            volume_changes.append(volume_change)
+        volume_changes = [
+            self.calculate_volume_change(volumes[i - 1], vol)
+            for i, vol in enumerate(volumes[1:], 1)
+        ]
+        volume_changes.insert(0, 0)
 
         for i, (date, volume, volume_change) in enumerate(zip(dates, volumes, volume_changes)):
             a_x.text(
@@ -233,68 +221,61 @@ class VolumeEstimator:
             dates (list): List of dates.
             ages (list): List of ages.
         """
-        a_x2 = a_x.twiny()
-        a_x2.xaxis.set_ticks_position("top")
-        a_x2.xaxis.set_label_position("top")
-        a_x2.set_xlabel("Patient Age (Years)")
-        a_x2.set_xlim(a_x.get_xlim())
-        date_nums = mdates.date2num(dates)
-        a_x2.set_xticks(date_nums)
-        a_x2.set_xticklabels([f"{age:.1f}" for age in ages])
-        a_x2.xaxis.set_tick_params(labelsize=8)
+        if ages:
+            a_x2 = a_x.twiny()
+            a_x2.xaxis.set_ticks_position("top")
+            a_x2.xaxis.set_label_position("top")
+            a_x2.set_xlabel("Patient Age (Years)")
+            a_x2.set_xlim(a_x.get_xlim())
+            date_nums = mdates.date2num(dates)
+            a_x2.set_xticks(date_nums)
+            a_x2.set_xticklabels([f"{age:.1f}" for age in ages])
+            a_x2.xaxis.set_tick_params(labelsize=8)
 
     def plot_volumes(self, output_path):
-        """
-        Generate plots for each patient based on their volumes and save to the given directory.
+        print(len(self.data_sources["poly_smoothing"]))
+        for data_type, data in self.data_sources.items():
+            print(f"Checking data_type: {data_type}")
+            if getattr(volume_est_cfg, data_type.upper(), None):
+                print(f"Plotting data_type: {data_type}")  # Debug line
+                self.plot_each_type(data, output_path, data_type)
 
-        Args:
-            output_path (str): Path to the directory where plots should be saved.
-        """
+    def plot_each_type(self, data, output_path, data_type):
         os.makedirs(output_path, exist_ok=True)
-
-        for patient_id, volumes_data in self.volumes.items():
+        for patient_id, volumes_data in data.items():
             volumes_data.sort(key=lambda x: x[0])  # sort by date
 
-            if volume_est_cfg.POLY_SMOOTHING:
-                if not volume_est_cfg.TEST_DATA:
-                    dates, volumes, ages = zip(*volumes_data)  # unzip to three lists
-                    fig = self.plot_with_poly_smoothing(patient_id, dates, volumes, ages)
-                else:
-                    dates, volumes = zip(*volumes_data)
-                    fig = self.plot_with_poly_smoothing(patient_id, dates, volumes)
+            if not volume_est_cfg.TEST_DATA:
+                dates, volumes, ages = zip(*volumes_data)
             else:
-                fig, a_x1 = self.setup_plot_base()
+                dates, volumes = zip(*volumes_data)
 
-                if not volume_est_cfg.TEST_DATA:
-                    dates, volumes, ages = zip(*volumes_data)
-                    a_x1.plot(dates, volumes, color="tab:blue", marker="o")
-                    self.add_volume_change_to_plot(a_x1, dates, volumes)
-                    self.add_age_to_plot(a_x1, dates, ages)
-                else:
-                    dates, volumes = zip(*volumes_data)
-                    a_x1.plot(dates, volumes, color="tab:blue", marker="o")
-                    self.add_volume_change_to_plot(a_x1, dates, volumes)
+            self.plot_data(
+                data_type,
+                output_path,
+                patient_id,
+                dates,
+                volumes,
+                ages if not volume_est_cfg.TEST_DATA else None,
+            )
 
-                plt.title(f"Patient ID: {patient_id}")
+    def plot_data(self, data_type, output_path, patient_id, dates, volumes, ages=None):
+        os.makedirs(output_path, exist_ok=True)
 
-            fig.tight_layout()
+        fig, a_x1 = self.setup_plot_base()
 
-            date_range = f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
-            plt.savefig(os.path.join(output_path, f"volume_{patient_id}_{date_range}.png"))
-            plt.close()
+        a_x1.plot(dates, volumes, color="tab:blue", marker="o")
+        self.add_volume_change_to_plot(a_x1, dates, volumes)
 
-    def calculate_volume_change(self, previous, current):
-        """
-        Calculate the percentage change in volume from previous to current.
+        if ages:
+            self.add_age_to_plot(a_x1, dates, ages)
 
-        Args:
-            previous (float): Previous volume.
-            current (float): Current volume.
+        plt.title(f"Patient ID: {patient_id} - {data_type}")
+        fig.tight_layout()
 
-        Returns:
-            float: Percentage change in volume.
-        """
-        return ((current - previous) / previous) * 100 if previous != 0 else 0
+        date_range = f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
+        plt.savefig(os.path.join(output_path, f"volume_{data_type}_{patient_id}_{date_range}.png"))
+        plt.close()
 
     def generate_csv(self, output_folder):
         """
@@ -308,7 +289,7 @@ class VolumeEstimator:
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
 
-        for patient_id, volume_data in self.volumes.items():
+        for patient_id, volume_data in self.raw_data.items():
             csv_file_path = os.path.join(output_folder, f"{patient_id}.csv")
 
             with open(csv_file_path, "w", newline="", encoding="utf-8") as csvfile:
@@ -345,13 +326,137 @@ class VolumeEstimator:
                         csv_writer.writerow([date.strftime("%Y-%m-%d"), volume, percentage_growth])
                         previous_volume = volume
 
+    def apply_filtering(self, all_ids, filtered_scans) -> defaultdict(list):
+        filtered_data = defaultdict(list)
+        with open(volume_est_cfg.FEW_SCANS_FILE, "w", encoding="utf-8") as file:
+            for patient_id, scans in list(all_ids.items()):
+                if len(filtered_scans.get(patient_id, [])) < 3:
+                    file.write(f"{patient_id}\n")
+                    for scan_id in scans:
+                        file.write(f"---- {scan_id}\n")
+                    if patient_id in filtered_scans:
+                        del filtered_scans[patient_id]
+
+        filtered_data = self.process_scans(filtered_scans)
+        return filtered_data
+
+    def apply_polysmoothing(self, poly_degree=3):
+        polysmoothed_data = defaultdict(list)
+        for patient_id, scans in self.filtered_data.items():
+            scans.sort(key=lambda x: x[0])  # Sort by date
+
+            dates, volumes, ages = zip(*[(date, volume, age) for date, volume, age in scans])
+            # Polynomial interpolation
+            poly_coeff = np.polyfit(mdates.date2num(dates), volumes, poly_degree)
+            poly_interp = np.poly1d(poly_coeff)
+
+            # Polynomial interpolation for ages
+            poly_coeff_age = np.polyfit(mdates.date2num(dates), ages, poly_degree)
+            poly_interp_age = np.poly1d(poly_coeff_age)
+
+            # Generate interpolated values
+            num_points = 50  # Number of points for interpolation
+            start = mdates.date2num(min(dates))
+            end = mdates.date2num(max(dates))
+            interpolated_dates = mdates.num2date(np.linspace(start, end, num_points))
+
+            # Generate smoothed volumes and ages
+            smoothed_volumes = poly_interp(mdates.date2num(interpolated_dates))
+            smoothed_ages = poly_interp_age(mdates.date2num(interpolated_dates))
+
+            # Applying the polynomial smoothing
+            polysmoothed_data[patient_id] = [
+                (interpolated_date, smoothed_vol, smoothed_age)
+                for interpolated_date, smoothed_vol, smoothed_age in zip(
+                    interpolated_dates, smoothed_volumes, smoothed_ages
+                )
+            ]
+        return polysmoothed_data
+
+    def gaussian_kernel(self, x_, x_i, bandwidth):
+        """Gaussian Kernel Function"""
+        return norm.pdf((x_ - x_i) / bandwidth)
+
+    def apply_kernel_smoothing(self, bandwidth=30):
+        kernelsmoothed_data = defaultdict(list)
+        for patient_id, scans in self.filtered_data.items():
+            scans.sort(key=lambda x: x[0])  # Sort by date
+
+            dates, volumes, ages = zip(*scans)
+            num_dates = mdates.date2num(dates)
+
+            # Preallocate arrays for smoothed volumes and ages
+            smoothed_volumes = np.zeros(len(volumes))
+            smoothed_ages = np.zeros(len(ages))
+
+            # Apply kernel smoothing to volumes and ages
+            for i, (date, volume, age) in enumerate(zip(num_dates, volumes, ages)):
+                weights = np.array(
+                    [self.gaussian_kernel(date, date_i, bandwidth) for date_i in num_dates]
+                )
+                weights = weights / np.sum(weights)
+
+                smoothed_volumes[i] = np.sum(weights * volumes)
+                smoothed_ages[i] = np.sum(weights * ages)
+
+            # Store smoothed data
+            kernelsmoothed_data[patient_id] = [
+                (mdates.num2date(date), smoothed_vol, smoothed_age)
+                for date, smoothed_vol, smoothed_age in zip(
+                    num_dates, smoothed_volumes, smoothed_ages
+                )
+            ]
+        return kernelsmoothed_data
+
+    def plot_comparison(self, output_path):
+        os.makedirs(output_path, exist_ok=True)
+
+        for patient_id, volumes_data in self.raw_data.items():
+            volumes_data.sort(key=lambda x: x[0])  # sort by date
+
+            if not volume_est_cfg.TEST_DATA:
+                dates, volumes, _ = zip(*volumes_data)
+            else:
+                dates, volumes = zip(*volumes_data)
+
+            fig, a_x1 = self.setup_plot_base()
+
+            if volume_est_cfg.RAW:
+                self.overlay_data("raw", a_x1, dates, volumes, "b-", "Raw")
+            if volume_est_cfg.FILTERED:
+                self.overlay_data("filtered", a_x1, dates, volumes, "g-", "Filtered")
+            if volume_est_cfg.POLY_SMOOTHING:
+                self.overlay_data("polysmoothed", a_x1, dates, volumes, "r-", "PolySmoothed")
+            if volume_est_cfg.KERNEL_SMOOTHING:
+                self.overlay_data("kernel_smoothed", a_x1, dates, volumes, "c-", "Kernel Smoothed")
+
+            plt.title(f"Comparison for Patient ID: {patient_id}")
+            fig.tight_layout()
+
+            date_range = f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
+            plt.savefig(os.path.join(output_path, f"comparison_{patient_id}_{date_range}.png"))
+            plt.close()
+
+    def overlay_data(self, data_type, a_x1, dates, patient_id, line_style, label):
+        """
+        This function overlays the plot on the same axes with different styles.
+        """
+        if data_type in self.data_sources:
+            processed_volumes = self.data_sources[data_type].get(patient_id, [])
+            if processed_volumes:
+                a_x1.plot(dates, processed_volumes, line_style, label=label)
+                a_x1.legend(loc="upper left")
+
 
 if __name__ == "__main__":
+    print("Initializing Volume Estimator.")
     ve = VolumeEstimator(volume_est_cfg.SEG_DIR, volume_est_cfg.REDCAP_FILE)
-    print("Volume Estimator initialized.")
     print("Getting prediction masks.")
+
     ve.process_files(max_patients=volume_est_cfg.LIMIT_LOADING)
     print("Saving data.")
+
     ve.plot_volumes(output_path=volume_est_cfg.PLOTS_DIR)
-    print("Generating time-series csv's.")
-    ve.generate_csv(output_folder=volume_est_cfg.CSV_DIR)
+    # ve.plot_comparison(output_path=volume_est_cfg.PLOTS_DIR)
+    # print("Generating time-series csv's.")
+    # ve.generate_csv(output_folder=volume_est_cfg.CSV_DIR)
