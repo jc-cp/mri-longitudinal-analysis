@@ -148,7 +148,7 @@ class VolumeEstimator:
             self.data_sources["poly_smoothing"] = self.poly_smoothing_data
         if volume_est_cfg.KERNEL_SMOOTHING:
             self.kernel_smoothing_data = self.apply_kernel_smoothing(
-                bandwith=volume_est_cfg.BANDWITH
+                bandwidth=volume_est_cfg.BANDWIDTH
             )
             self.data_sources["kernel_smoothing"] = self.kernel_smoothing_data
 
@@ -233,11 +233,8 @@ class VolumeEstimator:
             a_x2.xaxis.set_tick_params(labelsize=8)
 
     def plot_volumes(self, output_path):
-        print(len(self.data_sources["poly_smoothing"]))
         for data_type, data in self.data_sources.items():
-            print(f"Checking data_type: {data_type}")
             if getattr(volume_est_cfg, data_type.upper(), None):
-                print(f"Plotting data_type: {data_type}")  # Debug line
                 self.plot_each_type(data, output_path, data_type)
 
     def plot_each_type(self, data, output_path, data_type):
@@ -409,54 +406,45 @@ class VolumeEstimator:
         return kernelsmoothed_data
 
     def plot_comparison(self, output_path):
-        os.makedirs(output_path, exist_ok=True)
+        unique_patient_ids = set(self.data_sources["raw"].keys())
 
-        for patient_id, volumes_data in self.raw_data.items():
-            volumes_data.sort(key=lambda x: x[0])  # sort by date
+        for patient_id in unique_patient_ids:
+            fig, axs = plt.subplots(1, 4, figsize=(20, 5))
 
-            if not volume_est_cfg.TEST_DATA:
-                dates, volumes, _ = zip(*volumes_data)
-            else:
-                dates, volumes = zip(*volumes_data)
+            for i, (key, data) in enumerate(self.data_sources.items()):
+                ax = axs[i]
 
-            fig, a_x1 = self.setup_plot_base()
+                patient_data = data.get(patient_id, [])
 
-            if volume_est_cfg.RAW:
-                self.overlay_data("raw", a_x1, dates, volumes, "b-", "Raw")
-            if volume_est_cfg.FILTERED:
-                self.overlay_data("filtered", a_x1, dates, volumes, "g-", "Filtered")
-            if volume_est_cfg.POLY_SMOOTHING:
-                self.overlay_data("polysmoothed", a_x1, dates, volumes, "r-", "PolySmoothed")
-            if volume_est_cfg.KERNEL_SMOOTHING:
-                self.overlay_data("kernel_smoothed", a_x1, dates, volumes, "c-", "Kernel Smoothed")
+                if not patient_data:
+                    ax.set_title(f"No Data: {key}")
+                    continue
 
-            plt.title(f"Comparison for Patient ID: {patient_id}")
-            fig.tight_layout()
+                dates, volumes, _ = zip(*patient_data)
 
-            date_range = f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
-            plt.savefig(os.path.join(output_path, f"comparison_{patient_id}_{date_range}.png"))
-            plt.close()
+                ax.plot(dates, volumes, label=f"{key} data")
+                ax.set_title(f"{key} Data for Patient {patient_id}")
+                ax.set_xlabel("Date")
+                ax.set_ylabel("Volume")
+                ax.legend()
 
-    def overlay_data(self, data_type, a_x1, dates, patient_id, line_style, label):
-        """
-        This function overlays the plot on the same axes with different styles.
-        """
-        if data_type in self.data_sources:
-            processed_volumes = self.data_sources[data_type].get(patient_id, [])
-            if processed_volumes:
-                a_x1.plot(dates, processed_volumes, line_style, label=label)
-                a_x1.legend(loc="upper left")
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_path, f"volume_comparison_{patient_id}.png"))
+            plt.close(fig)
 
 
 if __name__ == "__main__":
     print("Initializing Volume Estimator.")
     ve = VolumeEstimator(volume_est_cfg.SEG_DIR, volume_est_cfg.REDCAP_FILE)
     print("Getting prediction masks.")
-
     ve.process_files(max_patients=volume_est_cfg.LIMIT_LOADING)
-    print("Saving data.")
-
+    print("All files processed, generating plots.")
     ve.plot_volumes(output_path=volume_est_cfg.PLOTS_DIR)
-    # ve.plot_comparison(output_path=volume_est_cfg.PLOTS_DIR)
-    # print("Generating time-series csv's.")
+    print("Saved all plots.")
+
+    if volume_est_cfg.PLOT_COMPARISON:
+        print("Generating volume comparison.")
+        ve.plot_comparison(output_path=volume_est_cfg.PLOTS_DIR)
+        print("Saved comparison.")
+    print("Generating time-series csv's.")
     # ve.generate_csv(output_folder=volume_est_cfg.CSV_DIR)

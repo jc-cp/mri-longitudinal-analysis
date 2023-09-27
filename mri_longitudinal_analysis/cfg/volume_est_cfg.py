@@ -25,13 +25,12 @@ NUMBER_TOTAL_PATIENTS = 89
 # Options for creating the plots
 LIMIT_LOADING = None
 
-RAW = True
 FILTERED = True
 POLY_SMOOTHING = True
 POLY_SMOOTHING_DEGREE = 5
 KERNEL_SMOOTHING = True
-BANDWITH = 10
-PLOT_COMPARISON = False
+BANDWIDTH = 200
+PLOT_COMPARISON = True
 
 # If test data is being used or not
 TEST_DATA = False
