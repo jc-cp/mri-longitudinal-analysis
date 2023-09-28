@@ -123,6 +123,8 @@ class VolumeEstimator:
         all_ids = defaultdict(list)
         all_scans = defaultdict(list)
         filtered_scans = defaultdict(list)
+        zero_volume_scans = defaultdict(list)
+        zero_volume_counter = 0
 
         # Calculate volumes and filter out NaN ones first
         with Pool(cpu_count()) as pool:
@@ -134,7 +136,19 @@ class VolumeEstimator:
                 all_scans[patient_id].append((file_path, volume))
                 if volume != 0:
                     filtered_scans[patient_id].append((file_path, volume))
+                else:
+                    zero_volume_scans[patient_id].append(scan_id)
+                    zero_volume_counter += 1
 
+        # write zero_volume_scans to a file
+        with open(volume_est_cfg.ZERO_VOLUME_FILE, "w", encoding="utf-8") as file:
+            file.write(f"Total zero volume scans: {zero_volume_counter}\n")
+            for patient_id, scans in zero_volume_scans.items():
+                file.write(f"{patient_id}\n")
+                for scan_id in scans:
+                    file.write(f"---- {scan_id}\n")
+
+        # store raw data
         self.raw_data = self.process_scans(all_scans)
         self.data_sources["raw"] = self.raw_data
 
@@ -378,14 +392,25 @@ class VolumeEstimator:
             defaultdict(list): Filtered scan data.
         """
         filtered_data = defaultdict(list)
+
+        # Counters for patients with too few scans and such scans
+        total_patients_with_few_scans = 0
+        total_scans_ignored = 0
+
         with open(volume_est_cfg.FEW_SCANS_FILE, "w", encoding="utf-8") as file:
             for patient_id, scans in list(all_ids.items()):
                 if len(filtered_scans.get(patient_id, [])) < 3:
+                    total_patients_with_few_scans += 1  # Increment the patient counter
+                    total_scans_ignored += len(scans)
                     file.write(f"{patient_id}\n")
                     for scan_id in scans:
                         file.write(f"---- {scan_id}\n")
                     if patient_id in filtered_scans:
                         del filtered_scans[patient_id]
+
+            # Write total counts to the file
+            file.write(f"\nTotal patients with too few scans: {total_patients_with_few_scans}\n")
+            file.write(f"Total scans not considered due to too few scans: {total_scans_ignored}\n")
 
         filtered_data = self.process_scans(filtered_scans)
         return filtered_data
