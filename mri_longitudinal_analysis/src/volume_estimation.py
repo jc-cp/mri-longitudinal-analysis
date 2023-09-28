@@ -110,6 +110,14 @@ class VolumeEstimator:
         return ((current - previous) / previous) * 100 if previous != 0 else 0
 
     def process_files(self, max_patients=None):
+        """
+        Processes the .nii.gz files from a specified directory to generate volume estimates
+        and apply various filters.
+        Populates raw, filtered, poly-smoothed, and kernel-smoothed data.
+
+        Args:
+            max_patients (int, optional): Maximum number of patients to load. Defaults to None.
+        """
         file_paths = glob.glob(os.path.join(self.path, "*.nii.gz"))
 
         all_ids = defaultdict(list)
@@ -153,6 +161,16 @@ class VolumeEstimator:
             self.data_sources["kernel_smoothing"] = self.kernel_smoothing_data
 
     def process_scans(self, all_scans) -> defaultdict(list):
+        """
+        Processes scan information to calculate volumes and optionally age.
+
+        Args:
+            all_scans (dict): Dictionary containing scan information.
+
+        Returns:
+            defaultdict(list): Processed scan information, including date,
+            volume, and optionally age.
+        """
         scan_dict = defaultdict(list)
         for patient_id, scans in all_scans.items():
             for file_path, volume in scans:
@@ -233,11 +251,25 @@ class VolumeEstimator:
             a_x2.xaxis.set_tick_params(labelsize=8)
 
     def plot_volumes(self, output_path):
+        """
+        Plots the volumes data for each data type (raw, filtered, etc.)
+
+        Args:
+            output_path (str): The directory where plots should be saved.
+        """
         for data_type, data in self.data_sources.items():
             if getattr(volume_est_cfg, data_type.upper(), None):
                 self.plot_each_type(data, output_path, data_type)
 
     def plot_each_type(self, data, output_path, data_type):
+        """
+        Plots the volumes data for a specific data type.
+
+        Args:
+            data (dict): Data to plot.
+            output_path (str): The directory where plots should be saved.
+            data_type (str): The type of data ('raw', 'filtered', etc.)
+        """
         os.makedirs(output_path, exist_ok=True)
         for patient_id, volumes_data in data.items():
             volumes_data.sort(key=lambda x: x[0])  # sort by date
@@ -257,6 +289,17 @@ class VolumeEstimator:
             )
 
     def plot_data(self, data_type, output_path, patient_id, dates, volumes, ages=None):
+        """
+        Plots and saves the volume data for a single patient.
+
+        Args:
+            data_type (str): The type of data ('raw', 'filtered', etc.)
+            output_path (str): The directory where plots should be saved.
+            patient_id (str): The ID of the patient.
+            dates (list): List of dates.
+            volumes (list): List of volumes.
+            ages (list, optional): List of ages. Defaults to None.
+        """
         os.makedirs(output_path, exist_ok=True)
 
         fig, a_x1 = self.setup_plot_base()
@@ -324,6 +367,16 @@ class VolumeEstimator:
                         previous_volume = volume
 
     def apply_filtering(self, all_ids, filtered_scans) -> defaultdict(list):
+        """
+        Applies filtering to exclude scans with less than a certain number of points.
+
+        Args:
+            all_ids (dict): Dictionary of all patient IDs.
+            filtered_scans (dict): Dictionary of filtered scans.
+
+        Returns:
+            defaultdict(list): Filtered scan data.
+        """
         filtered_data = defaultdict(list)
         with open(volume_est_cfg.FEW_SCANS_FILE, "w", encoding="utf-8") as file:
             for patient_id, scans in list(all_ids.items()):
@@ -338,6 +391,15 @@ class VolumeEstimator:
         return filtered_data
 
     def apply_polysmoothing(self, poly_degree=3):
+        """
+        Applies polynomial smoothing to the volume data.
+
+        Args:
+            poly_degree (int, optional): Degree of the polynomial. Defaults to 3.
+
+        Returns:
+            defaultdict(list): Data after polynomial smoothing.
+        """
         polysmoothed_data = defaultdict(list)
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[0])  # Sort by date
@@ -375,6 +437,15 @@ class VolumeEstimator:
         return norm.pdf((x_ - x_i) / bandwidth)
 
     def apply_kernel_smoothing(self, bandwidth=30):
+        """
+        Applies kernel smoothing to the volume data.
+
+        Args:
+            bandwidth (int, optional): The bandwidth for the Gaussian kernel. Defaults to 30.
+
+        Returns:
+            defaultdict(list): Data after kernel smoothing.
+        """
         kernelsmoothed_data = defaultdict(list)
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[0])  # Sort by date
@@ -387,7 +458,7 @@ class VolumeEstimator:
             smoothed_ages = np.zeros(len(ages))
 
             # Apply kernel smoothing to volumes and ages
-            for i, (date, volume, age) in enumerate(zip(num_dates, volumes, ages)):
+            for i, (date, _, _) in enumerate(zip(num_dates, volumes, ages)):
                 weights = np.array(
                     [self.gaussian_kernel(date, date_i, bandwidth) for date_i in num_dates]
                 )
@@ -406,6 +477,12 @@ class VolumeEstimator:
         return kernelsmoothed_data
 
     def plot_comparison(self, output_path):
+        """
+        Plots a comparison of all the data types for each unique patient ID.
+
+        Args:
+            output_path (str): The directory where the comparison plots should be saved.
+        """
         unique_patient_ids = set(self.data_sources["raw"].keys())
 
         for patient_id in unique_patient_ids:
