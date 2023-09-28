@@ -10,6 +10,7 @@ import glob
 import os
 from collections import defaultdict
 from datetime import datetime
+from math import isfinite
 from multiprocessing import Pool, cpu_count
 
 import matplotlib.dates as mdates
@@ -18,7 +19,9 @@ import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 from scipy.stats import norm
+
 from cfg import volume_est_cfg
+from utils.helper_functions import gaussian_kernel, weighted_median
 
 
 class VolumeEstimator:
@@ -48,11 +51,14 @@ class VolumeEstimator:
         self.filtered_data = defaultdict(list)
         self.poly_smoothing_data = defaultdict(list)
         self.kernel_smoothing_data = defaultdict(list)
+        self.window_smoothing_data = defaultdict(list)
+
         self.data_sources = {
             "raw": {},
             "filtered": {},
             "poly_smoothing": {},
             "kernel_smoothing": {},
+            "window_smoothing": {},
         }
 
         if not volume_est_cfg.TEST_DATA:
@@ -164,15 +170,16 @@ class VolumeEstimator:
             self.filtered_data = self.apply_filtering(all_ids, filtered_scans)
             self.data_sources["filtered"] = self.filtered_data
         if volume_est_cfg.POLY_SMOOTHING:
-            self.poly_smoothing_data = self.apply_polysmoothing(
-                poly_degree=volume_est_cfg.POLY_SMOOTHING_DEGREE
-            )
+            self.poly_smoothing_data = self.apply_polysmoothing()
             self.data_sources["poly_smoothing"] = self.poly_smoothing_data
         if volume_est_cfg.KERNEL_SMOOTHING:
             self.kernel_smoothing_data = self.apply_kernel_smoothing(
                 bandwidth=volume_est_cfg.BANDWIDTH
             )
             self.data_sources["kernel_smoothing"] = self.kernel_smoothing_data
+        if volume_est_cfg.WINDOW_SMOOTHING:
+            self.window_smoothing_data = self.apply_sliding_window_interpolation()
+            self.data_sources["window_smoothing"] = self.window_smoothing_data
 
     def process_scans(self, all_scans) -> defaultdict(list):
         """
@@ -417,17 +424,32 @@ class VolumeEstimator:
 
     def apply_polysmoothing(self, poly_degree=3):
         """
-        Applies polynomial smoothing to the volume data.
-
-        Args:
-            poly_degree (int, optional): Degree of the polynomial. Defaults to 3.
+        Applies polynomial smoothing to the volume data, dynamically selecting
+        polynomial degree based on the number of scans for each patient.
 
         Returns:
             defaultdict(list): Data after polynomial smoothing.
         """
+
+        average_scans = np.mean([len(scans) for scans in self.filtered_data.values()])
+        print(average_scans)
+
         polysmoothed_data = defaultdict(list)
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[0])  # Sort by date
+            n_scans = len(scans)
+
+            # Dynamic selection of polynomial degree
+            if n_scans < 4:
+                poly_degree = 1
+            elif 4 <= n_scans <= 5:
+                poly_degree = 2
+            elif 6 <= n_scans <= 7:
+                poly_degree = 3
+            elif 8 <= n_scans <= 9:
+                poly_degree = 4
+            else:
+                poly_degree = 5
 
             dates, volumes, ages = zip(*[(date, volume, age) for date, volume, age in scans])
             # Polynomial interpolation
@@ -439,13 +461,14 @@ class VolumeEstimator:
             poly_interp_age = np.poly1d(poly_coeff_age)
 
             # Generate interpolated values
-            num_points = 50  # Number of points for interpolation
+            num_points = 25  # Number of points for interpolation
             start = mdates.date2num(min(dates))
             end = mdates.date2num(max(dates))
             interpolated_dates = mdates.num2date(np.linspace(start, end, num_points))
 
             # Generate smoothed volumes and ages
             smoothed_volumes = poly_interp(mdates.date2num(interpolated_dates))
+            smoothed_volumes = np.maximum(smoothed_volumes, 0)
             smoothed_ages = poly_interp_age(mdates.date2num(interpolated_dates))
 
             # Applying the polynomial smoothing
@@ -456,10 +479,6 @@ class VolumeEstimator:
                 )
             ]
         return polysmoothed_data
-
-    def gaussian_kernel(self, x_var, x_i, bandwidth):
-        """Gaussian Kernel Function"""
-        return norm.pdf((x_var - x_i) / bandwidth)
 
     def apply_kernel_smoothing(self, bandwidth=30):
         """
@@ -485,7 +504,7 @@ class VolumeEstimator:
             # Apply kernel smoothing to volumes and ages
             for i, (date, _, _) in enumerate(zip(num_dates, volumes, ages)):
                 weights = np.array(
-                    [self.gaussian_kernel(date, date_i, bandwidth) for date_i in num_dates]
+                    [gaussian_kernel(date, date_i, bandwidth) for date_i in num_dates]
                 )
                 weights = weights / np.sum(weights)
 
@@ -501,6 +520,62 @@ class VolumeEstimator:
             ]
         return kernelsmoothed_data
 
+    def apply_sliding_window_interpolation(self, window_size=3):
+        """
+        Apply sliding window interpolation to smooth volumetric data of patients.
+
+        This method applies a Gaussian-weighted median-based smoothing technique
+        on a time series of scan volumes. The weighted median is calculated for
+        each scan based on neighboring scans within a defined window.
+
+        Parameters:
+            window_size (int): Size of the window used to calculate the weighted
+                            median. Should be an odd number for balanced
+                            calculation. Default is 3.
+
+        Returns:
+            dict: A dictionary containing the interpolated scan data for each
+                patient, sorted by scan date.
+
+        Example:
+            interpolated_data = self.apply_sliding_window_interpolation(window_size=5)
+        """
+        interpolated_data = defaultdict(list)
+
+        for patient_id, scans in self.filtered_data.items():
+            # Sort by date just in case
+            scans.sort(key=lambda x: x[0])
+
+            # Only volumes are taken for weighted median
+            volumes = [volume for _, volume, _ in scans]
+
+            for i, (date, volume, age) in enumerate(scans):
+                # Find indices of scans within the window
+                left = max(0, i - window_size // 2)
+                right = min(len(scans), i + window_size // 2 + 1)
+
+                # Extract neighboring scans and their temporal closeness
+                neighbors = volumes[left:right]
+                neighbors.sort()  # Sort for median calculation
+
+                # Weights based on Gaussian distribution
+                middle = (right - left) // 2
+                weights = [norm.pdf(x, middle, window_size // 3) for x in range(len(neighbors))]
+                if not all(isfinite(w) for w in weights):
+                    print(f"Skipping invalid weights for patient {patient_id}, index {i}")
+                    continue
+                neighbors, weights = zip(*sorted(zip(neighbors, weights)))
+
+                # Compute the weighted median
+                weighted_vol = weighted_median(neighbors, weights)
+                if weighted_vol is None:
+                    print(f"Skipping None value for patient {patient_id}, index {i}")
+                    continue
+                # Replace volume with weighted median
+                interpolated_data[patient_id].append((date, weighted_vol, age))
+                print(f"Interpolated data for patient {patient_id}, index {i}: {weighted_vol}")
+        return interpolated_data
+
     def plot_comparison(self, output_path):
         """
         Plots a comparison of all the data types for each unique patient ID.
@@ -511,7 +586,7 @@ class VolumeEstimator:
         unique_patient_ids = set(self.data_sources["raw"].keys())
 
         for patient_id in unique_patient_ids:
-            fig, axs = plt.subplots(1, 4, figsize=(20, 5))
+            fig, axs = plt.subplots(1, len(self.data_sources), figsize=(20, 5))
 
             for i, (key, data) in enumerate(self.data_sources.items()):
                 a_x = axs[i]
