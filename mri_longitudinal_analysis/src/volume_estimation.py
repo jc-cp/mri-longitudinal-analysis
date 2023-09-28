@@ -432,9 +432,9 @@ class VolumeEstimator:
             ]
         return polysmoothed_data
 
-    def gaussian_kernel(self, x_, x_i, bandwidth):
+    def gaussian_kernel(self, x_var, x_i, bandwidth):
         """Gaussian Kernel Function"""
-        return norm.pdf((x_ - x_i) / bandwidth)
+        return norm.pdf((x_var - x_i) / bandwidth)
 
     def apply_kernel_smoothing(self, bandwidth=30):
         """
@@ -489,21 +489,21 @@ class VolumeEstimator:
             fig, axs = plt.subplots(1, 4, figsize=(20, 5))
 
             for i, (key, data) in enumerate(self.data_sources.items()):
-                ax = axs[i]
+                a_x = axs[i]
 
                 patient_data = data.get(patient_id, [])
 
                 if not patient_data:
-                    ax.set_title(f"No Data: {key}")
+                    a_x.set_title(f"No Data: {key}")
                     continue
 
                 dates, volumes, _ = zip(*patient_data)
 
-                ax.plot(dates, volumes, label=f"{key} data")
-                ax.set_title(f"{key} Data for Patient {patient_id}")
-                ax.set_xlabel("Date")
-                ax.set_ylabel("Volume")
-                ax.legend()
+                a_x.plot(dates, volumes, label=f"{key} data")
+                a_x.set_title(f"{key} Data for Patient {patient_id}")
+                a_x.set_xlabel("Date")
+                a_x.set_ylabel("Volume")
+                a_x.legend()
 
             plt.tight_layout()
             plt.savefig(os.path.join(output_path, f"volume_comparison_{patient_id}.png"))
