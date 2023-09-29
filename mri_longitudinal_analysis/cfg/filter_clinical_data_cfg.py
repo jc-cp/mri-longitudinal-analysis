@@ -3,7 +3,7 @@
 from pathlib import Path
 
 # Input
-CSV_FILE = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_89_cohort.csv")
+CSV_FILE = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_108_cohort.csv")
 
 # Output directory
 OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output/clinical_data")

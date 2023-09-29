@@ -5,11 +5,11 @@ from pathlib import Path
 # Directories
 SEG_DIR = Path(
     "/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/"
-    "curated_no_ops_29_surgery_cohort_reviewed/output/seg_predictions"
+    "curated_no_ops_60_cohort_reviewed/output/seg_predictions"
 )
 OUTPUT_DIR = Path(
     "/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/"
-    "curated_no_ops_29_surgery_cohort_reviewed/output"
+    "curated_no_ops_60_cohort_reviewed/output"
 )
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series_csv"
