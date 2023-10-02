@@ -5,6 +5,7 @@ then performs various analyses including correlations and treatments.
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from cfg import correlation_cfg
 from utils.helper_functions import (
     pearson_correlation,
     spearman_correlation,
@@ -49,13 +50,13 @@ class TumorAnalysis:
             float: The correlation coefficient.
         """
         if method == "pearson":
-            coef, p_val = pearson_correlation(data[x].dropna(), data[y].dropna())
+            coef, p_val = pearson_correlation(data[x_val].dropna(), data[y_val].dropna())
         elif method == "spearman":
-            coef, p_val = spearman_correlation(data[x].dropna(), data[y].dropna())
+            coef, p_val = spearman_correlation(data[x_val].dropna(), data[y_val].dropna())
 
         print(f"{x_val} and {y_val} - Coefficient: {coef}, P-value: {p_val}")
 
-        sns.scatterplot(x=x, y=y, data=data)
+        sns.scatterplot(x=x_val, y=y_val, data=data)
         plt.title(f"{x_val} vs {y_val} ({method.capitalize()} correlation)")
         plt.show()
 
@@ -113,16 +114,20 @@ if __name__ == "__main__":
     analysis.analyze_post_treatment()
 
     # Multiple Comparisons Correction Example
-    # p_values = [0.01, 0.05, 0.1]
-    # corrected_p_values = bonferroni_correction(p_values)
-    # print(f"Corrected P-values using Bonferroni: {corrected_p_values}")
+    if correlation_cfg.CORRECTION:
+        # Adjust this test data
+        p_values = [0.01, 0.05, 0.1]
+        corrected_p_values = bonferroni_correction(p_values)
+        print(f"Corrected P-values using Bonferroni: {corrected_p_values}")
 
     # Sensitivity Analysis Example
-    # filtered_data = sensitivity_analysis("Tumor_Volume", z_threshold=2)
-    # print(f"Data after excluding outliers based on Z-score: {filtered_data}")
+    if correlation_cfg.SENSITIVITY:
+        filtered_data = sensitivity_analysis("Tumor_Volume", z_threshold=2)
+        print(f"Data after excluding outliers based on Z-score: {filtered_data}")
 
     # Propensity Score Matching Example
-    # matched_data = propensity_score_matching(
-    #    "Treatment_Type", ["Age", "Sex", "Mutation_Type"]
-    # )
-    # print(f"Data after Propensity Score Matching: {matched_data}")
+    if correlation_cfg.PROPENSITY:
+        matched_data = propensity_score_matching(
+        "Treatment_Type", ["Age", "Sex", "Mutation_Type"]
+        )
+        print(f"Data after Propensity Score Matching: {matched_data}")
