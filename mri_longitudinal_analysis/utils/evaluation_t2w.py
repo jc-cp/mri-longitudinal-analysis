@@ -23,6 +23,7 @@ class Evaluation:
         self.files = {
             "60": evaluation_cfg.CSV_FILE_60,
             "29": evaluation_cfg.CSV_FILE_29,
+            "19": evaluation_cfg.CSV_FILE_19,
         }
         self.out_file_prefix = evaluation_cfg.OUT_FILE_PREFIX
 
@@ -76,43 +77,25 @@ class Evaluation:
             quality1_comments.value_counts(),
         )
         # Number of images with quality 1
-        quality1_no_comments = d_f[
-            (d_f["Quality"] == 1) & (d_f["Comments"].isna())
-        ]
-        quality1_with_comments = d_f[
-            (d_f["Quality"] == 1) & (d_f["Comments"].notna())
-        ]
-        print(
-            f"\nImages with quality rating of 1 and no comments: {len(quality1_no_comments)}"
-        )
+        quality1_no_comments = d_f[(d_f["Quality"] == 1) & (d_f["Comments"].isna())]
+        quality1_with_comments = d_f[(d_f["Quality"] == 1) & (d_f["Comments"].notna())]
+        print(f"\nImages with quality rating of 1 and no comments: {len(quality1_no_comments)}")
 
-        print(
-            f"\nImages with quality rating of 1 and with comments: {len(quality1_with_comments)}"
-        )
+        print(f"\nImages with quality rating of 1 and with comments: {len(quality1_with_comments)}")
         # Number of images with quality 5
-        quality5_no_comments = d_f[
-            (d_f["Quality"] == 5) & (d_f["Comments"].isna())
-        ]
-        quality5_with_comments = d_f[
-            (d_f["Quality"] == 5) & (d_f["Comments"].notna())
-        ]
-        print(
-            f"\nImages with quality rating of 5 and no comments: {len(quality5_no_comments)}"
-        )
+        quality5_no_comments = d_f[(d_f["Quality"] == 5) & (d_f["Comments"].isna())]
+        quality5_with_comments = d_f[(d_f["Quality"] == 5) & (d_f["Comments"].notna())]
+        print(f"\nImages with quality rating of 5 and no comments: {len(quality5_no_comments)}")
 
         assert len(quality5_no_comments) == 0
-        print(
-            f"\nImages with quality rating of 5 and with comments: {len(quality5_with_comments)}"
-        )
+        print(f"\nImages with quality rating of 5 and with comments: {len(quality5_with_comments)}")
 
         # Compute some statistics
         d_f["Quality"] = d_f["Quality"].astype(int)
         d_f["Comments"] = d_f["Comments"].fillna("Valid Images")
 
         # New column to hold the category
-        d_f["Category"] = (
-            d_f["Quality"].astype(str) + "-" + d_f["Comments"].map(str)
-        )
+        d_f["Category"] = d_f["Quality"].astype(str) + "-" + d_f["Comments"].map(str)
 
         # Only consider records with Quality as 1 or 5, and Comments in comment_categories
         df_filtered = d_f[d_f["Quality"].isin([1, 5]) & d_f["Quality"] == 1]
