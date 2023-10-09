@@ -19,7 +19,11 @@ class Review:
 
     def __init__(self):
         """Initialize the Review object by setting up the configuration."""
-        self.csv_files = {"60": review_cfg.CSV_FILE_60, "29": review_cfg.CSV_FILE_29}
+        self.csv_files = {
+            # "60": review_cfg.CSV_FILE_60,
+            # "29": review_cfg.CSV_FILE_29,
+            "18": review_cfg.CSV_FILE_18,
+        }
 
     def move_files(self, d_f, condition, source_dir, destination_folder):
         """
@@ -226,10 +230,13 @@ class Review:
             # Detect files containing a t2 string in the modality folders
             detecting = review_cfg.DETECTING
             if detecting:
-                data_folders = [review_cfg.DATA_FOLDER_60, review_cfg.DATA_FOLDER_29]
+                data_folders = (
+                    review_cfg.DATA_FOLDER_18
+                )  # [review_cfg.DATA_FOLDER_60, review_cfg.DATA_FOLDER_29]
                 output_detection_folders = [
-                    review_cfg.OUTPUT_DETECTTION_60,
-                    review_cfg.OUTPUT_DETECTTION_29,
+                    # review_cfg.OUTPUT_DETECTTION_60,
+                    # review_cfg.OUTPUT_DETECTTION_29,
+                    review_cfg.OUTPUT_DETECTTION_19
                 ]
                 self.detect_t2(data_folders, output_detection_folders)
 
@@ -245,13 +252,13 @@ class Review:
                 try:
                     self.move_files(
                         d_f,
-                        (d_f["Quality"] == 1) & (d_f["Comments"] == "Valid Images"),
+                        (d_f["Quality"] == 1) & (d_f["Comments"].isnull()),
                         source_dir,
                         dir1_no_comments,
                     )
                     self.move_files(
                         d_f,
-                        (d_f["Quality"] == 1) & (d_f["Comments"] != "Valid Images"),
+                        (d_f["Quality"] == 1) & (d_f["Comments"].notnull()),
                         source_dir,
                         dir1_with_comments,
                     )

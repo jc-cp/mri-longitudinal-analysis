@@ -23,7 +23,7 @@ class Evaluation:
         self.files = {
             "60": evaluation_cfg.CSV_FILE_60,
             "29": evaluation_cfg.CSV_FILE_29,
-            "19": evaluation_cfg.CSV_FILE_19,
+            "18": evaluation_cfg.CSV_FILE_18,
         }
         self.out_file_prefix = evaluation_cfg.OUT_FILE_PREFIX
 
