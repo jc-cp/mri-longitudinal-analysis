@@ -20,9 +20,7 @@ class Review:
     def __init__(self):
         """Initialize the Review object by setting up the configuration."""
         self.csv_files = {
-            # "60": review_cfg.CSV_FILE_60,
-            # "29": review_cfg.CSV_FILE_29,
-            "18": review_cfg.CSV_FILE_18,
+            "45": review_cfg.CSV_FILE,
         }
 
     def move_files(self, d_f, condition, source_dir, destination_folder):
@@ -230,14 +228,8 @@ class Review:
             # Detect files containing a t2 string in the modality folders
             detecting = review_cfg.DETECTING
             if detecting:
-                data_folders = (
-                    review_cfg.DATA_FOLDER_18
-                )  # [review_cfg.DATA_FOLDER_60, review_cfg.DATA_FOLDER_29]
-                output_detection_folders = [
-                    # review_cfg.OUTPUT_DETECTTION_60,
-                    # review_cfg.OUTPUT_DETECTTION_29,
-                    review_cfg.OUTPUT_DETECTTION_19
-                ]
+                data_folders = [review_cfg.DATA_FOLDER]  # Add folder here
+                output_detection_folders = [review_cfg.OUTPUT_DETECTTION]  # Add folder here
                 self.detect_t2(data_folders, output_detection_folders)
 
             # Moving files if needed for initial review
@@ -280,19 +272,13 @@ class Review:
         delete_artifacts = review_cfg.DELETE_ARTIFACTS
         if delete_artifacts:
             print("Removing artifacts!")
-            for t2_dir in [
-                review_cfg.DIR1_NO_COMMENTS_60,
-                review_cfg.DIR1_NO_COMMENTS_29,
-            ]:
+            for t2_dir in [review_cfg.DIR1_NO_COMMENTS]:  # Add folder here
                 self.remove_artifacts(t2_dir)
 
         compare_ids = review_cfg.COMPARE_IDS
         if compare_ids:
             print("Comparing IDs!")
-            for t2_dir in [
-                review_cfg.DIR1_NO_COMMENTS_60,
-                review_cfg.DIR1_NO_COMMENTS_29,
-            ]:
+            for t2_dir in [review_cfg.DIR1_NO_COMMENTS]:
                 self.compare_ids_and_flag(t2_dir)
 
 

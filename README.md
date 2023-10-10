@@ -7,6 +7,7 @@
 - [ ] Add instruction for HD-BET installation, considering adjustments and Aydans installment, e.g. branch
 - [ ] Add instruction for nnUnet installation
 - [ ] Check the segmentation quality in slicer
+- [ ] Rethink the interpolation in volume estimation with splines and statistical imputation
 
 ### _cfg/_ folder
 - [ ] Open Todo

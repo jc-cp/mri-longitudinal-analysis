@@ -7,10 +7,10 @@ PROJ_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/mri_longitudinal_anal
 
 # For remote data on the drive
 DATA_DIR = Path(
-    "/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/curated_no_ops_60_cohort_filtered"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_63_cohort_reviewed"
 )
 
-INPUT_DIR = DATA_DIR / "T2"
+INPUT_DIR = DATA_DIR / "1_no_comments"
 OUPUT_DIR = DATA_DIR / "output"
 
 REG_DIR = OUPUT_DIR / "T2W_registration"
@@ -26,4 +26,4 @@ EXTRACTION = True
 BF_CORRECTION = False  # beware,there is a predefined BF in the registration process already
 
 
-LIMIT_LOADING = 3
+LIMIT_LOADING = 1000

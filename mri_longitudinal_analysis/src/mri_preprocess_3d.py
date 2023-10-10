@@ -264,7 +264,7 @@ if __name__ == "__main__":
     os.makedirs(output_path, exist_ok=True)
     os.makedirs(reg_dir, exist_ok=True)
     os.makedirs(brain_dir, exist_ok=True)
-    os.makedirs(bf_correction_dir, exist_ok=True)
+    # os.makedirs(bf_correction_dir, exist_ok=True)
     os.makedirs(segmentation_output_dir, exist_ok=True)
 
     if REGISTRATION:
