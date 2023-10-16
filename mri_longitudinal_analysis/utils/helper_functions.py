@@ -143,3 +143,14 @@ def propensity_score_matching(merged_data, treatment_col, match_cols):
         right_on="index_copy",
         suffixes=("", "_matched"),
     )
+
+
+def prefix_zeros_to_six_digit_ids(patient_id):
+    str_id = str(patient_id)
+    if len(str_id) == 6:
+        # print(f"Found a 6-digit ID: {str_id}. Prefixing a '0'.")
+        patient_id = "0" + str_id
+
+    else:
+        patient_id = str_id
+    return patient_id

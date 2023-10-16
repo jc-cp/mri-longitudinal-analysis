@@ -4,26 +4,24 @@ from pathlib import Path
 
 # Directories
 SEG_DIR = Path(
-    "/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/"
-    "curated_no_ops_60_cohort_reviewed/output/seg_predictions"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/output/seg_predictions"
 )
 OUTPUT_DIR = Path(
-    "/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/"
-    "curated_no_ops_60_cohort_reviewed/output"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/output"
 )
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series_csv"
 
 # Individual files
 REDCAP_FILE = Path(
-    "/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_89_cohort.csv"
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_108_cohort.csv"
 )
 FEW_SCANS_FILE = OUTPUT_DIR / "patients_with_few_scans.txt"
 ZERO_VOLUME_FILE = OUTPUT_DIR / "zero_volume_segmentations.txt"
-NUMBER_TOTAL_PATIENTS = 89
+NUMBER_TOTAL_PATIENTS = 108
 
 # Options for creating the plots
-LIMIT_LOADING = None
+LIMIT_LOADING = 63
 
 RAW = True
 FILTERED = True

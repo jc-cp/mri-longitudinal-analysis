@@ -21,7 +21,7 @@ import SimpleITK as sitk
 from scipy.stats import norm
 
 from cfg import volume_est_cfg
-from utils.helper_functions import gaussian_kernel, weighted_median
+from utils.helper_functions import gaussian_kernel, weighted_median, prefix_zeros_to_six_digit_ids
 
 
 class VolumeEstimator:
@@ -72,7 +72,7 @@ class VolumeEstimator:
                         f" {volume_est_cfg.NUMBER_TOTAL_PATIENTS}. Check the csv again."
                     )
                 self.dob_df["Date of Birth"] = pd.to_datetime(
-                    self.dob_df["Date of Birth"], format="%d/%m/%y"
+                    self.dob_df["Date of Birth"], format="%d/%m/%Y"
                 )
                 self.dob_df["BCH MRN"] = self.dob_df["BCH MRN"].astype(int)
             except FileNotFoundError as error:
@@ -136,6 +136,7 @@ class VolumeEstimator:
         with Pool(cpu_count()) as pool:
             for file_path, volume in zip(file_paths, pool.map(self.estimate_volume, file_paths)):
                 patient_id, scan_id = os.path.basename(file_path).split("_")[:2]
+                patient_id = prefix_zeros_to_six_digit_ids(patient_id)
 
                 # take into account the ones for filtering
                 all_ids[patient_id].append(scan_id)
@@ -145,11 +146,12 @@ class VolumeEstimator:
                 else:
                     zero_volume_scans[patient_id].append(scan_id)
                     zero_volume_counter += 1
-
         # write zero_volume_scans to a file
         with open(volume_est_cfg.ZERO_VOLUME_FILE, "w", encoding="utf-8") as file:
             file.write(f"Total zero volume scans: {zero_volume_counter}\n")
             for patient_id, scans in zero_volume_scans.items():
+                patient_id = prefix_zeros_to_six_digit_ids(patient_id)
+
                 file.write(f"{patient_id}\n")
                 for scan_id in scans:
                     file.write(f"---- {scan_id}\n")
@@ -193,15 +195,20 @@ class VolumeEstimator:
             volume, and optionally age.
         """
         scan_dict = defaultdict(list)
+        id_list = list(self.dob_df["BCH MRN"])
+        id_list = [
+            f"0{str(id_item)}" if len(str(id_item)) == 6 else str(id_item)
+            for id_item in self.dob_df["BCH MRN"]
+        ]
+
         for patient_id, scans in all_scans.items():
+            patient_id = prefix_zeros_to_six_digit_ids(patient_id)
+
             for file_path, volume in scans:
                 date_str = os.path.basename(file_path).split("_")[1].replace(".nii.gz", "")
                 date = datetime.strptime(date_str, "%Y%m%d")
 
-                if (
-                    not volume_est_cfg.TEST_DATA
-                    and patient_id in self.dob_df["BCH MRN"].astype(str).values
-                ):
+                if not volume_est_cfg.TEST_DATA and patient_id in id_list:
                     dob = self.dob_df.loc[
                         self.dob_df["BCH MRN"] == int(patient_id), "Date of Birth"
                     ].iloc[0]
@@ -406,6 +413,7 @@ class VolumeEstimator:
 
         with open(volume_est_cfg.FEW_SCANS_FILE, "w", encoding="utf-8") as file:
             for patient_id, scans in list(all_ids.items()):
+                patient_id = prefix_zeros_to_six_digit_ids(patient_id)
                 if len(filtered_scans.get(patient_id, [])) < 3:
                     total_patients_with_few_scans += 1  # Increment the patient counter
                     total_scans_ignored += len(scans)
@@ -432,7 +440,7 @@ class VolumeEstimator:
         """
 
         average_scans = np.mean([len(scans) for scans in self.filtered_data.values()])
-        print(average_scans)
+        print("Average scan number per patient:", average_scans)
 
         polysmoothed_data = defaultdict(list)
         for patient_id, scans in self.filtered_data.items():
@@ -573,7 +581,7 @@ class VolumeEstimator:
                     continue
                 # Replace volume with weighted median
                 interpolated_data[patient_id].append((date, weighted_vol, age))
-                print(f"Interpolated data for patient {patient_id}, index {i}: {weighted_vol}")
+                # print(f"Interpolated data for patient {patient_id}, index {i}: {weighted_vol}")
         return interpolated_data
 
     def plot_comparison(self, output_path):
