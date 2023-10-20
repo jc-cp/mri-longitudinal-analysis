@@ -30,7 +30,7 @@ class ClinicalData:
         self.diagnosis_plot = filter_clinical_data_cfg.DIAGNOSIS_PLOT
 
         self.output_file = filter_clinical_data_cfg.OUTPUT_FILE
-        self.delete_post_op_data = filter_clinical_data_cfg.DELETING_SURGERY
+        self.delete_post_op_data = filter_clinical_data_cfg.REMOVING_SURGERY
         self.visualization = filter_clinical_data_cfg.VISUALIZE_DATA
 
     def load_file(self) -> pd.DataFrame:
@@ -104,6 +104,14 @@ class ClinicalData:
                 patient_data[patient_id]["Pathologic diagnosis"] = "Astrocytoma"
             elif "tectal" in pathologic_diagnosis.lower():
                 patient_data[patient_id]["Pathologic diagnosis"] = "Tectal Glioma"
+            elif "DNET" in pathologic_diagnosis.upper():
+                patient_data[patient_id]["Pathologic diagnosis"] = "DNET"
+            elif "ganglioglioma" in pathologic_diagnosis.lower():
+                patient_data[patient_id]["Pathologic diagnosis"] = "Ganglioglioma"
+            elif "glioneuronal" in pathologic_diagnosis.lower():
+                patient_data[patient_id]["Pathologic diagnosis"] = "Glioneuronal Neoplasm"
+            elif "xanthoastrocytoma" in pathologic_diagnosis.lower():
+                patient_data[patient_id]["Pathologic diagnosis"] = "Pleomorphic Xanthoastrocytoma"
             elif (
                 "low grade glioma" in pathologic_diagnosis.lower()
                 or "low-grade glioma" in pathologic_diagnosis.lower()
@@ -154,7 +162,7 @@ class ClinicalData:
                     for t in ["Surgery", "Chemotherapy", "Radiation"]
                     if patient_info.get(t) == "Yes"
                 ]
-                if not treatments:
+                if self.should_count_as_no_treatment(patient_info):
                     counts["No Treatment"] += 1
                 elif len(treatments) == 1:
                     counts[f"{treatments[0]} Only"] += 1
@@ -267,36 +275,41 @@ class ClinicalData:
                     file.write(f"\t{key}: {value}\n")
                 file.write("\n")
 
-    def print_post_surgery_files(self, patient_data, directory):
-        """Print the files related to post-surgery cases.
+    def move_post_surgery_files(self, patient_data, directory):
+        """Moves the files related to post-surgery/ treatment cases to a folder for separate analysis.
 
         Args:
             patient_data (dict): A dictionary containing patient data.
             directory (str): The directory where the files are located.
         """
-        post_surgery_folder = os.path.join(directory, "post_surgery_files")
-
-        os.makedirs(post_surgery_folder, exist_ok=True)
-
+        post_treatment_folder = os.path.join(directory, "post_treatment_files")
+        os.makedirs(post_treatment_folder, exist_ok=True)
+        counter = 0
         for patient_id in patient_data:
-            if (
-                "Surgery" in patient_data[patient_id]
-                and "Date of first surgery" in patient_data[patient_id]
-            ):
+            treatment_type = None
+            treatment_date_str = None
+
+            if "Surgery" in patient_data[patient_id]:
+                treatment_type = "Surgery"
+                treatment_date_str = patient_data[patient_id]["Date of first surgery"]
+
+            elif "Chemotherapy" in patient_data[patient_id]:
+                treatment_type = "Chemotherapy"
+                treatment_date_str = patient_data[patient_id]["Date of Systemic Therapy Start"]
+
+            elif "Radiation" in patient_data[patient_id]:
+                treatment_type = "Radiation"
+                treatment_date_str = patient_data[patient_id]["Start Date of Radiation"]
+
+            if treatment_type and treatment_date_str and isinstance(treatment_date_str, str):
                 try:
                     # Attempt to parse the date in the expected format
-                    surgery_date = datetime.strptime(
-                        patient_data[patient_id]["Date of first surgery"],
-                        "%d/%m/%y",
-                    )
+                    treatment_date = datetime.strptime(treatment_date_str, "%d/%m/%Y")
                 except ValueError:
                     # If the above fails, try to parse in the 'day/month/year' format
-                    surgery_date = datetime.strptime(
-                        patient_data[patient_id]["Date of first surgery"],
-                        "%Y-%m-%d",
-                    )
+                    treatment_date = datetime.strptime(treatment_date_str, "%Y-%m-%d")
 
-                patient_folder = os.path.join(post_surgery_folder, str(patient_id))
+                patient_folder = os.path.join(post_treatment_folder, str(patient_id))
                 os.makedirs(patient_folder, exist_ok=True)
 
                 for filename in os.listdir(directory):
@@ -304,14 +317,39 @@ class ClinicalData:
                         file_path = os.path.join(directory, filename)
                         file_date_str = filename.split("_")[1].split(".")[0]
                         file_date = datetime.strptime(file_date_str, "%Y%m%d")
-                        if file_date > surgery_date:
+
+                        if file_date > treatment_date:
                             print(filename)
-                            shutil.move(
-                                file_path,
-                                os.path.join(patient_folder, filename),
-                            )
-            else:
-                print(f"No surgery data found for patient {patient_id}.")
+                            # shutil.move(
+                            #    file_path,
+                            #    os.path.join(patient_folder, filename),
+                            # )
+            if self.should_count_as_no_treatment(patient_data[patient_id]):
+                counter += 1
+                print(counter)
+                print(f"No treatment data found for patient {patient_id}.")
+
+    def check_treatment_type(self, patient_info):
+        return any(
+            treatment in patient_info for treatment in ["Surgery", "Chemotherapy", "Radiation"]
+        )
+
+    def check_treatment_date(self, patient_info):
+        return any(
+            key in patient_info
+            and patient_info[key] is not None
+            and isinstance(patient_info[key], str)
+            for key in [
+                "Date of first surgery",
+                "Date of Systemic Therapy Start",
+                "Start Date of Radiation",
+            ]
+        )
+
+    def should_count_as_no_treatment(self, patient_info):
+        return not (
+            self.check_treatment_type(patient_info) and self.check_treatment_date(patient_info)
+        )
 
     def main(self):
         """Main function to handle loading, parsing, and possibly visualizing the clinical data."""
@@ -325,7 +363,7 @@ class ClinicalData:
             self.write_dict_to_file(patient_data, filter_clinical_data_cfg.OUTPUT_FILE_NAME)
 
         if self.delete_post_op_data:
-            self.print_post_surgery_files(patient_data, filter_clinical_data_cfg.DATA_DIR)
+            self.move_post_surgery_files(patient_data, filter_clinical_data_cfg.DATA_DIR)
 
 
 if __name__ == "__main__":
