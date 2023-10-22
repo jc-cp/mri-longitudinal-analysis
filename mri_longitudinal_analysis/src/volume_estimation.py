@@ -488,7 +488,7 @@ class VolumeEstimator:
             ]
         return polysmoothed_data
 
-    def apply_kernel_smoothing(self, bandwidth=30):
+    def apply_kernel_smoothing(self, bandwidth=None):
         """
         Applies kernel smoothing to the volume data.
 
@@ -499,6 +499,14 @@ class VolumeEstimator:
             defaultdict(list): Data after kernel smoothing.
         """
         kernelsmoothed_data = defaultdict(list)
+
+        if bandwidth is None:
+            all_volumes = [
+                volume for _, scans in self.filtered_data.items() for _, volume, _ in scans
+            ]
+            max_volume = max(all_volumes)
+            bandwidth = 0.2 * max_volume
+
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[0])  # Sort by date
 
