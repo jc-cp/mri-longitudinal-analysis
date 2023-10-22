@@ -154,3 +154,22 @@ def prefix_zeros_to_six_digit_ids(patient_id):
     else:
         patient_id = str_id
     return patient_id
+
+
+def normalize_data(data):
+    """
+    Normalize a list of values using min-max scaling.
+
+    Args:
+        data (list): List of values to normalize.
+
+    Returns:
+        list: Normalized values.
+    """
+    min_val = min(data)
+    max_val = max(data)
+
+    if max_val == min_val:  # prevent division by zero
+        return [1 for _ in data]  # return a list of ones
+
+    return [(x - min_val) / (max_val - min_val) for x in data]

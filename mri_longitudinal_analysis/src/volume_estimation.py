@@ -21,7 +21,12 @@ import SimpleITK as sitk
 from scipy.stats import norm
 
 from cfg import volume_est_cfg
-from utils.helper_functions import gaussian_kernel, weighted_median, prefix_zeros_to_six_digit_ids
+from utils.helper_functions import (
+    gaussian_kernel,
+    weighted_median,
+    prefix_zeros_to_six_digit_ids,
+    normalize_data,
+)
 
 
 class VolumeEstimator:
@@ -204,7 +209,14 @@ class VolumeEstimator:
         for patient_id, scans in all_scans.items():
             patient_id = prefix_zeros_to_six_digit_ids(patient_id)
 
-            for file_path, volume in scans:
+            volumes = [volume for _, volume in scans]
+            if volume_est_cfg.NORMALIZE:
+                # Extracting just the volume data for normalization
+                normalized_volumes = normalize_data(volumes)
+            else:
+                normalized_volumes = volumes
+
+            for (file_path, _), morm_volume in zip(scans, normalized_volumes):
                 date_str = os.path.basename(file_path).split("_")[1].replace(".nii.gz", "")
                 date = datetime.strptime(date_str, "%Y%m%d")
 
@@ -213,9 +225,9 @@ class VolumeEstimator:
                         self.dob_df["BCH MRN"] == int(patient_id), "Date of Birth"
                     ].iloc[0]
                     age = (date - dob).days / 365.25
-                    scan_dict[patient_id].append((date, volume, age))
+                    scan_dict[patient_id].append((date, morm_volume, age))
                 else:
-                    scan_dict[patient_id].append((date, volume))
+                    scan_dict[patient_id].append((date, morm_volume))
         return scan_dict
 
     def setup_plot_base(self):

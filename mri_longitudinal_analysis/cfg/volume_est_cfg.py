@@ -33,3 +33,6 @@ PLOT_COMPARISON = True
 
 # If test data is being used or not
 TEST_DATA = False
+
+# normalization options
+NORMALIZE = False
