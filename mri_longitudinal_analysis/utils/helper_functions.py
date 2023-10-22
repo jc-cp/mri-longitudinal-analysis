@@ -173,3 +173,23 @@ def normalize_data(data):
         return [1 for _ in data]  # return a list of ones
 
     return [(x - min_val) / (max_val - min_val) for x in data]
+
+
+def compute_95_ci(data):
+    """
+    Compute the 95% confidence interval for a dataset.
+
+    Args:
+        data (list): List of data points.
+
+    Returns:
+        tuple: Lower and upper bounds of the 95% CI.
+    """
+    mean = np.mean(data)
+    std_dev = np.std(data)
+    se = std_dev / np.sqrt(len(data))
+
+    lower_bound = mean - 1.96 * se
+    upper_bound = mean + 1.96 * se
+
+    return lower_bound, upper_bound

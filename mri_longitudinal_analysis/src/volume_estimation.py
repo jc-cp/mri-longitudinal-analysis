@@ -26,6 +26,7 @@ from utils.helper_functions import (
     weighted_median,
     prefix_zeros_to_six_digit_ids,
     normalize_data,
+    compute_95_ci,
 )
 
 
@@ -57,6 +58,7 @@ class VolumeEstimator:
         self.poly_smoothing_data = defaultdict(list)
         self.kernel_smoothing_data = defaultdict(list)
         self.window_smoothing_data = defaultdict(list)
+        self.volume_rate_data = defaultdict(list)
 
         self.data_sources = {
             "raw": {},
@@ -187,6 +189,10 @@ class VolumeEstimator:
         if volume_est_cfg.WINDOW_SMOOTHING:
             self.window_smoothing_data = self.apply_sliding_window_interpolation()
             self.data_sources["window_smoothing"] = self.window_smoothing_data
+
+        # Additionally, process the volume rate data
+        print("Adding volume rate data!")
+        self.volume_rate_data = self.calculate_volume_rate_of_change(filtered_scans)
 
     def process_scans(self, all_scans) -> defaultdict(list):
         """
@@ -637,6 +643,78 @@ class VolumeEstimator:
             plt.savefig(os.path.join(output_path, f"volume_comparison_{patient_id}.png"))
             plt.close(fig)
 
+    def analyze_volume_changes(self):
+        """
+        Analyze volume changes and compute the 95% confidence interval.
+        """
+        scan_data = self.filtered_data
+
+        # Calculate volume changes for each patient
+        volume_changes = []
+        for _, scans in scan_data.items():
+            for i in range(1, len(scans)):
+                prev_vol = scans[i - 1][1]  # Previous volume
+                curr_vol = scans[i][1]  # Current volume
+                volume_changes.append(curr_vol - prev_vol)
+
+        # Compute the 95% confidence interval
+        lower, upper = compute_95_ci(volume_changes)
+        print(f"95% CI for average volume change: ({lower:.2f}, {upper:.2f})")
+
+        volume_rates = []
+        for _, data in self.volume_rate_data.items():
+            for _, rate in data:
+                volume_rates.append(rate)
+
+        # Calculate mean and standard deviation
+        mean_rate = np.mean(volume_rates)
+        std_rate = np.std(volume_rates)
+
+        # Calculate the 95% confidence interval
+        margin_of_error = 1.96 * (std_rate / np.sqrt(len(volume_rates)))
+        confidence_interval = (mean_rate - margin_of_error, mean_rate + margin_of_error)
+
+        print(f"95% CI for average volume rate of change: {confidence_interval}")
+
+    def calculate_volume_rate_of_change(self, all_scans) -> defaultdict(list):
+        """
+        Calculates the rate of volume change (normalized by time span) for each patient.
+
+        Args:
+            all_scans (dict): Dictionary containing scan information.
+
+        Returns:
+            defaultdict(list): Processed scan information with rate of volume change and date.
+        """
+        rate_of_change_dict = defaultdict(list)
+
+        for patient_id, scans in all_scans.items():
+            patient_id = prefix_zeros_to_six_digit_ids(patient_id)
+
+            # sort scans by date for accurate calculation
+            scans = sorted(scans, key=lambda x: x[0])
+
+            # initialize previous volume and date
+            prev_volume = None
+            prev_date = None
+
+            for file_path, volume in scans:
+                date_str = os.path.basename(file_path).split("_")[1].replace(".nii.gz", "")
+                date = datetime.strptime(date_str, "%Y%m%d")
+
+                if prev_date is not None:
+                    days_diff = (date - prev_date).days
+                    volume_rate_of_change = (volume - prev_volume) / days_diff
+                else:
+                    volume_rate_of_change = None  # or you can set it to 0 if you prefer
+
+                prev_volume = volume
+                prev_date = date
+
+                rate_of_change_dict[patient_id].append((date, volume_rate_of_change))
+
+        return rate_of_change_dict
+
 
 if __name__ == "__main__":
     print("Initializing Volume Estimator.")
@@ -651,5 +729,10 @@ if __name__ == "__main__":
         print("Generating volume comparison.")
         ve.plot_comparison(output_path=volume_est_cfg.PLOTS_DIR)
         print("Saved comparison.")
+
+    if volume_est_cfg.CONFIDENCE_INTERVAL:
+        print("Analyzing volume changes.")
+        ve.analyze_volume_changes()
+
     print("Generating time-series csv's.")
     # ve.generate_csv(output_folder=volume_est_cfg.CSV_DIR)

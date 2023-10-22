@@ -34,5 +34,6 @@ PLOT_COMPARISON = True
 # If test data is being used or not
 TEST_DATA = False
 
-# normalization options
+# Other options
 NORMALIZE = False
+CONFIDENCE_INTERVAL = True
