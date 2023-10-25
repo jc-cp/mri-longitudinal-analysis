@@ -4,6 +4,7 @@ then performs various analyses including correlations and treatments.
 """
 import pandas as pd
 import seaborn as sns
+import os
 import matplotlib.pyplot as plt
 from cfg import correlation_cfg
 from utils.helper_functions import (
@@ -29,14 +30,74 @@ class TumorAnalysis:
             clinical_data_file (str): Path to the clinical data CSV file.
             volumes_data_file (str): Path to the tumor volumes data CSV file.
         """
-        self.clinical_data = pd.read_csv(clinical_data_path)
-        self.volumes_data = pd.read_csv(volumes_data_path)
-        self.merged_data = pd.merge(
-            self.clinical_data, self.volumes_data, on=["Patient_ID", "Timepoint"]
-        )
+        if not os.path.exists(clinical_data_path) or not os.path.exists(volumes_data_path):
+            raise FileNotFoundError("One or both of the specified CSV files could not be found.")
 
-        self.pre_treatment_data = self.merged_data[self.merged_data["Treatment_Type"].isna()]
-        self.post_treatment_data = self.merged_data[self.merged_data["Treatment_Type"].notna()]
+        self.clinical_data = pd.read_csv(clinical_data_path)
+        self.clinical_data["BCH MRN"] = self.clinical_data["BCH MRN"].astype(str).str.zfill(7)
+        self.parse_clinical_data()
+
+        self.load_volumes_data(volumes_data_path)
+        self.merge_data()
+
+    def parse_clinical_data(self):
+        diagnosis_to_glioma_type = {
+            "plain low grade glioma": "Low Grade",
+            "astrocytoma": "Astrocytoma",
+            "optic gliona": "Optic Gliona",
+            "tectal glioma": "Tectal",
+            "ganglioglioma": "Ganglioglioma",
+            "glioneuronal neoplasm": "Glioneuronal",
+            "DNET": "DNET",
+            "other": "Other",
+        }
+
+        def map_diagnosis(diagnosis):
+            for keyword, glioma_type in diagnosis_to_glioma_type.items():
+                if keyword.lower() in diagnosis.lower():
+                    return glioma_type
+            return "Unknown"
+
+        self.clinical_data["Glioma_Type"] = self.clinical_data["Pathologic diagnosis"].apply(
+            map_diagnosis
+        )
+        self.clinical_data["Sex"] = self.clinical_data["Sex"].astype("category").cat.codes
+        self.clinical_data["Race"] = (
+            self.clinical_data["Race/Ethnicity"].astype("category").cat.codes
+        )
+        self.clinical_data["Mutations"] = (
+            self.clinical_data["BRAF V600E mutation"] + self.clinical_data["BRAF fusion"]
+        )
+        print("Got clinical data.")
+
+    def load_volumes_data(self, volumes_data_path):
+        all_files = [f for f in os.listdir(volumes_data_path) if f.endswith(".csv")]
+        data_frames = []
+        for file in all_files:
+            patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
+            patient_id = file.split(".")[0]  # Assuming the ID is the first part of the filename
+            patient_df["Patient_ID"] = patient_id
+            patient_df["Patient_ID"] = patient_df["Patient_ID"].astype(str).str.zfill(7)
+            data_frames.append(patient_df)
+
+        self.volumes_data = pd.concat(data_frames, ignore_index=True)
+        print("Got volume data.")
+
+    def merge_data(self):
+        print("Columns in clinical_data: ", self.clinical_data.columns)
+        print("Columns in volumes_data: ", self.volumes_data.columns)
+
+        self.merged_data = pd.merge(
+            self.clinical_data,
+            self.volumes_data,
+            left_on=["BCH MRN"],
+            right_on=["Patient_ID"],
+            how="right",
+        )
+        # TODO: Fix this, "Treatment_Type" is not defined, "Tumor_volume" has to be properly extracted!
+
+        # self.pre_treatment_data = self.merged_data[self.merged_data["Treatment_Type"].isna()]
+        # self.post_treatment_data = self.merged_data[self.merged_data["Treatment_Type"].notna()]
 
     def analyze_correlation(self, x_val, y_val, data, method="pearson"):
         """
@@ -63,20 +124,24 @@ class TumorAnalysis:
     def analyze_pre_treatment(self):
         """
         Analyze data for pre-treatment cases. This involves finding correlations
-        between variables such asinitial tumor volume, age, sex, mutations, and race.
+        between variables such as initial tumor volume, age, sex, mutations, and race.
 
         Returns:
             dict: Dictionary of correlation results.
-        """
+        """ ""
         print("Pre-treatment Correlations:")
-        self.analyze_correlation("Symptoms_Severity", "Tumor_Volume", self.pre_treatment_data)
         self.analyze_correlation(
             "Glioma_Type", "Tumor_Volume", self.pre_treatment_data, method="spearman"
         )
-        self.analyze_correlation("Age", "Initial_Tumor_Volume", self.pre_treatment_data)
-        self.analyze_correlation(
-            "Sex", "Initial_Tumor_Volume", self.pre_treatment_data, method="spearman"
-        )
+        for var in ["Age", "Sex", "Mutations", "Race"]:
+            self.analyze_correlation(
+                var, "Initial_Tumor_Volume", self.pre_treatment_data, method="spearman"
+            )
+
+        unchanging_tumors = self.pre_treatment_data[
+            self.pre_treatment_data["Tumor_Volume_Change"] == 0
+        ]
+        print(f"Tumors with no change in volume: {unchanging_tumors}")
 
     def analyze_post_treatment(self):
         """
@@ -109,7 +174,7 @@ class TumorAnalysis:
 
 
 if __name__ == "__main__":
-    analysis = TumorAnalysis("clinical_data.csv", "volumes_data.csv")
+    analysis = TumorAnalysis(correlation_cfg.CLINICAL_CSV, correlation_cfg.VOLUMES_CSV)
     analysis.analyze_pre_treatment()
     analysis.analyze_post_treatment()
 
@@ -122,12 +187,12 @@ if __name__ == "__main__":
 
     # Sensitivity Analysis Example
     if correlation_cfg.SENSITIVITY:
-        filtered_data = sensitivity_analysis("Tumor_Volume", z_threshold=2)
-        print(f"Data after excluding outliers based on Z-score: {filtered_data}")
+        # filtered_data = sensitivity_analysis("Tumor_Volume", z_threshold=2)
+        # print(f"Data after excluding outliers based on Z-score: {filtered_data}")
+        pass
 
     # Propensity Score Matching Example
     if correlation_cfg.PROPENSITY:
-        matched_data = propensity_score_matching(
-        "Treatment_Type", ["Age", "Sex", "Mutation_Type"]
-        )
-        print(f"Data after Propensity Score Matching: {matched_data}")
+        # matched_data = propensity_score_matching("Treatment_Type", ["Age", "Sex", "Mutation_Type"])
+        # print(f"Data after Propensity Score Matching: {matched_data}")
+        pass
