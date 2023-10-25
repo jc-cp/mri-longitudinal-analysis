@@ -661,10 +661,12 @@ class VolumeEstimator:
         lower, upper = compute_95_ci(volume_changes)
         print(f"95% CI for average volume change: ({lower:.2f}, {upper:.2f})")
 
-        volume_rates = []
-        for _, data in self.volume_rate_data.items():
-            for _, rate in data:
-                volume_rates.append(rate)
+        volume_rates = [
+            rate[1]
+            for sublist in self.volume_rate_data.values()
+            for rate in sublist
+            if rate[1] is not None
+        ]
 
         # Calculate mean and standard deviation
         mean_rate = np.mean(volume_rates)
@@ -676,7 +678,7 @@ class VolumeEstimator:
 
         print(f"95% CI for average volume rate of change: {confidence_interval}")
 
-    def calculate_volume_rate_of_change(self, all_scans) -> defaultdict(list):
+    def calculate_volume_rate_of_change(self, scans) -> defaultdict(list):
         """
         Calculates the rate of volume change (normalized by time span) for each patient.
 
@@ -688,7 +690,7 @@ class VolumeEstimator:
         """
         rate_of_change_dict = defaultdict(list)
 
-        for patient_id, scans in all_scans.items():
+        for patient_id, scans in scans.items():
             patient_id = prefix_zeros_to_six_digit_ids(patient_id)
 
             # sort scans by date for accurate calculation
