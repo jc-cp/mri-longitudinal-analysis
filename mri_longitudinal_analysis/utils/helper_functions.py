@@ -55,7 +55,8 @@ def pearson_correlation(x_var, y_var):
     Returns:
         float: Pearson correlation coefficient.
     """
-    return pearsonr(x_var, y_var)[0]
+    coef, p_val = pearsonr(x_var, y_var)
+    return coef, p_val
 
 
 def spearman_correlation(x_var, y_var):
@@ -68,7 +69,8 @@ def spearman_correlation(x_var, y_var):
     Returns:
         float: Spearman correlation coefficient.
     """
-    return spearmanr(x_var, y_var)[0]
+    coef, p_val = spearmanr(x_var, y_var)
+    return coef, p_val
 
 
 def chi_squared_test(x_var, y_var):
