@@ -5,21 +5,17 @@ from pathlib import Path
 ####################################################################################################
 
 # overall path(s) for filtered surgery T2 data
-DATA_FOLDER = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/"
-    "curated_no_ops_19_surgery_cohort_filtered"
-)
+DATA_FOLDER = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_2_ops")
 DATA_FOLDER_T2 = DATA_FOLDER / "T2"
 CSV_FILE = DATA_FOLDER_T2 / "annotations.csv"
 ####################################################################################################
 
 # condition flag to copy files once reviewed
-MOVING_2_REVIEW = False
+MOVING_2_REVIEW = True
 
 # once initial review is donde, move classified files here
 REVIEWED_FOLDER = Path(
-    "/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/"
-    "curated_no_ops_63_cohort_reviewed/1_no_comments"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_2_ops_reviewed"
 )
 DIR1_NO_COMMENTS = REVIEWED_FOLDER / "1_no_comments"
 DIR1_WITH_COMMENTS = REVIEWED_FOLDER / "1_with_comments"

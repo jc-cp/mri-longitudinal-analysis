@@ -19,9 +19,7 @@ class Review:
 
     def __init__(self):
         """Initialize the Review object by setting up the configuration."""
-        self.csv_files = {
-            "45": review_cfg.CSV_FILE,
-        }
+        self.csv_file = review_cfg.CSV_FILE
 
     def move_files(self, d_f, condition, source_dir, destination_folder):
         """
@@ -56,21 +54,18 @@ class Review:
         d_f = pd.read_csv(csv_file, names=column_names)
         return d_f
 
-    def create_review_dirs(self, suffix):
+    def create_review_dirs(self):
         """
         Create directories required for the review based on a given suffix.
-
-        Args:
-            suffix (str): Suffix to determine directory names from configuration.
 
         Returns:
             dict: Dictionary of created directory paths.
         """
         dirs = {
-            "reviewed_dir": review_cfg.__dict__[f"REVIEWED_FOLDER_{suffix}"],
-            "dir1_no_comments": review_cfg.__dict__[f"DIR1_NO_COMMENTS_{suffix}"],
-            "dir1_with_comments": review_cfg.__dict__[f"DIR1_WITH_COMMENTS_{suffix}"],
-            "dir5": review_cfg.__dict__[f"DIR5_{suffix}"],
+            "reviewed_dir": review_cfg.__dict__["REVIEWED_FOLDER"],
+            "dir1_no_comments": review_cfg.__dict__["DIR1_NO_COMMENTS"],
+            "dir1_with_comments": review_cfg.__dict__["DIR1_WITH_COMMENTS"],
+            "dir5": review_cfg.__dict__["DIR5"],
         }
         for dir_path in dirs.values():
             os.makedirs(dir_path, exist_ok=True)
@@ -221,52 +216,52 @@ class Review:
         process including reading files, creating directories, detecting specific
         images, moving files based on review outcomes, and more.
         """
-        for suffix, csv_file in self.csv_files.items():
-            d_f = self.read_file(csv_file=csv_file)
-            dirs = self.create_review_dirs(suffix)
 
-            # Detect files containing a t2 string in the modality folders
-            detecting = review_cfg.DETECTING
-            if detecting:
-                data_folders = [review_cfg.DATA_FOLDER]  # Add folder here
-                output_detection_folders = [review_cfg.OUTPUT_DETECTTION]  # Add folder here
-                self.detect_t2(data_folders, output_detection_folders)
+        d_f = self.read_file(csv_file=self.csv_file)
+        dirs = self.create_review_dirs()
 
-            # Moving files if needed for initial review
-            moving2review = review_cfg.MOVING_2_REVIEW
-            if moving2review:
-                source_dir = dirs["reviewed_dir"]
-                dir1_no_comments = dirs["dir1_no_comments"]
-                dir1_with_comments = dirs["dir1_with_comments"]
-                dir5 = dirs["dir5"]
+        # Detect files containing a t2 string in the modality folders
+        detecting = review_cfg.DETECTING
+        if detecting:
+            data_folders = [review_cfg.DATA_FOLDER]  # Add folder here
+            output_detection_folders = [review_cfg.OUTPUT_DETECTTION]  # Add folder here
+            self.detect_t2(data_folders, output_detection_folders)
 
-                # Move the files
-                try:
-                    self.move_files(
-                        d_f,
-                        (d_f["Quality"] == 1) & (d_f["Comments"].isnull()),
-                        source_dir,
-                        dir1_no_comments,
-                    )
-                    self.move_files(
-                        d_f,
-                        (d_f["Quality"] == 1) & (d_f["Comments"].notnull()),
-                        source_dir,
-                        dir1_with_comments,
-                    )
-                    self.move_files(d_f, d_f["Quality"] == 5, source_dir, dir5)
-                except IOError as error:
-                    print(error)
+        # Moving files if needed for initial review
+        moving2review = review_cfg.MOVING_2_REVIEW
+        if moving2review:
+            source_dir = review_cfg.DATA_FOLDER_T2
+            dir1_no_comments = dirs["dir1_no_comments"]
+            dir1_with_comments = dirs["dir1_with_comments"]
+            dir5 = dirs["dir5"]
 
-            # Moving files after radiologist review
-            moving4dataset = review_cfg.MOVING_4_DATASET
-            if moving4dataset:
-                source_dir = dirs["dir1_with_comments"]
-                dest_dir = dirs["dir1_no_comments"]
-                csv_file_after_review = dirs["csv_file_after_review"]
+            # Move the files
+            try:
+                self.move_files(
+                    d_f,
+                    (d_f["Quality"] == 1) & (d_f["Comments"].isnull()),
+                    source_dir,
+                    dir1_no_comments,
+                )
+                self.move_files(
+                    d_f,
+                    (d_f["Quality"] == 1) & (d_f["Comments"].notnull()),
+                    source_dir,
+                    dir1_with_comments,
+                )
+                self.move_files(d_f, d_f["Quality"] == 5, source_dir, dir5)
+            except IOError as error:
+                print(error)
 
-                self.move_valid_images(source_dir, dest_dir, csv_file_after_review)
-                print("Moved images for full dataset!")
+        # Moving files after radiologist review
+        moving4dataset = review_cfg.MOVING_4_DATASET
+        if moving4dataset:
+            source_dir = dirs["dir1_with_comments"]
+            dest_dir = dirs["dir1_no_comments"]
+            csv_file_after_review = dirs["csv_file_after_review"]
+
+            self.move_valid_images(source_dir, dest_dir, csv_file_after_review)
+            print("Moved images for full dataset!")
 
         # Moving files containing massive artifacts
         delete_artifacts = review_cfg.DELETE_ARTIFACTS
