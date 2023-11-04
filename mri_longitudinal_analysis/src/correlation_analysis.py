@@ -176,8 +176,8 @@ class TumorAnalysis:
                 [f"{column}_mean", f"{column}_median", f"{column}_std"]
             ] = self.merged_data.apply(lambda row: self.calculate_stats(row, column), axis=1)
 
-        print(self.merged_data.columns)
-        print(self.merged_data.head())
+        # print(self.merged_data.columns)
+        # print(self.merged_data.head())
         print("Aggregated summary statistics.")
 
     def analyze_correlation(self, x_val, y_val, data, method="pearson"):
@@ -279,16 +279,16 @@ class TumorAnalysis:
             f" {p_val}"
         )
 
-    def longitudinal_analysis(self):
+    def longitudinal_separation(self):
         pre_treatment_data_frames = []
         post_treatment_data_frames = []
 
         for patient_id, data in self.merged_data.groupby("Patient_ID"):
             treatment_dates = self.extract_treatment_dates(patient_id)
-            pre_treatment_df, post_treatment_df = self.perform_temporal_analysis(
-                data, treatment_dates
-            )
 
+            pre_treatment_df, post_treatment_df = self.perform_separation(data, treatment_dates)
+            # print(pre_treatment_df)
+            # print(post_treatment_df)
             pre_treatment_data_frames.append(pre_treatment_df)
             post_treatment_data_frames.append(post_treatment_df)
 
@@ -297,6 +297,7 @@ class TumorAnalysis:
 
     def extract_treatment_dates(self, patient_id):
         first_row = self.clinical_data[self.clinical_data["BCH MRN"] == patient_id].iloc[0]
+
         treatment_dates = {}
 
         if first_row["Surgical Resection"] == "Yes":
@@ -308,22 +309,65 @@ class TumorAnalysis:
         if first_row["Radiation as part of initial treatment"] == "Yes":
             treatment_dates["Radiation"] = first_row["Start Date of Radiation"]
 
+        print(f"Patient {patient_id} - Treatment Dates: {treatment_dates}")
         return treatment_dates
 
-    def perform_temporal_analysis(self, data, treatment_dates):
-        # Sort treatment dates
-        sorted_treatments = sorted(treatment_dates.items(), key=lambda x: x[1])
-        first_treatment_date = sorted_treatments[0][1] if sorted_treatments else None
+    def perform_separation(self, data, treatment_dates):
+        treatment_dates = {
+            k: pd.to_datetime(v, errors="coerce")
+            for k, v in treatment_dates.items()
+            if pd.notnull(v)
+        }
 
-        # Filter data into pre and post treatment DataFrames
-        pre_treatment_data = (
-            data[data["Date"] < first_treatment_date] if first_treatment_date else pd.DataFrame()
-        )
-        post_treatment_data = (
-            data[data["Date"] >= first_treatment_date] if first_treatment_date else pd.DataFrame()
-        )
+        first_treatment_date = min(treatment_dates.values(), default=pd.Timestamp.max)
 
-        return pre_treatment_data, post_treatment_data
+        pre_treatment_rows = {col: [] for col in data.columns}
+        post_treatment_rows = {col: [] for col in data.columns}
+
+        # Iterate over each row in the data for the patient
+        for _, row in data.iterrows():
+            dates = row["Date"]
+            # Ensure that 'dates' is a list before iterating
+            if isinstance(dates, list):
+                for i, date_str in enumerate(dates):
+                    date = pd.to_datetime(date_str, errors="coerce")
+                    if pd.notnull(date):
+                        # Split each element based on the treatment date
+                        for col in data.columns:
+                            # Check if the column contains a list and only then try to index it
+                            if isinstance(row[col], list):
+                                value_to_append = row[col][i]
+                            else:
+                                value_to_append = row[col]
+                            if date < first_treatment_date:
+                                pre_treatment_rows[col].append(value_to_append)
+                            else:
+                                post_treatment_rows[col].append(value_to_append)
+            else:
+                # If 'dates' is not a list, handle the scalar case here
+                # This might happen if there's only one date and therefore one set of measurements
+                date = pd.to_datetime(dates, errors="coerce")
+                for col in data.columns:
+                    if pd.notnull(date) and date < first_treatment_date:
+                        pre_treatment_rows[col].append(row[col])
+                    else:
+                        post_treatment_rows[col].append(row[col])
+
+        # Convert the lists of series to DataFrames
+        pre_treatment_df = pd.DataFrame(pre_treatment_rows)
+        post_treatment_df = pd.DataFrame(post_treatment_rows)
+
+        return pre_treatment_df, post_treatment_df
+
+    def get_treatment_type(self, patient_row):
+        if pd.notna(patient_row.get("Date of first surgery")):
+            return "Surgery"
+        elif patient_row.get("Systemic therapy before radiation") == "Yes":
+            return "Chemotherapy"
+        elif patient_row.get("Radiation as part of initial treatment") == "Yes":
+            return "Radiation"
+        else:
+            return "Unknown"
 
     def extract_trends(self, data):
         trends = {}
@@ -379,7 +423,11 @@ class TumorAnalysis:
         Wrapper function to run all analyses. Init the class with clinical and volumetric data, and merge into one big dataframe.
         Then separate data into pre- and post-treatment groups, then perform separate analyses.
         """
-        self.longitudinal_analysis()
+        print("Separating data into pre- and post-treatment groups...")
+        self.longitudinal_separation()
+        # print(self.pre_treatment_data.head())
+        # print(self.post_treatment_data.head())
+        # TODO: Add the treatment date to the DF as an additional column for later plotting
 
         # self.analyze_pre_treatment(correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT)
         # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT)
