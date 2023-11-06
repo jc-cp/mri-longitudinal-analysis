@@ -6,9 +6,7 @@ from pathlib import Path
 PROJ_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/mri_longitudinal_analysis")
 
 # For remote data on the drive
-DATA_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_63_cohort_reviewed"
-)
+DATA_DIR = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_2_ops_reviewed")
 
 INPUT_DIR = DATA_DIR / "1_no_comments"
 OUPUT_DIR = DATA_DIR / "output"

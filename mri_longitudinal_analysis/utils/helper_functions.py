@@ -4,7 +4,7 @@ from math import isfinite
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-from scipy.stats import pearsonr, spearmanr, chi2_contingency
+from scipy.stats import pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr
 from statsmodels.stats.multitest import multipletests
 from sklearn.neighbors import NearestNeighbors
 
@@ -73,7 +73,7 @@ def spearman_correlation(x_var, y_var):
     return coef, p_val
 
 
-def chi_squared_test(x_var, y_var):
+def chi_squared_test(data, x_val, y_val):
     """
     Perform a Chi-Squared test between two categorical variables.
 
@@ -84,12 +84,27 @@ def chi_squared_test(x_var, y_var):
         float: The Chi-Squared test statistic.
         float: The p-value of the test.
     """
-    contingency_table = pd.crosstab(x_var, y_var)
-    chi2, p, _, _ = chi2_contingency(contingency_table)
-    return chi2, p
+    contingency_table = pd.crosstab(data[x_val], data[y_val])
+    chi2, p_val, dof, expected = chi2_contingency(contingency_table)
+    return chi2, p_val, dof, expected
 
 
-def bonferroni_correction(p_values):
+# def perform_chi_squared_tests(data, alpha=0.05):
+#     columns = data.select_dtypes(include='category').columns
+#     num_tests = len(columns) * (len(columns) - 1) / 2
+#     adjusted_alpha = alpha / num_tests
+#     significant_results = []
+
+#     for i in range(len(columns)):
+#         for j in range(i+1, len(columns)):
+#             contingency_table = pd.crosstab(data[columns[i]], data[columns[j]])
+#             chi2, p, dof, ex = chi2_contingency(contingency_table)
+#             if p < adjusted_alpha:
+#                 significant_results.append((columns[i], columns[j], p))
+
+
+#     return significant_results
+def bonferroni_correction(p_values, alpha):
     """
     Apply Bonferroni correction to a list of p-values.
 
@@ -99,7 +114,7 @@ def bonferroni_correction(p_values):
     Returns:
         list: Bonferroni corrected p-values.
     """
-    return multipletests(p_values, method="bonferroni")[1]
+    return multipletests(p_values, alpha=alpha, method="bonferroni")[1]
 
 
 def sensitivity_analysis(merged_data, column, z_threshold=2):
@@ -195,3 +210,37 @@ def compute_95_ci(data):
     upper_bound = mean + 1.96 * se
 
     return lower_bound, upper_bound
+
+
+def calculate_stats(row, col_name):
+    values = row[col_name]
+    mean_val = np.mean(values)
+    median_val = np.median(values)
+    std_val = np.std(values)
+    return pd.Series(
+        [mean_val, median_val, std_val],
+        index=[f"{col_name}_mean", f"{col_name}_median", f"{col_name}_std"],
+    )
+
+
+def zero_fill(series, width):
+    return series.astype(str).str.zfill(width)
+
+
+def ttest(data, x_val, y_val):
+    group1 = data[data[x_val] == data[x_val].unique()[0]][y_val]
+    group2 = data[data[x_val] == data[x_val].unique()[1]][y_val]
+    t_stat, p_val = ttest_ind(group1, group2)
+    return t_stat, p_val
+
+
+def f_one(data, x_val, y_val):
+    groups = [group[y_val].dropna() for name, group in data.groupby(x_val)]
+    f_stat, p_val = f_oneway(*groups)
+    return f_stat, p_val
+
+
+def point_bi_serial(data, var):
+    data[var + "_Binary"] = data[var].apply(lambda x: 1 if x == "Yes" else 0)
+    coef, p_val = pointbiserialr(data[var + "_Binary"], data["Growth[%]"])
+    return coef, p_val
