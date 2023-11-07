@@ -642,18 +642,19 @@ class TumorAnalysis:
         if correlation_cfg.SENSITIVITY:
             print("Step 2: Performing Sensitivity Analysis...")
 
-            print(self.pre_treatment_data.dtypes)
-            pre_treatment_vars = [self.post_treatment_data.columns]
+            pre_treatment_vars = ["Volume", "Growth[%]", "Growth[%]_mean", "Growth[%]_std"]
             post_treatment_vars = []
 
             for pre_var in pre_treatment_vars:
-                self.pre_treatment_data = sensitivity_analysis(self.pre_treatment_data, pre_var)
                 print(
-                    "   Data after excluding outliers based on Z-score in pre-treatment setting:"
-                    f" {self.pre_treatment_data}"
+                    f"     Performing sensitivity analysis on pre-treatmen variables {pre_var}..."
+                )
+                self.pre_treatment_data = sensitivity_analysis(
+                    self.pre_treatment_data, pre_var, z_threshold=1.5
                 )
 
             # TODO: concatenate and convert to proper data types
+            # print(self.post_treatment_data.dtypes)
             # for post_var in post_treatment_vars:
             #     self.post_treatment_data = sensitivity_analysis(
             #         self.post_treatment_data, post_var, z_threshold=2
@@ -667,9 +668,10 @@ class TumorAnalysis:
         if correlation_cfg.PROPENSITY:
             print("Step 3: Performing Propensity Score Matching...")
 
-            # matched_data = propensity_score_matching("Treatment_Type", ["Age", "Sex", "Mutation_Type"])
-            # print(f"Data after Propensity Score Matching: {matched_data}")
-            pass
+            matched_data = propensity_score_matching(
+                "Treatment_Type", ["Age", "Sex", "Mutation_Type"]
+            )
+            print(f"Data after Propensity Score Matching: {matched_data}")
 
         print("Step 4: Starting main analyses...")
         self.analyze_pre_treatment(correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT)
