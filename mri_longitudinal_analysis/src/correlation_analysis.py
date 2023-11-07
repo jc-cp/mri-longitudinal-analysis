@@ -2,26 +2,25 @@
 This script initializes the TumorAnalysis class with clinical and volumetric data, 
 then performs various analyses including correlations and treatments.
 """
-import pandas as pd
-import numpy as np
-import seaborn as sns
 import os
+
 import matplotlib.pyplot as plt
-from scipy import stats
-from scipy.signal import find_peaks
+import pandas as pd
+import seaborn as sns
 from cfg import correlation_cfg
+from scipy.signal import find_peaks
 from utils.helper_functions import (
-    pearson_correlation,
-    spearman_correlation,
-    chi_squared_test,
     bonferroni_correction,
-    sensitivity_analysis,
-    propensity_score_matching,
     calculate_stats,
-    zero_fill,
-    ttest,
+    chi_squared_test,
     f_one,
+    pearson_correlation,
     point_bi_serial,
+    propensity_score_matching,
+    sensitivity_analysis,
+    spearman_correlation,
+    ttest,
+    zero_fill,
 )
 
 
@@ -39,6 +38,7 @@ class TumorAnalysis:
             volumes_data_file (str): Path to the tumor volumes data CSV file.
         """
         self.merged_data = pd.DataFrame()
+        self.clinical_data_reduced = pd.DataFrame()
         self.post_treatment_data = pd.DataFrame()
         self.pre_treatment_data = pd.DataFrame()
         self.p_values = []
@@ -92,7 +92,7 @@ class TumorAnalysis:
         self.clinical_data["Race"] = self.clinical_data["Race/Ethnicity"].astype(str)
         self.clinical_data["Mutations"] = self.clinical_data.apply(
             lambda row: "Yes"
-            if row["BRAF V600E mutation"] or row["BRAF fusion"] == "Yes"
+            if row["BRAF V600E mutation"] == "Yes" or row["BRAF fusion"] == "Yes"
             else "No",
             axis=1,
         )
@@ -285,6 +285,8 @@ class TumorAnalysis:
         # if cleaned_data_size < original_data_size:
         #     print(f"Dropped {original_data_size - cleaned_data_size} rows due to NaN values.")
 
+        test_result = None  # Initialize test_result
+        test_type = ""
         x_dtype = data[x_val].dtype
         y_dtype = data[y_val].dtype
 
@@ -297,27 +299,43 @@ class TumorAnalysis:
                 f"{x_val} and {y_val} - {method.title()} Correlation Coefficient: {coef}, P-value:"
                 f" {p_val}"
             )
+            test_result = (coef, p_val)
+            test_type = "correlation"
         elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_numeric_dtype(y_dtype):
             categories = data[x_val].nunique()
             if categories == 2:
                 t_stat, p_val = ttest(data, x_val, y_val)
                 print(f"T-test for {x_val} and {y_val} - t-statistic: {t_stat}, P-value: {p_val}")
+                test_result = (t_stat, p_val)
+                test_type = "t-test"
             else:
                 # For more than two categories, use ANOVA
                 f_stat, p_val = f_one(data, x_val, y_val)
                 print(f"ANOVA for {x_val} and {y_val} - F-statistic: {f_stat}, P-value: {p_val}")
+                test_result = (f_stat, p_val)
+                test_type = "ANOVA"
+
         elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_categorical_dtype(
             y_dtype
         ):
             chi2, p_val, _, _ = chi_squared_test(data, x_val, y_val)
             print(f"Chi-Squared test for {x_val} and {y_val} - Chi2: {chi2}, P-value: {p_val}")
+            test_result = (chi2, p_val)
+            test_type = "chi-squared"
 
-        # Visualize the correlation by generating plots
-        self.visualize_correlation(x_val, y_val, data, method=method, coef=coef, p_val=p_val)
+        if test_result:
+            # Visualize the statistical test
+            self.visualize_statistical_test(
+                x_val, y_val, data, test_result, test_type, method=method
+            )
 
-        # Save the values for later
-        self.p_values.append(p_val)
-        self.coef_values.append(coef)
+            self.p_values.append(p_val)
+            if test_type == "correlation":
+                self.coef_values.append(coef)
+        else:
+            print(
+                f"Could not perform analysis on {x_val} and {y_val} due to incompatible data types."
+            )
 
     def analyze_pre_treatment(self, correlation_method="spearman"):
         """
@@ -328,6 +346,12 @@ class TumorAnalysis:
             dict: Dictionary of correlation results.
         """ ""
         print("Pre-treatment Correlations:")
+
+        self.pre_treatment_data["Sex"] = self.pre_treatment_data["Sex"].astype("category")
+        self.pre_treatment_data["Glioma_Type"] = self.pre_treatment_data["Glioma_Type"].astype(
+            "category"
+        )
+        self.pre_treatment_data["Race"] = self.pre_treatment_data["Race"].astype("category")
 
         print(self.pre_treatment_data.columns)
 
@@ -394,51 +418,65 @@ class TumorAnalysis:
         #     f" {p_val}"
         # )
 
-    def visualize_correlation(self, x_val, y_val, data, coef, p_val, method="pearson"):
+    def visualize_statistical_test(
+        self, x_val, y_val, data, test_result, test_type="correlation", method="pearson"
+    ):
         """
-        Visualize correlation between two variables using a scatter plot and adding a regression line.
+        Visualize the result of a statistical test, including correlation heatmaps.
 
         Parameters:
-            x_val, y_val (str): Column names for the variables to correlate.
+            x_val, y_val (str): Column names for the variables analyzed.
             data (DataFrame): The dataframe containing the data.
-            method (str): The correlation method used ('pearson' or 'spearman').
+            test_result (tuple): The result of the statistical test (e.g., (statistic, p_value)).
+            test_type (str): The type of statistical test ('correlation', 't-test', 'anova', 'chi-squared').
+            method (str): The correlation method used ('pearson' or 'spearman'), if applicable.
         """
-        os.makedirs(correlation_cfg.OUTPUT_DIR, exist_ok=True)
-        output_file_corr = os.path.join(
-            correlation_cfg.OUTPUT_DIR, f"{x_val}_vs_{y_val}_{method}_correlation.png"
-        )
-        output_file_heatmap = os.path.join(correlation_cfg.OUTPUT_DIR, f"{method}_heatmap.png")
+        save_dir = correlation_cfg.OUTPUT_DIR
+        stat, p_val = test_result
+        title = f"{x_val} vs {y_val} ({test_type.capitalize()}) \n"
 
-        plot_type = self.determine_plot_type(data, x_val, y_val)
-
-        if plot_type == "scatter":
+        # Plot settings based on test type
+        if test_type == "correlation":
             sns.scatterplot(x=x_val, y=y_val, data=data)
             sns.regplot(x=x_val, y=y_val, data=data, scatter=False, color="blue")
-        elif plot_type == "box":
+            title += f"{method.title()} correlation coefficient: {stat:.2f}, P-value: {p_val:.3e}"
+        elif test_type == "t-test":
+            sns.barplot(x=x_val, y=y_val, data=data)
+            title += f"T-statistic: {stat:.2f}, P-value: {p_val:.3e}"
+        elif test_type == "ANOVA":
             sns.boxplot(x=x_val, y=y_val, data=data)
-        else:
-            print(f"No suitable plot type found for variables: {x_val} and {y_val}")
+            title += f"F-statistic: {stat:.2f}, P-value: {p_val:.3e}"
+        elif test_type == "chi-squared":
+            contingency_table = pd.crosstab(data[x_val], data[y_val])
+            sns.heatmap(contingency_table, annot=True, cmap="coolwarm", fmt="g")
+            title += f"Chi2: {stat:.2f}, P-value: {p_val:.3e}"
 
-        plt.title(
-            f"{x_val} vs {y_val} ({method.capitalize()} correlation) \n"
-            + f"Correlation coefficient: {coef:.2f}, P-value: {p_val:.3e}"
-        )
+        plt.title(title)
         plt.xlabel(x_val)
         plt.ylabel(y_val)
         plt.tight_layout()
-        plt.savefig(output_file_corr)
+
+        # Save or display the plot
+        save_file = os.path.join(save_dir, f"{x_val}_vs_{y_val}_{test_type}.png")
+        plt.savefig(save_file)
         plt.close()
 
-        # Now the heatmap
-        numeric_data = data.select_dtypes(include=[np.number])
-        correlation_matrix = numeric_data.corr(method=method)
-        sns.heatmap(
-            correlation_matrix, annot=True, fmt=".2f", cmap="coolwarm", square=True, linewidths=0.5
-        )
-        plt.title(f"Heatmap of {method.capitalize()} Correlation")
-        plt.tight_layout()
-        plt.savefig(output_file_heatmap)
-        plt.close()
+        # If the test type is correlation, create a heatmap for the correlation matrix
+        if test_type in ["pearson", "spearman"]:
+            plt.figure(figsize=(10, 8))
+            sns.heatmap(
+                data.corr(method=method),
+                annot=True,
+                fmt=".2f",
+                cmap="coolwarm",
+                square=True,
+                linewidths=0.5,
+            )
+            plt.title(f"Heatmap of {method.capitalize()} Correlation")
+            plt.tight_layout()
+            heat_map_file = os.path.join(save_dir, f"{method}_correlation_heatmap.png")
+            plt.savefig(heat_map_file)
+            plt.close()
 
     def determine_plot_type(self, data, x_var, y_var):
         """

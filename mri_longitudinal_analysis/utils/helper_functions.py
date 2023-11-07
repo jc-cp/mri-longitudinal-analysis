@@ -230,7 +230,7 @@ def zero_fill(series, width):
 def ttest(data, x_val, y_val):
     group1 = data[data[x_val] == data[x_val].unique()[0]][y_val]
     group2 = data[data[x_val] == data[x_val].unique()[1]][y_val]
-    t_stat, p_val = ttest_ind(group1, group2)
+    t_stat, p_val = ttest_ind(group1.dropna(), group2.dropna())
     return t_stat, p_val
 
 
