@@ -204,7 +204,26 @@ class TumorAnalysis:
             pre_treatment_data_frames.append(pre_treatment_df)
             post_treatment_data_frames.append(post_treatment_df)
 
+        # Concatenate and convert to appropriate data types
         self.pre_treatment_data = pd.concat(pre_treatment_data_frames, ignore_index=True)
+        self.pre_treatment_data["Sex"] = self.pre_treatment_data["Sex"].astype("category")
+        self.pre_treatment_data["Glioma_Type"] = self.pre_treatment_data["Glioma_Type"].astype(
+            "category"
+        )
+        self.pre_treatment_data["Race"] = self.pre_treatment_data["Race"].astype("category")
+        self.pre_treatment_data["Mutations"] = self.pre_treatment_data["Mutations"].astype(
+            "category"
+        )
+        self.pre_treatment_data["Treatment_Type"] = self.pre_treatment_data[
+            "Treatment_Type"
+        ].astype("category")
+
+        self.pre_treatment_data["Patient_ID"] = self.pre_treatment_data["Patient_ID"].astype(int)
+        self.pre_treatment_data["Tumor_Progression"] = self.pre_treatment_data[
+            "Tumor_Progression"
+        ].astype(bool)
+
+        # TODO: concatenate and convert to proper data types
         self.post_treatment_data = pd.concat(post_treatment_data_frames, ignore_index=True)
 
     def extract_treatment_dates(self, patient_id):
@@ -360,25 +379,6 @@ class TumorAnalysis:
             dict: Dictionary of correlation results.
         """ ""
         print("     Pre-treatment Correlations:")
-
-        self.pre_treatment_data["Sex"] = self.pre_treatment_data["Sex"].astype("category")
-        self.pre_treatment_data["Glioma_Type"] = self.pre_treatment_data["Glioma_Type"].astype(
-            "category"
-        )
-        self.pre_treatment_data["Race"] = self.pre_treatment_data["Race"].astype("category")
-        self.pre_treatment_data["Mutations"] = self.pre_treatment_data["Mutations"].astype(
-            "category"
-        )
-        self.pre_treatment_data["Treatment_Type"] = self.pre_treatment_data[
-            "Treatment_Type"
-        ].astype("category")
-
-        self.pre_treatment_data["Patient_ID"] = self.pre_treatment_data["Patient_ID"].astype(int)
-        self.pre_treatment_data["Tumor_Progression"] = self.pre_treatment_data[
-            "Tumor_Progression"
-        ].astype(bool)
-
-        # print(self.pre_treatment_data.dtypes)
 
         for growth_metric in ["Growth[%]", "Growth[%]_mean", "Growth[%]_std"]:
             self.analyze_correlation(
@@ -653,6 +653,7 @@ class TumorAnalysis:
                     f" {self.pre_treatment_data}"
                 )
 
+            # TODO: concatenate and convert to proper data types
             # for post_var in post_treatment_vars:
             #     self.post_treatment_data = sensitivity_analysis(
             #         self.post_treatment_data, post_var, z_threshold=2
