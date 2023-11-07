@@ -96,7 +96,6 @@ class TumorAnalysis:
             else "No",
             axis=1,
         )
-
         relevant_columns = [
             "Treatment_Type",
             "BCH MRN",
@@ -352,6 +351,9 @@ class TumorAnalysis:
             "category"
         )
         self.pre_treatment_data["Race"] = self.pre_treatment_data["Race"].astype("category")
+        self.pre_treatment_data["Mutations"] = self.pre_treatment_data["Mutations"].astype(
+            "category"
+        )
 
         print(self.pre_treatment_data.columns)
 
@@ -360,18 +362,18 @@ class TumorAnalysis:
         )
 
         for var in ["Sex", "Mutations", "Race"]:
-            if var == "Mutations" and self.pre_treatment_data[var].nunique() == 2:
-                # If mutations is binary, use point-biserial correlation
-                coef, p_val = point_bi_serial(self.pre_treatment_data, var)
-                print(
-                    f"Point-Biserial Correlation for {var} and Growth[%] - Coefficient: {coef},"
-                    f" P-value: {p_val}"
-                )
-            else:
-                # For non-binary categorical variables, use ANOVA or t-test as appropriate
-                self.analyze_correlation(
-                    var, "Growth[%]", self.pre_treatment_data, method=correlation_method
-                )
+            # if var == "Mutations" and self.pre_treatment_data[var].nunique() == 2:
+            #     # If mutations is binary, use point-biserial correlation
+            #     coef, p_val = point_bi_serial(self.pre_treatment_data, var)
+            #     print(
+            #         f"Point-Biserial Correlation for {var} and Growth[%] - Coefficient: {coef},"
+            #         f" P-value: {p_val}"
+            #     )
+            # else:
+            # For non-binary categorical variables, use ANOVA or t-test as appropriate
+            self.analyze_correlation(
+                var, "Growth[%]", self.pre_treatment_data, method=correlation_method
+            )
 
         for metric in ["Age_mean", "Age_median", "Age_std"]:
             self.analyze_correlation(
@@ -445,6 +447,7 @@ class TumorAnalysis:
             title += f"T-statistic: {stat:.2f}, P-value: {p_val:.3e}"
         elif test_type == "ANOVA":
             sns.boxplot(x=x_val, y=y_val, data=data)
+            plt.xticks(rotation=90, fontsize="small")
             title += f"F-statistic: {stat:.2f}, P-value: {p_val:.3e}"
         elif test_type == "chi-squared":
             contingency_table = pd.crosstab(data[x_val], data[y_val])
