@@ -7,7 +7,10 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import numpy as np
+import statsmodels.api as sm
 from cfg import correlation_cfg
+from lifelines import KaplanMeierFitter
 from scipy.signal import find_peaks
 from utils.helper_functions import (
     bonferroni_correction,
@@ -43,8 +46,7 @@ class TumorAnalysis:
         self.pre_treatment_data = pd.DataFrame()
         self.p_values = []
         self.coef_values = []
-
-        print("Validating files...")
+        print("Step 0: Initializing TumorAnalysis class...")
         self.validate_files(clinical_data_path, volumes_data_path)
         self.load_clinical_data(clinical_data_path)
         self.load_volumes_data(volumes_data_path)
@@ -57,11 +59,15 @@ class TumorAnalysis:
         ]
         if missing_files:
             raise FileNotFoundError(f"The following files could not be found: {missing_files}")
-        print("Validated files.")
+        print("     Validated files.")
 
     def load_clinical_data(self, clinical_data_path):
         self.clinical_data = pd.read_csv(clinical_data_path)
         self.clinical_data["Treatment_Type"] = self.extract_treatment_types()
+        self.clinical_data["Treatment_Type"] = self.clinical_data["Treatment_Type"].astype(
+            "category"
+        )
+
         self.clinical_data["BCH MRN"] = zero_fill(self.clinical_data["BCH MRN"], 7)
         self.parse_clinical_data()
 
@@ -83,19 +89,31 @@ class TumorAnalysis:
                     return glioma_type
             return "Other"
 
-        self.clinical_data["Glioma_Type"] = self.clinical_data["Pathologic diagnosis"].apply(
-            map_diagnosis
+        self.clinical_data["Glioma_Type"] = (
+            self.clinical_data["Pathologic diagnosis"].apply(map_diagnosis).astype("category")
         )
-        self.clinical_data["Sex"] = self.clinical_data["Sex"].apply(
-            lambda x: "Female" if x == "Female" else "Male"
-        )
-        self.clinical_data["Race"] = self.clinical_data["Race/Ethnicity"].astype(str)
+        self.clinical_data["Sex"] = (
+            self.clinical_data["Sex"].apply(lambda x: "Female" if x == "Female" else "Male")
+        ).astype("category")
+        self.clinical_data["Race"] = self.clinical_data["Race/Ethnicity"].astype("category")
         self.clinical_data["Mutations"] = self.clinical_data.apply(
             lambda row: "Yes"
-            if row["BRAF V600E mutation"] == "Yes" or row["BRAF fusion"] == "Yes"
+            if row["BRAF V600E mutation"] == "Yes"
+            or row["BRAF fusion"] == "Yes"
+            or row["FGFR fusion"] == "Yes"
             else "No",
             axis=1,
+        ).astype("category")
+        self.clinical_data["Date_of_Diagnosis"] = pd.to_datetime(
+            self.clinical_data["Date of MRI diagnosis"], dayfirst=True
         )
+        self.clinical_data["Date_of_First_Progression"] = pd.to_datetime(
+            self.clinical_data["Date of First Progression"], dayfirst=True
+        )
+        self.clinical_data["Tumor_Progression"] = (
+            self.clinical_data["Progression"].map({"Yes": True, "No": False, None: False})
+        ).astype(bool)
+
         relevant_columns = [
             "Treatment_Type",
             "BCH MRN",
@@ -103,28 +121,34 @@ class TumorAnalysis:
             "Sex",
             "Race",
             "Mutations",
+            "Date_of_First_Progression",
+            "Date_of_Diagnosis",
+            "Tumor_Progression",
         ]
+
         self.clinical_data_reduced = self.clinical_data[relevant_columns]
-        print("Parsed clinical data.")
+        print("     Parsed clinical data.")
 
     def load_volumes_data(self, volumes_data_path):
         all_files = [f for f in os.listdir(volumes_data_path) if f.endswith(".csv")]
         data_frames = []
         for file in all_files:
             patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
-            patient_id = file.split(".")[0]  # Assuming the ID is the first part of the filename
+            patient_id = file.split(".")[0]
             patient_df["Patient_ID"] = patient_id
             patient_df["Patient_ID"] = patient_df["Patient_ID"].astype(str).str.zfill(7)
+            patient_df["Date"] = pd.to_datetime(
+                patient_df["Date"], errors="coerce", format="%Y-%m-%d"
+            )
             data_frames.append(patient_df)
 
         self.volumes_data = pd.concat(data_frames, ignore_index=True)
-
-        print("Loaded volume data.")
+        print("     Loaded volume data.")
 
     def extract_treatment_types(self):
         treatment_list = []
 
-        for index, row in self.clinical_data.iterrows():
+        for _, row in self.clinical_data.iterrows():
             treatments = []
 
             if row["Surgical Resection"] == "Yes":
@@ -160,17 +184,14 @@ class TumorAnalysis:
             how="right",
         )
         self.merged_data = self.merged_data.drop(columns=["BCH MRN"])
-        print("Merged data.")
+        print("     Merged data.")
 
     def aggregate_summary_statistics(self):
         for column in ["Growth[%]", "Age", "Volume"]:
             self.merged_data[
                 [f"{column}_mean", f"{column}_median", f"{column}_std"]
             ] = self.merged_data.apply(lambda row: calculate_stats(row, column), axis=1)
-
-        # print(self.merged_data.columns)
-        # print(self.merged_data.head())
-        print("Aggregated summary statistics.")
+        print("     Aggregated summary statistics.")
 
     def longitudinal_separation(self):
         pre_treatment_data_frames = []
@@ -200,7 +221,7 @@ class TumorAnalysis:
         if first_row["Radiation as part of initial treatment"] == "Yes":
             treatment_dates["Radiation"] = first_row["Start Date of Radiation"]
 
-        print(f"Patient {patient_id} - Treatment Dates: {treatment_dates}")
+        # print(f"Patient {patient_id} - Treatment Dates: {treatment_dates}")
         return treatment_dates
 
     def perform_separation(self, data, treatment_dates):
@@ -239,7 +260,6 @@ class TumorAnalysis:
                                 post_treatment_rows[col].append(value_to_append)
             else:
                 # If 'dates' is not a list, handle the scalar case here
-                # This might happen if there's only one date and therefore one set of measurements
                 date = pd.to_datetime(dates, errors="coerce")
                 for col in data.columns:
                     if pd.notnull(date) and date < first_treatment_date:
@@ -264,26 +284,6 @@ class TumorAnalysis:
             return "Unknown"
 
     def analyze_correlation(self, x_val, y_val, data, method="pearson"):
-        """
-        Analyze correlation between two variables.
-
-        Parameters:
-            var1, var2 (str): Column names for the variables to correlate.
-            method (str): The correlation method to use ('pearson' or 'spearman').
-
-        Returns:
-            float: The correlation coefficient.
-        """
-        # print("Available columns:", data.columns)
-        # print("First few rows of data:\n", data.head())
-
-        # print(f"Using {method} correlation for {x_val} and {y_val}...")
-        # original_data_size = len(data)
-        # clean_data = data.dropna(subset=[x_val, y_val]).reset_index(drop=True)
-        # cleaned_data_size = len(clean_data)
-        # if cleaned_data_size < original_data_size:
-        #     print(f"Dropped {original_data_size - cleaned_data_size} rows due to NaN values.")
-
         test_result = None  # Initialize test_result
         test_type = ""
         x_dtype = data[x_val].dtype
@@ -295,30 +295,45 @@ class TumorAnalysis:
             elif method == "spearman":
                 coef, p_val = spearman_correlation(data[x_val], data[y_val])
             print(
-                f"{x_val} and {y_val} - {method.title()} Correlation Coefficient: {coef}, P-value:"
-                f" {p_val}"
+                f"        {x_val} and {y_val} - {method.title()} Correlation Coefficient: {coef},"
+                f" P-value: {p_val}"
             )
             test_result = (coef, p_val)
             test_type = "correlation"
         elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_numeric_dtype(y_dtype):
             categories = data[x_val].nunique()
-            if categories == 2:
+            if categories == 2 and method == "t-test":
                 t_stat, p_val = ttest(data, x_val, y_val)
-                print(f"T-test for {x_val} and {y_val} - t-statistic: {t_stat}, P-value: {p_val}")
+                print(
+                    f"        T-test for {x_val} and {y_val} - t-statistic: {t_stat}, P-value:"
+                    f" {p_val}"
+                )
                 test_result = (t_stat, p_val)
                 test_type = "t-test"
+            elif categories == 2 and method == "point-biserial":
+                coef, p_val = point_bi_serial(data, x_val, y_val)
+                print(
+                    f"        Point-Biserial Correlation for {x_val} and {y_val} - Coefficient:"
+                    f" {coef}, P-value: {p_val}"
+                )
+                test_result = (coef, p_val)
+                test_type = "point-biserial"
             else:
                 # For more than two categories, use ANOVA
                 f_stat, p_val = f_one(data, x_val, y_val)
-                print(f"ANOVA for {x_val} and {y_val} - F-statistic: {f_stat}, P-value: {p_val}")
+                print(
+                    f"        ANOVA for {x_val} and {y_val} - F-statistic: {f_stat}, P-value:"
+                    f" {p_val}"
+                )
                 test_result = (f_stat, p_val)
                 test_type = "ANOVA"
-
         elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_categorical_dtype(
             y_dtype
         ):
             chi2, p_val, _, _ = chi_squared_test(data, x_val, y_val)
-            print(f"Chi-Squared test for {x_val} and {y_val} - Chi2: {chi2}, P-value: {p_val}")
+            print(
+                f"        Chi-Squared test for {x_val} and {y_val} - Chi2: {chi2}, P-value: {p_val}"
+            )
             test_result = (chi2, p_val)
             test_type = "chi-squared"
 
@@ -344,7 +359,7 @@ class TumorAnalysis:
         Returns:
             dict: Dictionary of correlation results.
         """ ""
-        print("Pre-treatment Correlations:")
+        print("     Pre-treatment Correlations:")
 
         self.pre_treatment_data["Sex"] = self.pre_treatment_data["Sex"].astype("category")
         self.pre_treatment_data["Glioma_Type"] = self.pre_treatment_data["Glioma_Type"].astype(
@@ -354,30 +369,31 @@ class TumorAnalysis:
         self.pre_treatment_data["Mutations"] = self.pre_treatment_data["Mutations"].astype(
             "category"
         )
+        self.pre_treatment_data["Treatment_Type"] = self.pre_treatment_data[
+            "Treatment_Type"
+        ].astype("category")
 
-        print(self.pre_treatment_data.columns)
+        self.pre_treatment_data["Patient_ID"] = self.pre_treatment_data["Patient_ID"].astype(int)
+        self.pre_treatment_data["Tumor_Progression"] = self.pre_treatment_data[
+            "Tumor_Progression"
+        ].astype(bool)
 
-        self.analyze_correlation(
-            "Glioma_Type", "Growth[%]", self.pre_treatment_data, method=correlation_method
-        )
+        # print(self.pre_treatment_data.dtypes)
 
-        for var in ["Sex", "Mutations", "Race"]:
-            # if var == "Mutations" and self.pre_treatment_data[var].nunique() == 2:
-            #     # If mutations is binary, use point-biserial correlation
-            #     coef, p_val = point_bi_serial(self.pre_treatment_data, var)
-            #     print(
-            #         f"Point-Biserial Correlation for {var} and Growth[%] - Coefficient: {coef},"
-            #         f" P-value: {p_val}"
-            #     )
-            # else:
-            # For non-binary categorical variables, use ANOVA or t-test as appropriate
+        for growth_metric in ["Growth[%]", "Growth[%]_mean", "Growth[%]_std"]:
             self.analyze_correlation(
-                var, "Growth[%]", self.pre_treatment_data, method=correlation_method
+                "Glioma_Type", growth_metric, self.pre_treatment_data, method=correlation_method
             )
 
-        for metric in ["Age_mean", "Age_median", "Age_std"]:
+        for var in ["Sex", "Mutations", "Race"]:
+            for corr_method in ["t-test", "point-biserial"]:
+                self.analyze_correlation(
+                    var, "Growth[%]", self.pre_treatment_data, method=corr_method
+                )
+
+        for age_metric in ["Age_mean", "Age_median", "Age_std"]:
             self.analyze_correlation(
-                metric, "Growth[%]", self.pre_treatment_data, method=correlation_method
+                age_metric, "Growth[%]", self.pre_treatment_data, method=correlation_method
             )
 
         # unchanging_tumors = self.pre_treatment_data[self.pre_treatment_data["Volume_mean"] == 0]
@@ -437,7 +453,7 @@ class TumorAnalysis:
         stat, p_val = test_result
         title = f"{x_val} vs {y_val} ({test_type.capitalize()}) \n"
 
-        # Plot settings based on test type
+        # Plot based on test type
         if test_type == "correlation":
             sns.scatterplot(x=x_val, y=y_val, data=data)
             sns.regplot(x=x_val, y=y_val, data=data, scatter=False, color="blue")
@@ -445,6 +461,9 @@ class TumorAnalysis:
         elif test_type == "t-test":
             sns.barplot(x=x_val, y=y_val, data=data)
             title += f"T-statistic: {stat:.2f}, P-value: {p_val:.3e}"
+        elif test_type == "point-biserial":
+            sns.boxplot(x=x_val, y=y_val, data=data)
+            title += f"Point-Biserial Correlation Coefficient: {stat:.2f}, P-value: {p_val:.3e}"
         elif test_type == "ANOVA":
             sns.boxplot(x=x_val, y=y_val, data=data)
             plt.xticks(rotation=90, fontsize="small")
@@ -459,7 +478,6 @@ class TumorAnalysis:
         plt.ylabel(y_val)
         plt.tight_layout()
 
-        # Save or display the plot
         save_file = os.path.join(save_dir, f"{x_val}_vs_{y_val}_{test_type}.png")
         plt.savefig(save_file)
         plt.close()
@@ -505,53 +523,168 @@ class TumorAnalysis:
             # More conditions can be added for different scenarios
             return "unknown"
 
+    def plot_individual_trajectories(self, result, name):
+        # Create a new figure
+        plt.figure(figsize=(10, 6))
+
+        # Plot a line for each individual
+        # unique_ids = self.pre_treatment_data["Patient_ID"].unique()
+        # for patient_id in unique_ids:
+        #     patient_data = self.pre_treatment_data[
+        #         self.pre_treatment_data["Patient_ID"] == patient_id
+        #     ]
+        #     plt.plot(
+        #         patient_data["Time_since_First_Scan"],
+        #         patient_data["Growth_pct"],
+        #         marker="o",
+        #         label=f"Patient {patient_id}",
+        #     )
+
+        # Using seaborn's lineplot to create a line for each patient
+        sns.lineplot(
+            x="Time_since_First_Scan",
+            y="Growth_pct",
+            hue="Patient_ID",
+            data=self.pre_treatment_data,
+            legend=None,  # Set to 'brief' or 'full' if you want the legend
+        )
+        plt.xlabel("Days Since First Scan")
+        plt.ylabel("Tumor Growth Percentage")
+        plt.title("Individual Growth Trajectories")
+        plt.legend()
+        plt.savefig(name)
+        plt.close()
+
+    def time_to_event_analysis(self):
+        pre_treatment_data = self.pre_treatment_data.loc[
+            self.pre_treatment_data["Date_of_First_Progression"]
+            < self.pre_treatment_data["First_Treatment_Date"]
+        ].copy()
+
+        pre_treatment_data.loc[:, "Duration"] = (
+            pre_treatment_data["Date_of_First_Progression"]
+            - pre_treatment_data["Date_of_Diagnosis"]
+        ).dt.days
+
+        pre_treatment_data["Event_Occurred"] = self.pre_treatment_data["Tumor_Progression"]
+        kmf = KaplanMeierFitter()
+        kmf.fit(pre_treatment_data["Duration"], event_observed=pre_treatment_data["Event_Occurred"])
+        ax = kmf.plot_survival_function()
+        ax.set_title("Survival function of Tumor Progression")
+        ax.set_xlabel("Days since Diagnosis")
+        ax.set_ylabel("Survival Probability")
+
+        survival_plot = os.path.join(correlation_cfg.OUTPUT_DIR, "survival_plot.png")
+        plt.savefig(survival_plot, dpi=300)
+        plt.close()
+        print("     Saved survival KaplanMeier curve.")
+
+    def model_growth_trajectories(self):
+        self.pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
+        self.pre_treatment_data["Time_since_First_Scan"] = self.pre_treatment_data.groupby(
+            "Patient_ID"
+        )["Date"].transform(lambda x: (x - x.min()).dt.days)
+
+        self.pre_treatment_data["Growth_pct"] = pd.to_numeric(
+            self.pre_treatment_data["Growth[%]"], errors="coerce"
+        )
+        self.pre_treatment_data = self.pre_treatment_data.dropna(
+            subset=["Growth_pct", "Time_since_First_Scan"]
+        )
+        # if self.pre_treatment_data.groupby("Patient_ID").size().min() < 3:
+        #     print("Not enough data points per patient to fit a mixed-effects model.")
+        #     return None
+
+        model = sm.MixedLM.from_formula(
+            "Growth_pct ~ Time_since_First_Scan",
+            re_formula="~Time_since_First_Scan",
+            groups=self.pre_treatment_data["Patient_ID"],
+            data=self.pre_treatment_data,
+        )
+        result = model.fit()
+        print(result.summary())
+
+        if not result.converged:
+            print("Model did not converge, try simplifying the model or check the data.")
+            return None
+        else:
+            growth_trajecotr_plot = os.path.join(
+                correlation_cfg.OUTPUT_DIR, "growth_trajecotr_plot.png"
+            )
+            self.plot_individual_trajectories(result, growth_trajecotr_plot)
+            print("Saved growth trajectories plot.")
+
+    def analyze_time_to_treatment_effect(self):
+        self.pre_treatment_data["Time_to_Treatment"] = (
+            self.pre_treatment_data["First_Treatment_Date"]
+            - self.pre_treatment_data["Date_of_Diagnosis"]
+        ).dt.days
+
+        filtered_data = self.pre_treatment_data.dropna(subset=["Time_to_Treatment", "Growth[%]"])
+        filtered_data = filtered_data.replace([np.inf, -np.inf], np.nan).dropna(
+            subset=["Time_to_Treatment", "Growth[%]"]
+        )
+        self.analyze_correlation("Time_to_Treatment", "Growth[%]", filtered_data, method="pearson")
+
+        model = sm.OLS(
+            filtered_data["Growth[%]"], sm.add_constant(filtered_data["Time_to_Treatment"])
+        )
+        results = model.fit()
+        # print(results.summary())
+        # TODO: rethink about this fitting
+
     def run_analysis(self):
-        """
-        Wrapper function to run all analyses. Init the class with clinical and volumetric data, and merge into one big dataframe.
-        Then separate data into pre- and post-treatment groups, then perform separate analyses.
-        """
-        print("Separating data into pre- and post-treatment dataframes...")
+        print("Step 1: Separating data into pre- and post-treatment dataframes...")
         self.longitudinal_separation()
         assert self.pre_treatment_data.columns.all() == self.post_treatment_data.columns.all()
-        print("Same columns in separated dataframes.")
+        print("     Data separated, assertation for same columns in separated dataframes done.")
 
-        # Sensitivity Analysis
         if correlation_cfg.SENSITIVITY:
-            # TODO: investigate what does sensitivity analysis do really?
-            self.pre_treatment_data = sensitivity_analysis(
-                self.pre_treatment_data, "Volume", z_threshold=2
-            )
-            self.post_treatment_data = sensitivity_analysis(
-                self.post_treatment_data, "Tumor_Volume_Change", z_threshold=2
-            )
+            print("Step 2: Performing Sensitivity Analysis...")
 
-            print(
-                "Data after excluding outliers based on Z-score in pre-treatment setting:"
-                f" {self.pre_treatment_data}"
-            )
-            print(
-                "Data after excluding outliers based on Z-score in post-treatment setting:"
-                f" {self.post_treatment_data}"
-            )
+            print(self.pre_treatment_data.dtypes)
+            pre_treatment_vars = [self.post_treatment_data.columns]
+            post_treatment_vars = []
 
+            for pre_var in pre_treatment_vars:
+                self.pre_treatment_data = sensitivity_analysis(self.pre_treatment_data, pre_var)
+                print(
+                    "   Data after excluding outliers based on Z-score in pre-treatment setting:"
+                    f" {self.pre_treatment_data}"
+                )
+
+            # for post_var in post_treatment_vars:
+            #     self.post_treatment_data = sensitivity_analysis(
+            #         self.post_treatment_data, post_var, z_threshold=2
+            #     )
+
+            #     print(
+            #         "   Data after excluding outliers based on Z-score in post-treatment setting:"
+            #         f" {self.post_treatment_data}"
+            #     )
+
+        if correlation_cfg.PROPENSITY:
+            print("Step 3: Performing Propensity Score Matching...")
+
+            # matched_data = propensity_score_matching("Treatment_Type", ["Age", "Sex", "Mutation_Type"])
+            # print(f"Data after Propensity Score Matching: {matched_data}")
+            pass
+
+        print("Step 4: Starting main analyses...")
         self.analyze_pre_treatment(correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT)
+        self.time_to_event_analysis()
+        self.analyze_time_to_treatment_effect()
+        # self.model_growth_trajectories()
 
-        # TODO: add the p_values and coefs to same or different list for bonferri correction later
         # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT)
-        # self.feature_engineering()
-
-        # Multiple Comparisons Correction Example
 
         if correlation_cfg.CORRECTION:
+            print("Step 5: Starting Bonferroni Correction...")
             alpha = 0.05
             corrected_p_values = bonferroni_correction(self.p_values, alpha=alpha)
             print(f"Corrected P-values using Bonferroni: {corrected_p_values}")
 
-        # Propensity Score Matching Example
-        if correlation_cfg.PROPENSITY:
-            # matched_data = propensity_score_matching("Treatment_Type", ["Age", "Sex", "Mutation_Type"])
-            # print(f"Data after Propensity Score Matching: {matched_data}")
-            pass
+        # self.feature_engineering()
 
 
 if __name__ == "__main__":
@@ -594,16 +727,3 @@ if __name__ == "__main__":
 #         trends["mean_valley_distance"] = np.mean(np.diff(valleys))
 
 #     return trends
-
-# def feature_engineering(self):
-#     self.merged_data["Tumor_Volume_Change"] = (
-#         self.merged_data["Tumor_Volume_End"] - self.merged_data["Tumor_Volume_Start"]
-#     )
-#     self.merged_data["Treatment_Response"] = self.merged_data["Tumor_Volume_Change"].apply(
-#         lambda x: "Positive" if x < 0 else "Negative"
-#     )
-
-# def temporal_pattern_recognition(self):
-#     # Assuming self.volumes_data is a time series data
-#     # Apply time-series clustering or RNN for pattern recognition
-#     pass

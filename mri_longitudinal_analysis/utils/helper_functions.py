@@ -3,7 +3,7 @@ from math import isfinite
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
+from scipy.stats import norm, zscore
 from scipy.stats import pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr
 from statsmodels.stats.multitest import multipletests
 from sklearn.neighbors import NearestNeighbors
@@ -117,21 +117,29 @@ def bonferroni_correction(p_values, alpha):
     return multipletests(p_values, alpha=alpha, method="bonferroni")[1]
 
 
-def sensitivity_analysis(merged_data, column, z_threshold=2):
+def sensitivity_analysis(data, variable, z_threshold=2):
     """
-    Perform sensitivity analysis by excluding outliers based on Z-scores.
+    Perform a sensitivity analysis by removing outliers based on a Z-score threshold.
 
     Parameters:
-        column (str): Column name to analyze.
-        z_threshold (float): Z-score threshold for identifying outliers.
+        data (DataFrame): The data to analyze.
+        variable (str): The name of the variable to check for outliers.
+        z_threshold (float): The Z-score threshold to identify outliers.
 
     Returns:
-        DataFrame: Filtered data.
+        DataFrame: The data with outliers removed.
     """
-    z_scores = np.abs(
-        (merged_data[column] - merged_data[column].mean()) / merged_data[column].std()
-    )
-    return merged_data[z_scores < z_threshold]
+    # Calculate Z-scores for the specified variable
+    data["Z_score"] = np.abs(zscore(data[variable], nan_policy="omit"))
+
+    # Filter out outliers
+    no_outliers = data[data["Z_score"] < z_threshold]
+
+    # Drop the Z-score column as it's no longer needed
+    no_outliers = no_outliers.drop(columns=["Z_score"])
+
+    # Return the data with outliers removed
+    return no_outliers
 
 
 def propensity_score_matching(merged_data, treatment_col, match_cols):
@@ -240,7 +248,8 @@ def f_one(data, x_val, y_val):
     return f_stat, p_val
 
 
-def point_bi_serial(data, var):
-    data[var + "_Binary"] = data[var].apply(lambda x: 1 if x == "Yes" else 0)
-    coef, p_val = pointbiserialr(data[var + "_Binary"], data["Growth[%]"])
+def point_bi_serial(data, binary_var, continuous_var):
+    binary_data = data[binary_var].cat.codes
+    continuous_data = data[continuous_var]
+    coef, p_val = pointbiserialr(binary_data, continuous_data)
     return coef, p_val
