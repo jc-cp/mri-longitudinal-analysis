@@ -6,7 +6,8 @@ import pandas as pd
 from scipy.stats import norm, zscore
 from scipy.stats import pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr
 from statsmodels.stats.multitest import multipletests
-from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
 
 
 def gaussian_kernel(x_var, x_i, bandwidth):
@@ -89,21 +90,6 @@ def chi_squared_test(data, x_val, y_val):
     return chi2, p_val, dof, expected
 
 
-# def perform_chi_squared_tests(data, alpha=0.05):
-#     columns = data.select_dtypes(include='category').columns
-#     num_tests = len(columns) * (len(columns) - 1) / 2
-#     adjusted_alpha = alpha / num_tests
-#     significant_results = []
-
-#     for i in range(len(columns)):
-#         for j in range(i+1, len(columns)):
-#             contingency_table = pd.crosstab(data[columns[i]], data[columns[j]])
-#             chi2, p, dof, ex = chi2_contingency(contingency_table)
-#             if p < adjusted_alpha:
-#                 significant_results.append((columns[i], columns[j], p))
-
-
-#     return significant_results
 def bonferroni_correction(p_values, alpha):
     """
     Apply Bonferroni correction to a list of p-values.
@@ -142,32 +128,94 @@ def sensitivity_analysis(data, variable, z_threshold=2):
     return no_outliers
 
 
-def propensity_score_matching(merged_data, treatment_col, match_cols):
+def calculate_propensity_scores(data, treatment_column, covariate_columns):
+    # Scale covariates to improve logistic regression performance
+    scaler = StandardScaler()
+    covariates_scaled = scaler.fit_transform(data[covariate_columns])
+
+    # Fit logistic regression to calculate propensity scores
+    lr = LogisticRegression()
+    lr.fit(covariates_scaled, data[treatment_column])
+    propensity_scores = lr.predict_proba(covariates_scaled)[:, 1]
+
+    return propensity_scores
+
+
+def perform_propensity_score_matching(data, propensity_scores, treatment_column, match_ratio=1):
+    # Add propensity scores to the dataframe
+    data["propensity_score"] = propensity_scores
+
+    # Separate treatment and control groups
+    treatment = data[data[treatment_column] == 1]
+    control = data[data[treatment_column] == 0]
+
+    # Conduct nearest neighbor matching
+    matched_indices = []
+    for _, row in treatment.iterrows():
+        # Calculate the absolute difference in propensity scores
+        control["score_diff"] = np.abs(control["propensity_score"] - row["propensity_score"])
+
+        # Get indices of closest matches
+        matched = control.sort_values("score_diff").head(match_ratio).index
+        matched_indices.extend(matched)
+
+        # Optional: Drop the matched controls to prevent them from being matched more than once
+        # control = control.drop(matched)
+
+    # Create the matched dataset
+    matched_data = data.loc[matched_indices]
+    matched_data = pd.concat([treatment, matched_data])
+
+    return matched_data
+
+
+def calculate_smd(groups, covariate):
     """
-    Perform propensity score matching based on nearest neighbors.
+    Calculate the standardized mean difference (SMD) for a single covariate.
 
     Parameters:
-        treatment_col (str): Column indicating treatment type.
-        match_cols (list): List of columns for matching.
+        groups (DataFrame): The dataset containing treatment and control groups.
+        covariate (str): The name of the covariate to calculate SMD for.
 
     Returns:
-        DataFrame: Matched data.
+        float: The SMD for the covariate.
     """
-    treated = merged_data[merged_data[treatment_col] == 1]
-    untreated = merged_data[merged_data[treatment_col] == 0]
-
-    nbrs = NearestNeighbors(n_neighbors=1).fit(untreated[match_cols])
-    _, indices = nbrs.kneighbors(treated[match_cols])
-
-    treated["matched_index"] = indices
-    untreated["index_copy"] = untreated.index
-    return pd.merge(
-        treated,
-        untreated,
-        left_on="matched_index",
-        right_on="index_copy",
-        suffixes=("", "_matched"),
+    mean_treatment = groups[covariate][groups["treatment"] == 1].mean()
+    mean_control = groups[covariate][groups["treatment"] == 0].mean()
+    std_pooled = np.sqrt(
+        (
+            groups[covariate][groups["treatment"] == 1].var()
+            + groups[covariate][groups["treatment"] == 0].var()
+        )
+        / 2
     )
+    smd = (mean_treatment - mean_control) / std_pooled
+    return smd
+
+
+def check_balance(matched_data, covariate_columns):
+    """
+    Check the balance of covariates in the matched dataset using Standardized Mean Differences (SMD).
+
+    Parameters:
+        matched_data (DataFrame): The matched dataset after performing PSM.
+        covariate_columns (list of str): A list of covariate column names.
+
+    Returns:
+        DataFrame: A dataframe with SMD for all covariates.
+    """
+    balance = {}
+    for covariate in covariate_columns:
+        balance[covariate] = calculate_smd(matched_data, covariate)
+    balance_df = pd.DataFrame.from_dict(balance, orient="index", columns=["SMD"])
+
+    # A common rule of thumb is that an SMD less than 0.1 indicates a good balance
+    balanced = balance_df["SMD"].abs() < 0.1
+    print("Covariate balance after matching:")
+    print(balance_df)
+    print("\nBalanced covariates:")
+    print(balanced)
+    return balance_df
 
 
 def prefix_zeros_to_six_digit_ids(patient_id):

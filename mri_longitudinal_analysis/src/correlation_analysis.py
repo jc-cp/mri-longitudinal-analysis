@@ -19,11 +19,13 @@ from utils.helper_functions import (
     f_one,
     pearson_correlation,
     point_bi_serial,
-    propensity_score_matching,
+    perform_propensity_score_matching,
+    calculate_propensity_scores,
     sensitivity_analysis,
     spearman_correlation,
     ttest,
     zero_fill,
+    check_balance,
 )
 
 
@@ -32,7 +34,7 @@ class TumorAnalysis:
     A class to perform tumor analysis using clinical and volumetric data.
     """
 
-    def __init__(self, clinical_data_path, volumes_data_path):
+    def __init__(self, clinical_data_path, volumes_data_paths):
         """
         Initialize the TumorAnalysis class.
 
@@ -47,15 +49,17 @@ class TumorAnalysis:
         self.p_values = []
         self.coef_values = []
         print("Step 0: Initializing TumorAnalysis class...")
-        self.validate_files(clinical_data_path, volumes_data_path)
+        self.validate_files(clinical_data_path, volumes_data_paths)
         self.load_clinical_data(clinical_data_path)
-        self.load_volumes_data(volumes_data_path)
+        self.load_volumes_data(volumes_data_paths)
         self.merge_data()
         self.aggregate_summary_statistics()
 
-    def validate_files(self, clinical_data_path, volumes_data_path):
+    def validate_files(self, clinical_data_path, volumes_data_paths):
         missing_files = [
-            path for path in [clinical_data_path, volumes_data_path] if not os.path.exists(path)
+            path
+            for path in [clinical_data_path, volumes_data_paths[0], volumes_data_paths[1]]
+            if not os.path.exists(path)
         ]
         if missing_files:
             raise FileNotFoundError(f"The following files could not be found: {missing_files}")
@@ -129,21 +133,22 @@ class TumorAnalysis:
         self.clinical_data_reduced = self.clinical_data[relevant_columns]
         print("     Parsed clinical data.")
 
-    def load_volumes_data(self, volumes_data_path):
-        all_files = [f for f in os.listdir(volumes_data_path) if f.endswith(".csv")]
+    def load_volumes_data(self, volumes_data_paths):
         data_frames = []
-        for file in all_files:
-            patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
-            patient_id = file.split(".")[0]
-            patient_df["Patient_ID"] = patient_id
-            patient_df["Patient_ID"] = patient_df["Patient_ID"].astype(str).str.zfill(7)
-            patient_df["Date"] = pd.to_datetime(
-                patient_df["Date"], errors="coerce", format="%Y-%m-%d"
-            )
-            data_frames.append(patient_df)
+        for volumes_data_path in volumes_data_paths:
+            all_files = [f for f in os.listdir(volumes_data_path) if f.endswith(".csv")]
+            for file in all_files:
+                patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
+                patient_id = file.split(".")[0]
+                patient_df["Patient_ID"] = patient_id
+                patient_df["Patient_ID"] = patient_df["Patient_ID"].astype(str).str.zfill(7)
+                patient_df["Date"] = pd.to_datetime(
+                    patient_df["Date"], errors="coerce", format="%Y-%m-%d"
+                )
+                data_frames.append(patient_df)
 
+            print(f"     Loaded volume data {volumes_data_path}.")
         self.volumes_data = pd.concat(data_frames, ignore_index=True)
-        print("     Loaded volume data.")
 
     def extract_treatment_types(self):
         treatment_list = []
@@ -668,10 +673,19 @@ class TumorAnalysis:
         if correlation_cfg.PROPENSITY:
             print("Step 3: Performing Propensity Score Matching...")
 
-            matched_data = propensity_score_matching(
-                "Treatment_Type", ["Age", "Sex", "Mutation_Type"]
-            )
-            print(f"Data after Propensity Score Matching: {matched_data}")
+            for data in [self.pre_treatment_data, self.post_treatment_data]:
+                treatment_column = "Treatment"
+                covariate_columns = ["Age", "Volume", "Growth[%]"]
+                propensity_scores = calculate_propensity_scores(
+                    data, treatment_column, covariate_columns
+                )
+                matched_data = perform_propensity_score_matching(
+                    data, propensity_scores, treatment_column
+                )
+                smd_results = check_balance(matched_data, covariate_columns)
+
+                print(f"Data after Propensity Score Matching: {matched_data}")
+                print(f"Standardized Mean Differences: {smd_results}")
 
         print("Step 4: Starting main analyses...")
         self.analyze_pre_treatment(correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT)
@@ -691,7 +705,10 @@ class TumorAnalysis:
 
 
 if __name__ == "__main__":
-    analysis = TumorAnalysis(correlation_cfg.CLINICAL_CSV, correlation_cfg.VOLUMES_CSV)
+    analysis = TumorAnalysis(
+        correlation_cfg.CLINICAL_CSV,
+        [correlation_cfg.VOLUMES_CSVs_45, correlation_cfg.VOLUMES_CSVs_63],
+    )
     analysis.run_analysis()
 
 

@@ -4,10 +4,10 @@ from pathlib import Path
 
 # Directories
 SEG_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/output/seg_predictions"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_63_cohort_reviewed/output/seg_predictions"
 )
 OUTPUT_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/output"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_63_cohort_reviewed/output"
 )
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series_csv"
