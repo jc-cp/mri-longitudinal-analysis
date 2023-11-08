@@ -335,6 +335,27 @@ def point_bi_serial(data, binary_var, continuous_var):
     return coef, p_val
 
 
+def visualize_time_to_treatment_effect(filtered_data, prefix, path):
+    # Plot the observed vs predicted values
+    _, ax = plt.subplots(figsize=(10, 6))
+    ax.scatter(
+        filtered_data["Time_to_Treatment"], filtered_data["Growth[%]"], label="Observed Growth"
+    )
+    ax.plot(
+        filtered_data["Time_to_Treatment"],
+        filtered_data["Predicted_Growth"],
+        color="red",
+        label="Predicted Growth",
+    )
+    ax.set_title("Effect of Time to Treatment on Tumor Growth")
+    ax.set_xlabel("Time to Treatment (days)")
+    ax.set_ylabel("Tumor Growth (%)")
+    ax.legend()
+    plt.tight_layout()
+    filename = os.path.join(path, f"{prefix}_time_to_treatment_effect.png")
+    plt.savefig(filename)
+
+
 #######################################
 # DATA HANDLING and SIMPLE OPERATIONS #
 #######################################
@@ -403,3 +424,13 @@ def calculate_stats(row, col_name):
 
 def zero_fill(series, width):
     return series.astype(str).str.zfill(width)
+
+
+def save_for_deep_learning(df: pd.DataFrame, output_dir, prefix):
+    if df is not None:
+        filename = f"{prefix}_dl_features.csv"
+        file_path = os.path.join(output_dir, filename)
+        df.to_csv(file_path, index=False)
+        print(f"Data saved for deep learning in {filename}.csv")
+    else:
+        print("No data to save.")

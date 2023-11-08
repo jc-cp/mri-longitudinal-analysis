@@ -9,6 +9,7 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 import statsmodels.api as sm
+from statsmodels.regression.mixed_linear_model import MixedLMResults
 from cfg import correlation_cfg
 from lifelines import KaplanMeierFitter
 from scipy.signal import find_peaks
@@ -30,6 +31,8 @@ from utils.helper_functions import (
     visualize_p_value_bonferroni_corrections,
     fdr_correction,
     visualize_fdr_correction,
+    visualize_time_to_treatment_effect,
+    save_for_deep_learning,
 )
 
 
@@ -610,9 +613,12 @@ class TumorAnalysis:
         plt.close()
         print("\t\tSaved survival KaplanMeier curve.")
 
-    def model_growth_trajectories(self):
+    def model_growth_trajectories(self, prefix):
         print("\tModeling growth trajectories:")
         self.pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
+        print(self.pre_treatment_data.head())
+        print(self.pre_treatment_data.dtypes)
+        print(self.pre_treatment_data["Patient_ID"])
         self.pre_treatment_data["Time_since_First_Scan"] = self.pre_treatment_data.groupby(
             "Patient_ID"
         )["Date"].transform(lambda x: (x - x.min()).dt.days)
@@ -621,7 +627,7 @@ class TumorAnalysis:
             self.pre_treatment_data["Growth[%]"], errors="coerce"
         )
         self.pre_treatment_data = self.pre_treatment_data.dropna(
-            subset=["Growth_pct", "Time_since_First_Scan"]
+            subset=["Growth_pct", "Time_since_First_Scan"], inplace=True
         )
         # if self.pre_treatment_data.groupby("Patient_ID").size().min() < 3:
         #     print("Not enough data points per patient to fit a mixed-effects model.")
@@ -633,20 +639,21 @@ class TumorAnalysis:
             groups=self.pre_treatment_data["Patient_ID"],
             data=self.pre_treatment_data,
         )
-        result = model.fit()
-        print(result.summary())
+        # re_formula="~Time_since_First_Scan",
+        result = model.fit(reml=False, method="nm", maxiter=100)  # Using Nelder-Mead optimization
 
         if not result.converged:
             print("Model did not converge, try simplifying the model or check the data.")
             return None
         else:
-            growth_trajecotr_plot = os.path.join(
-                correlation_cfg.OUTPUT_DIR, "growth_trajecotr_plot.png"
+            print(result.summary())
+            growth_trajectories_plot = os.path.join(
+                correlation_cfg.OUTPUT_DIR, f"{prefix}_growth_trajectories_plot.png"
             )
-            self.plot_individual_trajectories(result, growth_trajecotr_plot)
-            print("Saved growth trajectories plot.")
+            self.plot_individual_trajectories(result, growth_trajectories_plot)
+            print("\t\tSaved growth trajectories plot.")
 
-    def analyze_time_to_treatment_effect(self, prefix):
+    def analyze_time_to_treatment_effect(self, prefix, path):
         print("\tAnalyzing time to treatment effect:")
         self.pre_treatment_data["Time_to_Treatment"] = (
             self.pre_treatment_data["First_Treatment_Date"]
@@ -665,8 +672,12 @@ class TumorAnalysis:
             filtered_data["Growth[%]"], sm.add_constant(filtered_data["Time_to_Treatment"])
         )
         results = model.fit()
-        # print(results.summary())
-        # TODO: rethink about this fitting
+        print(results.summary())
+
+        filtered_data["Predicted_Growth"] = results.predict(
+            sm.add_constant(filtered_data["Time_to_Treatment"])
+        )
+        visualize_time_to_treatment_effect(self, filtered_data, prefix, path)
 
     def run_analysis(self):
         step_idx = 1
@@ -727,12 +738,13 @@ class TumorAnalysis:
             print(f"Step {step_idx}: Starting main analyses...")
 
             prefix = "pre-treatment"
+            path = correlation_cfg.OUTPUT_DIR
             self.analyze_pre_treatment(
                 correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix
             )
             self.time_to_event_analysis(prefix)
-            self.analyze_time_to_treatment_effect(prefix)
-            # self.model_growth_trajectories()
+            self.analyze_time_to_treatment_effect(prefix, path)
+            self.model_growth_trajectories(prefix)
 
             # prefix = "post-treatment"
             # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT, prefix=prefix)
@@ -758,7 +770,9 @@ class TumorAnalysis:
 
         if correlation_cfg.FEATURE_ENG:
             print(f"Step {step_idx}: Starting Feature Engineering...")
-            # self.feature_engineering()
+            output_dir = correlation_cfg.OUTPUT_DIR
+            save_for_deep_learning(self.pre_treatment_data, output_dir, prefix="pre-treatment")
+            save_for_deep_learning(self.post_treatment_data, output_dir, prefix="post-treatment")
             step_idx += 1
 
 
@@ -805,3 +819,28 @@ if __name__ == "__main__":
 #         trends["mean_valley_distance"] = np.mean(np.diff(valleys))
 
 #     return trends
+
+# def trend_analysis(self, prefix):
+#     # Ensure Time_since_Diagnosis is a column in self.pre_treatment_data
+#     # ... code to calculate and save Time_since_Diagnosis if not already present ...
+
+#     model = sm.OLS(
+#         self.pre_treatment_data["Growth[%]"],
+#         sm.add_constant(self.pre_treatment_data["Time_since_Diagnosis"])
+#     )
+#     results = model.fit()
+#     print(results.summary())
+
+#     # Visualize trend over time using regression results
+#     fig, ax = plt.subplots(figsize=(10, 6))
+#     sns.regplot(
+#         x="Time_since_Diagnosis", y="Growth[%]", data=self.pre_treatment_data, ax=ax,
+#         line_kws={'label': f"y={results.params['Time_since_Diagnosis']:.2f}x+{results.params['const']:.2f}"}
+#     )
+#     ax.legend()
+#     plt.title("Trend of Tumor Growth Over Time")
+#     plt.xlabel("Time since Diagnosis (days)")
+#     plt.ylabel("Tumor Growth (%)")
+#     plt.tight_layout()
+#     plt.savefig(f"{prefix}_trend_analysis.png")
+#     plt.close()
