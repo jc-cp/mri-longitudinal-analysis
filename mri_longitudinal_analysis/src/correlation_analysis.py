@@ -669,13 +669,16 @@ class TumorAnalysis:
         # TODO: rethink about this fitting
 
     def run_analysis(self):
-        print("Step 1: Separating data into pre- and post-treatment dataframes...")
+        step_idx = 1
+
+        print(f"Step {step_idx}: Separating data into pre- and post-treatment dataframes...")
         self.longitudinal_separation()
         assert self.pre_treatment_data.columns.all() == self.post_treatment_data.columns.all()
         print("\tData separated, assertation for same columns in separated dataframes done.")
+        step_idx += 1
 
         if correlation_cfg.SENSITIVITY:
-            print("Step 2: Performing Sensitivity Analysis...")
+            print(f"Step {step_idx}: Performing Sensitivity Analysis...")
 
             pre_treatment_vars = ["Volume", "Growth[%]", "Growth[%]_mean", "Growth[%]_std"]
             post_treatment_vars = []
@@ -698,8 +701,10 @@ class TumorAnalysis:
             #         f" {self.post_treatment_data}"
             #     )
 
+            step_idx += 1
+
         if correlation_cfg.PROPENSITY:
-            print("Step 3: Performing Propensity Score Matching...")
+            print(f"Step {step_idx}: Performing Propensity Score Matching...")
 
             for data in [self.pre_treatment_data]:  # self.post_treatment_data]:
                 treatment_column = "Received_Treatment"
@@ -716,8 +721,10 @@ class TumorAnalysis:
 
                 visualize_smds(smd_results, path=correlation_cfg.OUTPUT_DIR)
 
+            step_idx += 1
+
         if correlation_cfg.ANLYSIS:
-            print("Step 4: Starting main analyses...")
+            print(f"Step {step_idx}: Starting main analyses...")
 
             prefix = "pre-treatment"
             self.analyze_pre_treatment(
@@ -730,9 +737,11 @@ class TumorAnalysis:
             # prefix = "post-treatment"
             # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT, prefix=prefix)
 
+            step_idx += 1
+
         if correlation_cfg.CORRECTION:
-            print("Step 5: Starting Corrections...")
-            print("\tBonferroni Corrections: ")
+            print(f"Step {step_idx}: Starting Corrections...")
+            print("\tBonferroni Correction... ")
             path = correlation_cfg.OUTPUT_DIR
             alpha = correlation_cfg.CORRECTION_ALPHA
 
@@ -740,15 +749,17 @@ class TumorAnalysis:
             visualize_p_value_bonferroni_corrections(
                 self.p_values, corrected_p_values_bonf, alpha, path
             )
-
+            print("\tFalse Discovery Rate Correction... ")
             corrected_p_values_fdr, is_rejected = fdr_correction(self.p_values, alpha=alpha)
             visualize_fdr_correction(
                 self.p_values, corrected_p_values_fdr, is_rejected, alpha, path
             )
+            step_idx += 1
 
         if correlation_cfg.FEATURE_ENG:
-            print("Step 6: Starting Feature Engineering...")
+            print(f"Step {step_idx}: Starting Feature Engineering...")
             # self.feature_engineering()
+            step_idx += 1
 
 
 if __name__ == "__main__":
