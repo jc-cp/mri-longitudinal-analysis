@@ -434,3 +434,12 @@ def save_for_deep_learning(df: pd.DataFrame, output_dir, prefix):
         print(f"Data saved for deep learning in {filename}.csv")
     else:
         print("No data to save.")
+
+
+def calculate_brain_growth(data, younger_age, older_age):
+    # Assuming data contains columns 'Age' and 'Volume'
+    younger_volume = data[data["Age"] == younger_age]["Volume"].mean()
+    older_volume = data[data["Age"] == older_age]["Volume"].mean()
+
+    percentage_growth = ((older_volume - younger_volume) / younger_volume) * 100
+    return percentage_growth

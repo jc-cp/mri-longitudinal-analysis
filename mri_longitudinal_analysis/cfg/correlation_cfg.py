@@ -18,13 +18,21 @@ CORRELATION_PRE_TREATMENT = "spearman"
 CORRELATION_POST_TREATMENT = "spearman"
 
 
+# Step 1
 SENSITIVITY = True
 
+# Step 2
 PROPENSITY = True
 
+# Step 3
 ANLYSIS = True
 
+# Step 4
 CORRECTION = True
 CORRECTION_ALPHA = 0.05
 
+# Step 5
+TRENDS = False
+
+# Step 6
 FEATURE_ENG = False

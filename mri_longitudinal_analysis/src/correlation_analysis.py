@@ -556,36 +556,50 @@ class TumorAnalysis:
             # More conditions can be added for different scenarios
             return "unknown"
 
-    def plot_individual_trajectories(self, result, name):
+    def plot_individual_trajectories(self, name):
         # Create a new figure
         plt.figure(figsize=(10, 6))
 
-        # Plot a line for each individual
-        # unique_ids = self.pre_treatment_data["Patient_ID"].unique()
-        # for patient_id in unique_ids:
-        #     patient_data = self.pre_treatment_data[
-        #         self.pre_treatment_data["Patient_ID"] == patient_id
-        #     ]
-        #     plt.plot(
-        #         patient_data["Time_since_First_Scan"],
-        #         patient_data["Growth_pct"],
-        #         marker="o",
-        #         label=f"Patient {patient_id}",
-        #     )
+        sample_ids = self.pre_treatment_data["Patient_ID"].drop_duplicates().sample(n=50)
+        sampled_data = self.pre_treatment_data[
+            self.pre_treatment_data["Patient_ID"].isin(sample_ids)
+        ]
 
-        # Using seaborn's lineplot to create a line for each patient
         sns.lineplot(
             x="Time_since_First_Scan",
             y="Growth_pct",
             hue="Patient_ID",
-            data=self.pre_treatment_data,
-            legend=None,  # Set to 'brief' or 'full' if you want the legend
+            data=sampled_data,
+            legend="brief",  # Set to 'brief' or 'full' if you want the legend
+            alpha=0.5,  # Set lower alpha for better visibility when lines overlap
         )
         plt.xlabel("Days Since First Scan")
         plt.ylabel("Tumor Growth Percentage")
         plt.title("Individual Growth Trajectories")
         plt.legend()
         plt.savefig(name)
+        plt.close()
+
+    def plot_growth_predictions(self, filename):
+        sns.scatterplot(
+            x="Time_since_First_Scan",
+            y="Growth_pct",
+            data=self.pre_treatment_data,
+            alpha=0.5,
+            label="Actual Growth",
+        )
+        sns.lineplot(
+            x="Time_since_First_Scan",
+            y="Predicted_Growth_pct",
+            data=self.pre_treatment_data,
+            color="red",
+            label="Predicted Growth",
+        )
+        plt.xlabel("Days Since First Scan")
+        plt.ylabel("Tumor Growth Percentage")
+        plt.title("Actual vs Predicted Tumor Growth Over Time")
+        plt.legend()
+        plt.savefig(filename)
         plt.close()
 
     def time_to_event_analysis(self, prefix):
@@ -616,9 +630,6 @@ class TumorAnalysis:
     def model_growth_trajectories(self, prefix):
         print("\tModeling growth trajectories:")
         self.pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
-        print(self.pre_treatment_data.head())
-        print(self.pre_treatment_data.dtypes)
-        print(self.pre_treatment_data["Patient_ID"])
         self.pre_treatment_data["Time_since_First_Scan"] = self.pre_treatment_data.groupby(
             "Patient_ID"
         )["Date"].transform(lambda x: (x - x.min()).dt.days)
@@ -627,7 +638,7 @@ class TumorAnalysis:
             self.pre_treatment_data["Growth[%]"], errors="coerce"
         )
         self.pre_treatment_data = self.pre_treatment_data.dropna(
-            subset=["Growth_pct", "Time_since_First_Scan"], inplace=True
+            subset=["Growth_pct", "Time_since_First_Scan"]
         )
         # if self.pre_treatment_data.groupby("Patient_ID").size().min() < 3:
         #     print("Not enough data points per patient to fit a mixed-effects model.")
@@ -639,18 +650,28 @@ class TumorAnalysis:
             groups=self.pre_treatment_data["Patient_ID"],
             data=self.pre_treatment_data,
         )
-        # re_formula="~Time_since_First_Scan",
         result = model.fit(reml=False, method="nm", maxiter=100)  # Using Nelder-Mead optimization
+        # result = model.fit()
 
         if not result.converged:
             print("Model did not converge, try simplifying the model or check the data.")
             return None
         else:
             print(result.summary())
+            print("\t\tModel converged.")
+            self.pre_treatment_data["Predicted_Growth_pct"] = result.predict(
+                self.pre_treatment_data
+            )
+
             growth_trajectories_plot = os.path.join(
                 correlation_cfg.OUTPUT_DIR, f"{prefix}_growth_trajectories_plot.png"
             )
-            self.plot_individual_trajectories(result, growth_trajectories_plot)
+            prediciton_plot = os.path.join(
+                correlation_cfg.OUTPUT_DIR, f"{prefix}_growth_predictions.png"
+            )
+
+            self.plot_individual_trajectories(growth_trajectories_plot)
+            self.plot_growth_predictions(prediciton_plot)
             print("\t\tSaved growth trajectories plot.")
 
     def analyze_time_to_treatment_effect(self, prefix, path):
@@ -672,12 +693,49 @@ class TumorAnalysis:
             filtered_data["Growth[%]"], sm.add_constant(filtered_data["Time_to_Treatment"])
         )
         results = model.fit()
-        print(results.summary())
+        # print(results.summary())
 
         filtered_data["Predicted_Growth"] = results.predict(
             sm.add_constant(filtered_data["Time_to_Treatment"])
         )
-        visualize_time_to_treatment_effect(self, filtered_data, prefix, path)
+        visualize_time_to_treatment_effect(filtered_data, prefix, path)
+
+    def analyze_tumor_stability(self):
+        # # Identify tumors with negligible growth over time
+        # stable_growth_threshold = 0.05  # 5% growth threshold for stability
+        # self.pre_treatment_data["Volume_pct_change"] = self.pre_treatment_data.groupby(
+        #     "Patient_ID"
+        # )["Volume"].pct_change()
+        # stable_tumors = self.pre_treatment_data[
+        #     (self.pre_treatment_data["Volume_pct_change"].abs() <= stable_growth_threshold)
+        #     | (self.pre_treatment_data["Volume_pct_change"].isnull())
+        # ]
+
+        unchanging_threshold = 0.05
+
+        # Calculate the absolute change in tumor growth for each scan
+        self.pre_treatment_data["Absolute_Growth_change"] = (
+            self.pre_treatment_data.groupby("Patient_ID")["Growth[%]"].diff().abs()
+        )
+
+        # Find patients with unchanging tumors
+        stable_tumors = self.pre_treatment_data[
+            (self.pre_treatment_data["Absolute_Growth_change"] <= unchanging_threshold)
+            | (self.pre_treatment_data["Absolute_Growth_change"].isnull())
+        ]
+
+        # Analyze characteristics of patients with stable tumors
+        stable_patient_ids = stable_tumors["Patient_ID"].unique()
+        stable_patients_data = self.pre_treatment_data[
+            self.pre_treatment_data["Patient_ID"].isin(stable_patient_ids)
+        ]
+        print("Stable patients:", len(stable_patient_ids))
+
+        # You could compare stable vs. non-stable tumors here
+        # E.g., Compare the distribution of ages or volumes between stable and non-stable tumors
+        # ...
+
+        return stable_patients_data
 
     def run_analysis(self):
         step_idx = 1
@@ -745,6 +803,7 @@ class TumorAnalysis:
             self.time_to_event_analysis(prefix)
             self.analyze_time_to_treatment_effect(prefix, path)
             self.model_growth_trajectories(prefix)
+            self.analyze_tumor_stability()
 
             # prefix = "post-treatment"
             # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT, prefix=prefix)
@@ -766,6 +825,11 @@ class TumorAnalysis:
             visualize_fdr_correction(
                 self.p_values, corrected_p_values_fdr, is_rejected, alpha, path
             )
+            step_idx += 1
+
+        if correlation_cfg.TRENDS:
+            print(f"Step {step_idx}: Starting Trend Analysis...")
+            # TODO: Add trend analysis here
             step_idx += 1
 
         if correlation_cfg.FEATURE_ENG:
@@ -821,8 +885,10 @@ if __name__ == "__main__":
 #     return trends
 
 # def trend_analysis(self, prefix):
-#     # Ensure Time_since_Diagnosis is a column in self.pre_treatment_data
-#     # ... code to calculate and save Time_since_Diagnosis if not already present ...
+#    self.pre_treatment_data["Time_since_Diagnosis"] = (
+#     self.pre_treatment_data["Date"]
+#     - self.pre_treatment_data["Date_of_Diagnosis"]
+# ).dt.days
 
 #     model = sm.OLS(
 #         self.pre_treatment_data["Growth[%]"],
