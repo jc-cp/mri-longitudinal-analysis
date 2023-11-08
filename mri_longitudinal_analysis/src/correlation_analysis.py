@@ -322,7 +322,7 @@ class TumorAnalysis:
         else:
             return "Unknown"
 
-    def analyze_correlation(self, x_val, y_val, data, method="pearson"):
+    def analyze_correlation(self, x_val, y_val, data, method="spearman"):
         test_result = None  # Initialize test_result
         test_type = ""
         x_dtype = data[x_val].dtype
@@ -454,7 +454,7 @@ class TumorAnalysis:
         # )
 
     def visualize_statistical_test(
-        self, x_val, y_val, data, test_result, test_type="correlation", method="pearson"
+        self, x_val, y_val, data, test_result, test_type="correlation", method="spearman"
     ):
         """
         Visualize the result of a statistical test, including correlation heatmaps.
@@ -500,10 +500,13 @@ class TumorAnalysis:
         plt.close()
 
         # If the test type is correlation, create a heatmap for the correlation matrix
-        if test_type in ["pearson", "spearman"]:
+        if test_type == "correlation":
             plt.figure(figsize=(10, 8))
+
+            numeric_data = data.select_dtypes(include=[np.number])
+
             sns.heatmap(
-                data.corr(method=method),
+                numeric_data.corr(method=method),
                 annot=True,
                 fmt=".2f",
                 cmap="coolwarm",
@@ -713,7 +716,7 @@ class TumorAnalysis:
             print("Step 5: Starting Bonferroni Correction...")
             alpha = 0.05
             corrected_p_values = bonferroni_correction(self.p_values, alpha=alpha)
-            print(f"Corrected P-values using Bonferroni: {corrected_p_values}")
+            print(f"\tCorrected P-values using Bonferroni: {corrected_p_values}")
 
         # self.feature_engineering()
 
