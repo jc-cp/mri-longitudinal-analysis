@@ -27,6 +27,9 @@ from utils.helper_functions import (
     zero_fill,
     check_balance,
     visualize_smds,
+    visualize_p_value_bonferroni_corrections,
+    fdr_correction,
+    visualize_fdr_correction,
 )
 
 
@@ -713,26 +716,39 @@ class TumorAnalysis:
 
                 visualize_smds(smd_results, path=correlation_cfg.OUTPUT_DIR)
 
-        print("Step 4: Starting main analyses...")
+        if correlation_cfg.ANLYSIS:
+            print("Step 4: Starting main analyses...")
 
-        prefix = "pre-treatment"
-        self.analyze_pre_treatment(
-            correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix
-        )
-        self.time_to_event_analysis(prefix)
-        self.analyze_time_to_treatment_effect(prefix)
-        # self.model_growth_trajectories()
+            prefix = "pre-treatment"
+            self.analyze_pre_treatment(
+                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix
+            )
+            self.time_to_event_analysis(prefix)
+            self.analyze_time_to_treatment_effect(prefix)
+            # self.model_growth_trajectories()
 
-        # prefix = "post-treatment"
-        # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT, prefix=prefix)
+            # prefix = "post-treatment"
+            # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT, prefix=prefix)
 
         if correlation_cfg.CORRECTION:
-            print("Step 5: Starting Bonferroni Correction...")
-            alpha = 0.05
-            corrected_p_values = bonferroni_correction(self.p_values, alpha=alpha)
-            print(f"\tCorrected P-values using Bonferroni: {corrected_p_values}")
+            print("Step 5: Starting Corrections...")
+            print("\tBonferroni Corrections: ")
+            path = correlation_cfg.OUTPUT_DIR
+            alpha = correlation_cfg.CORRECTION_ALPHA
 
-        # self.feature_engineering()
+            corrected_p_values_bonf = bonferroni_correction(self.p_values, alpha=alpha)
+            visualize_p_value_bonferroni_corrections(
+                self.p_values, corrected_p_values_bonf, alpha, path
+            )
+
+            corrected_p_values_fdr, is_rejected = fdr_correction(self.p_values, alpha=alpha)
+            visualize_fdr_correction(
+                self.p_values, corrected_p_values_fdr, is_rejected, alpha, path
+            )
+
+        if correlation_cfg.FEATURE_ENG:
+            print("Step 6: Starting Feature Engineering...")
+            # self.feature_engineering()
 
 
 if __name__ == "__main__":

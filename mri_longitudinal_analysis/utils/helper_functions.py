@@ -115,6 +115,70 @@ def bonferroni_correction(p_values, alpha):
     return multipletests(p_values, alpha=alpha, method="bonferroni")[1]
 
 
+def visualize_p_value_bonferroni_corrections(original_p_values, corrected_p_values, alpha, path):
+    plt.scatter(original_p_values, corrected_p_values, alpha=0.7)
+    plt.axhline(y=alpha, color="r", linestyle="--", label=f"Alpha={alpha}")
+    plt.xlabel("Original P-Values")
+    plt.ylabel("Bonferroni Corrected P-Values")
+    plt.title("Effect of Bonferroni Correction on P-Values")
+    plt.legend()
+    filename_scatter = os.path.join(path, "p_value_bonferroni_corrections.png")
+    plt.savefig(filename_scatter)
+    plt.close()
+
+    indices = range(len(original_p_values))
+    plt.figure(figsize=(10, 5))
+    plt.bar(indices, original_p_values, alpha=0.7, label="Original P-Values", color="blue")
+    plt.bar(
+        indices, corrected_p_values, alpha=0.7, label="Bonferroni Corrected P-Values", color="green"
+    )
+    plt.axhline(
+        y=alpha, color="red", linestyle="--", label=f"Significance Threshold (Alpha={alpha})"
+    )
+    plt.xlabel("Test Indices")
+    plt.ylabel("P-Values")
+    plt.yscale("log")  # Log scale to better visualize small p-values
+    plt.title("Original vs Bonferroni Corrected P-Values")
+    plt.legend()
+    filename_bar = os.path.join(path, "p_value_bonferroni_comparison.png")
+    plt.savefig(filename_bar)
+    plt.close()
+
+
+def fdr_correction(p_values, alpha=0.05):
+    """
+    Apply False Discovery Rate (FDR) correction to a list of p-values.
+
+    Parameters:
+        p_values (list): List of p-values to correct.
+        alpha (float): Significance level, default is 0.05.
+
+    Returns:
+        tuple: FDR corrected p-values and the boolean array of which hypotheses are rejected.
+    """
+    is_rejected, corrected_p_values, _, _ = multipletests(p_values, alpha=alpha, method="fdr_bh")
+    return corrected_p_values, is_rejected
+
+
+def visualize_fdr_correction(original_p_values, corrected_p_values, is_rejected, alpha, path):
+    indices = range(len(original_p_values))
+    plt.figure(figsize=(10, 5))
+    plt.bar(indices, original_p_values, alpha=0.7, label="Original P-Values")
+    plt.bar(indices, corrected_p_values, alpha=0.7, label="FDR Corrected P-Values", color="red")
+    plt.scatter(indices, is_rejected, color="green", label="Rejected Hypotheses", zorder=3)
+    plt.axhline(
+        y=alpha, color="blue", linestyle="--", label=f"Significance Threshold (Alpha={alpha})"
+    )
+    plt.xlabel("Test Indices")
+    plt.ylabel("P-Values")
+    plt.yscale("log")  # Log scale for visibility of small p-values
+    plt.title("Original vs FDR Corrected P-Values")
+    plt.legend()
+    filename = os.path.join(path, "p_value_fdr_correction.png")
+    plt.savefig(filename)
+    plt.close()
+
+
 def sensitivity_analysis(data, variable, z_threshold=2):
     """
     Perform a sensitivity analysis by removing outliers based on a Z-score threshold.
