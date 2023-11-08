@@ -1,6 +1,6 @@
 """Script containing some additonal functions used thorughout the other main scripts."""
 from math import isfinite
-
+import os
 import numpy as np
 import pandas as pd
 from scipy.stats import norm, zscore
@@ -8,6 +8,13 @@ from scipy.stats import pearsonr, spearmanr, chi2_contingency, ttest_ind, f_onew
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import NearestNeighbors
+import matplotlib.pyplot as plt
+
+
+#####################################
+# SMOOTHIN and FILTERING OPERATIONS #
+#####################################
 
 
 def gaussian_kernel(x_var, x_i, bandwidth):
@@ -44,6 +51,11 @@ def weighted_median(data, weights):
         cumulative_weight += weight
         if cumulative_weight >= midpoint:
             return datum
+
+
+######################################
+# STATISTICAL TESTS and CORRELATIONS #
+######################################
 
 
 def pearson_correlation(x_var, y_var):
@@ -129,6 +141,12 @@ def sensitivity_analysis(data, variable, z_threshold=2):
 
 
 def calculate_propensity_scores(data, treatment_column, covariate_columns):
+    if data[treatment_column].nunique() != 2:
+        raise ValueError(
+            f"Not enough classes present in {treatment_column}. "
+            "Make sure the column contains both treated and untreated indicators."
+        )
+
     # Scale covariates to improve logistic regression performance
     scaler = StandardScaler()
     covariates_scaled = scaler.fit_transform(data[covariate_columns])
@@ -141,35 +159,39 @@ def calculate_propensity_scores(data, treatment_column, covariate_columns):
     return propensity_scores
 
 
-def perform_propensity_score_matching(data, propensity_scores, treatment_column, match_ratio=1):
+def perform_propensity_score_matching(
+    data, propensity_scores, treatment_column, match_ratio=1, caliper=None
+):
     # Add propensity scores to the dataframe
+    data = data.copy()
     data["propensity_score"] = propensity_scores
 
     # Separate treatment and control groups
     treatment = data[data[treatment_column] == 1]
-    control = data[data[treatment_column] == 0]
+    control = data[data[treatment_column] == 0].copy()
 
-    # Conduct nearest neighbor matching
+    # Reset index to ensure alignment
+    control.reset_index(drop=True, inplace=True)
+
+    # Nearest neighbor matching with caliper
+    nn = NearestNeighbors(n_neighbors=match_ratio, radius=caliper)
+    nn.fit(control[["propensity_score"]].values)
+
     matched_indices = []
     for _, row in treatment.iterrows():
-        # Calculate the absolute difference in propensity scores
-        control["score_diff"] = np.abs(control["propensity_score"] - row["propensity_score"])
-
-        # Get indices of closest matches
-        matched = control.sort_values("score_diff").head(match_ratio).index
-        matched_indices.extend(matched)
-
-        # Optional: Drop the matched controls to prevent them from being matched more than once
-        # control = control.drop(matched)
+        query_features = row[["propensity_score"]].values.reshape(1, -1)
+        distances, indices = nn.radius_neighbors(query_features)
+        for distance, index_array in zip(distances[0], indices[0]):
+            if distance <= caliper:
+                matched_indices.append(control.iloc[index_array].name)
 
     # Create the matched dataset
-    matched_data = data.loc[matched_indices]
-    matched_data = pd.concat([treatment, matched_data])
+    matched_data = pd.concat([treatment, control.loc[matched_indices]]).drop_duplicates()
 
     return matched_data
 
 
-def calculate_smd(groups, covariate):
+def calculate_smd(groups, covariate, treatment_column):
     """
     Calculate the standardized mean difference (SMD) for a single covariate.
 
@@ -180,12 +202,12 @@ def calculate_smd(groups, covariate):
     Returns:
         float: The SMD for the covariate.
     """
-    mean_treatment = groups[covariate][groups["treatment"] == 1].mean()
-    mean_control = groups[covariate][groups["treatment"] == 0].mean()
+    mean_treatment = groups[covariate][groups[treatment_column] == 1].mean()
+    mean_control = groups[covariate][groups[treatment_column] == 0].mean()
     std_pooled = np.sqrt(
         (
-            groups[covariate][groups["treatment"] == 1].var()
-            + groups[covariate][groups["treatment"] == 0].var()
+            groups[covariate][groups[treatment_column] == 1].var()
+            + groups[covariate][groups[treatment_column] == 0].var()
         )
         / 2
     )
@@ -193,7 +215,19 @@ def calculate_smd(groups, covariate):
     return smd
 
 
-def check_balance(matched_data, covariate_columns):
+def visualize_smds(balance_df, path):
+    balance_df.plot(kind="bar")
+    plt.axhline(y=0.1, color="r", linestyle="--")
+    plt.title("Standardized Mean Differences for Covariates After Matching")
+    plt.ylabel("Standardized Mean Difference")
+    plt.xlabel("Covariates")
+    plt.tight_layout()
+    filename = os.path.join(path, "smds.png")
+    plt.savefig(filename)
+    plt.close()
+
+
+def check_balance(matched_data, covariate_columns, treatment_column):
     """
     Check the balance of covariates in the matched dataset using Standardized Mean Differences (SMD).
 
@@ -204,18 +238,42 @@ def check_balance(matched_data, covariate_columns):
     Returns:
         DataFrame: A dataframe with SMD for all covariates.
     """
-    balance = {}
-    for covariate in covariate_columns:
-        balance[covariate] = calculate_smd(matched_data, covariate)
+    balance = {
+        covariate: calculate_smd(matched_data, covariate, treatment_column)
+        for covariate in covariate_columns
+    }
     balance_df = pd.DataFrame.from_dict(balance, orient="index", columns=["SMD"])
-
-    # A common rule of thumb is that an SMD less than 0.1 indicates a good balance
     balanced = balance_df["SMD"].abs() < 0.1
-    print("Covariate balance after matching:")
+    print("\tCovariate balance after matching:")
     print(balance_df)
-    print("\nBalanced covariates:")
+    print("\n\tBalanced covariates:")
     print(balanced)
     return balance_df
+
+
+def ttest(data, x_val, y_val):
+    group1 = data[data[x_val] == data[x_val].unique()[0]][y_val]
+    group2 = data[data[x_val] == data[x_val].unique()[1]][y_val]
+    t_stat, p_val = ttest_ind(group1.dropna(), group2.dropna())
+    return t_stat, p_val
+
+
+def f_one(data, x_val, y_val):
+    groups = [group[y_val].dropna() for name, group in data.groupby(x_val)]
+    f_stat, p_val = f_oneway(*groups)
+    return f_stat, p_val
+
+
+def point_bi_serial(data, binary_var, continuous_var):
+    binary_data = data[binary_var].cat.codes
+    continuous_data = data[continuous_var]
+    coef, p_val = pointbiserialr(binary_data, continuous_data)
+    return coef, p_val
+
+
+#######################################
+# DATA HANDLING and SIMPLE OPERATIONS #
+#######################################
 
 
 def prefix_zeros_to_six_digit_ids(patient_id):
@@ -281,23 +339,3 @@ def calculate_stats(row, col_name):
 
 def zero_fill(series, width):
     return series.astype(str).str.zfill(width)
-
-
-def ttest(data, x_val, y_val):
-    group1 = data[data[x_val] == data[x_val].unique()[0]][y_val]
-    group2 = data[data[x_val] == data[x_val].unique()[1]][y_val]
-    t_stat, p_val = ttest_ind(group1.dropna(), group2.dropna())
-    return t_stat, p_val
-
-
-def f_one(data, x_val, y_val):
-    groups = [group[y_val].dropna() for name, group in data.groupby(x_val)]
-    f_stat, p_val = f_oneway(*groups)
-    return f_stat, p_val
-
-
-def point_bi_serial(data, binary_var, continuous_var):
-    binary_data = data[binary_var].cat.codes
-    continuous_data = data[continuous_var]
-    coef, p_val = pointbiserialr(binary_data, continuous_data)
-    return coef, p_val
