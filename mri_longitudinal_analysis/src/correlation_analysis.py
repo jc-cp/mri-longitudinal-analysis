@@ -714,10 +714,13 @@ class TumorAnalysis:
         Parameters:
         - prefix (str): Prefix used for naming the output files.
 
-        The method models the tumor growth percentage as a function of time since the first scan for each patient, separates the individual and predicted growth trajectories, and saves the plots to files.
+        The method models the tumor growth percentage as a function of time since the first
+        scan for each patient, separates the individual and predicted growth trajectories, and
+        saves the plots to files.
         """
         print("\tModeling growth trajectories:")
         self.pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
+
         self.pre_treatment_data["Time_since_First_Scan"] = self.pre_treatment_data.groupby(
             "Patient_ID"
         )["Date"].transform(lambda x: (x - x.min()).dt.days)
@@ -728,15 +731,30 @@ class TumorAnalysis:
         self.pre_treatment_data = self.pre_treatment_data.dropna(
             subset=["Growth_pct", "Time_since_First_Scan"]
         )
-        if self.pre_treatment_data.groupby("Patient_ID").size().min() < 3:
-            print("Not enough data points per patient to fit a mixed-effects model.")
-            return None
+
+        # Ensure we have enough data points per patient
+        sufficient_data_patients = (
+            self.pre_treatment_data.groupby("Patient_ID")
+            .filter(lambda x: len(x) >= 3)["Patient_ID"]
+            .unique()
+        )
+        filtered_data = self.pre_treatment_data[
+            self.pre_treatment_data["Patient_ID"].isin(sufficient_data_patients)
+        ]
+
+        # Reset index after filtering
+        filtered_data.reset_index(drop=True, inplace=True)
+
+        # Continue with filtered data
+        if filtered_data.empty:
+            print("No patients have enough data points for mixed-effects model analysis.")
+            return
 
         model = sm.MixedLM.from_formula(
             "Growth_pct ~ Time_since_First_Scan",
             re_formula="~Time_since_First_Scan",
-            groups=self.pre_treatment_data["Patient_ID"],
-            data=self.pre_treatment_data,
+            groups=filtered_data["Patient_ID"],
+            data=filtered_data,
         )
         # pylint: disable=unexpected-keyword-arg
         result = model.fit(reml=False, method="nm", maxiter=100)  # Using Nelder-Mead optimization
@@ -800,50 +818,92 @@ class TumorAnalysis:
         )
         visualize_time_to_treatment_effect(filtered_data, prefix, path)
 
-    def analyze_tumor_stability(self):
+    def analyze_tumor_stability(self, unchanging_threshold=0.05):
         """
         Analyze the stability of tumors based on their growth rates.
 
         Returns:
         - stable_patients_data (DataFrame): Data of patients with stable tumors.
 
-        This method identifies tumors with negligible growth over time and analyzes the characteristics of patients with these stable tumors.
+        This method identifies tumors with negligible growth over time and analyzes
+        the characteristics of patients with these stable tumors.
         """
-        # # Identify tumors with negligible growth over time
-        # stable_growth_threshold = 0.05  # 5% growth threshold for stability
-        # self.pre_treatment_data["Volume_pct_change"] = self.pre_treatment_data.groupby(
-        #     "Patient_ID"
-        # )["Volume"].pct_change()
-        # stable_tumors = self.pre_treatment_data[
-        #     (self.pre_treatment_data["Volume_pct_change"].abs() <= stable_growth_threshold)
-        #     | (self.pre_treatment_data["Volume_pct_change"].isnull())
-        # ]
-
-        unchanging_threshold = 0.05
-
         # Calculate the absolute change in tumor growth for each scan
         self.pre_treatment_data["Absolute_Growth_change"] = (
             self.pre_treatment_data.groupby("Patient_ID")["Growth[%]"].diff().abs()
         )
 
-        # Find patients with unchanging tumors
-        stable_tumors = self.pre_treatment_data[
-            (self.pre_treatment_data["Absolute_Growth_change"] <= unchanging_threshold)
-            | (self.pre_treatment_data["Absolute_Growth_change"].isnull())
-        ]
+        patients_with_significant_change = self.pre_treatment_data.groupby("Patient_ID")[
+            "Growth[%]"
+        ].apply(lambda x: (x.abs() > unchanging_threshold).any())
 
-        # Analyze characteristics of patients with stable tumors
-        stable_patient_ids = stable_tumors["Patient_ID"].unique()
+        # Get lists of patient IDs for stable and changing tumors
+        stable_patients_ids = patients_with_significant_change[
+            ~patients_with_significant_change
+        ].index.tolist()
+        changing_patients_ids = patients_with_significant_change[
+            patients_with_significant_change
+        ].index.tolist()
+
+        # Extract data for stable and changing tumors
         stable_patients_data = self.pre_treatment_data[
-            self.pre_treatment_data["Patient_ID"].isin(stable_patient_ids)
+            self.pre_treatment_data["Patient_ID"].isin(stable_patients_ids)
         ]
-        print("Stable patients:", len(stable_patient_ids))
+        changing_patients_data = self.pre_treatment_data[
+            self.pre_treatment_data["Patient_ID"].isin(changing_patients_ids)
+        ]
 
-        # You could compare stable vs. non-stable tumors here
-        # E.g., Compare the distribution of ages or volumes between stable and non-stable tumors
-        # ...
+        print("Stable patients:", len(stable_patients_data))
+        print(stable_patients_data["Patient_ID"].unique())
+        print("Changing patients:", len(changing_patients_data))
+        print(changing_patients_data["Patient_ID"].unique())
 
-        return stable_patients_data
+        self.compare_stable_unstable_distributions(stable_patients_data, changing_patients_data)
+
+    def compare_stable_unstable_distributions(self, stable_patients_data, changing_patients_data):
+        # Calculate descriptive statistics for Age and Volume for stable patients
+        stable_age_stats = stable_patients_data["Age"].describe()
+        stable_volume_stats = stable_patients_data["Volume"].describe()
+
+        # Calculate descriptive statistics for Age and Volume for changing patients
+        changing_age_stats = changing_patients_data["Age"].describe()
+        changing_volume_stats = changing_patients_data["Volume"].describe()
+
+        # print("Stable Tumors Age Statistics:\n", stable_age_stats)
+        # print("Stable Tumors Volume Statistics:\n", stable_volume_stats)
+        # print("Changing Tumors Age Statistics:\n", changing_age_stats)
+        # print("Changing Tumors Volume Statistics:\n", changing_volume_stats)
+
+        # Visualization of Age Distributions
+        plt.figure(figsize=(12, 5))
+        plt.subplot(1, 2, 1)
+        sns.histplot(stable_patients_data["Age"], color="blue", kde=True, label="Stable Tumors")
+        sns.histplot(changing_patients_data["Age"], color="red", kde=True, label="Changing Tumors")
+        plt.title("Distribution of Ages")
+        plt.xlabel("Age")
+        plt.legend()
+
+        # Visualization of Volume Distributions
+        plt.subplot(1, 2, 2)
+        sns.histplot(stable_patients_data["Volume"], color="blue", kde=True, label="Stable Tumors")
+        sns.histplot(
+            changing_patients_data["Volume"], color="red", kde=True, label="Changing Tumors"
+        )
+        plt.title("Distribution of Volumes")
+        plt.xlabel("Volume")
+        plt.legend()
+
+        filename = os.path.join(correlation_cfg.OUTPUT_DIR, "stable_unstable_distributions.png")
+        plt.tight_layout()
+        plt.savefig(filename)
+
+        # Return the statistics for potential further analysis
+        return {
+            "stable_age_stats": stable_age_stats,
+            "stable_volume_stats": stable_volume_stats,
+            "changing_age_stats": changing_age_stats,
+            "changing_volume_stats": changing_volume_stats,
+        }
 
     def run_analysis(self):
         """
@@ -919,7 +979,7 @@ class TumorAnalysis:
             self.time_to_event_analysis(prefix)
             self.analyze_time_to_treatment_effect(prefix, path)
             self.model_growth_trajectories(prefix)
-            self.analyze_tumor_stability()
+            self.analyze_tumor_stability(unchanging_threshold=correlation_cfg.UNCHANGING_THRESHOLD)
 
             # prefix = "post-treatment"
             # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT, prefix=prefix)
