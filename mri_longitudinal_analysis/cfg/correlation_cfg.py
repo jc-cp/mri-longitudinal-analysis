@@ -27,6 +27,8 @@ PROPENSITY = True
 # Step 3
 ANLYSIS = True
 
+SAMPLE_SIZE = 10  # for plotting growth trajectories
+
 # Step 4
 CORRECTION = True
 CORRECTION_ALPHA = 0.05

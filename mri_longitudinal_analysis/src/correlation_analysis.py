@@ -9,7 +9,6 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 import statsmodels.api as sm
-from statsmodels.regression.mixed_linear_model import MixedLMResults
 from cfg import correlation_cfg
 from lifelines import KaplanMeierFitter
 from scipy.signal import find_peaks
@@ -613,11 +612,19 @@ class TumorAnalysis:
             plt.savefig(heat_map_file)
             plt.close()
 
-    def plot_individual_trajectories(self, name):
-        # Create a new figure
+    def plot_individual_trajectories(self, name, sample_size):
+        """
+        Plot the individual growth trajectories for a sample of patients.
+
+        Parameters:
+        - name (str): The filename to save the plot image.
+
+        This method samples a n number of unique patient IDs from the pre-treatment data,
+        plots their tumor growth percentage over time, and saves the plot to the specified filename.
+        """
         plt.figure(figsize=(10, 6))
 
-        sample_ids = self.pre_treatment_data["Patient_ID"].drop_duplicates().sample(n=50)
+        sample_ids = self.pre_treatment_data["Patient_ID"].drop_duplicates().sample(n=sample_size)
         sampled_data = self.pre_treatment_data[
             self.pre_treatment_data["Patient_ID"].isin(sample_ids)
         ]
@@ -638,6 +645,14 @@ class TumorAnalysis:
         plt.close()
 
     def plot_growth_predictions(self, filename):
+        """
+        Plot the actual versus predicted tumor growth percentages over time.
+
+        Parameters:
+        - filename (str): The filename to save the plot image.
+
+        This method plots the actual and predicted growth percentages from the pre-treatment data and saves the plot as an image.
+        """
         sns.scatterplot(
             x="Time_since_First_Scan",
             y="Growth_pct",
@@ -660,6 +675,14 @@ class TumorAnalysis:
         plt.close()
 
     def time_to_event_analysis(self, prefix):
+        """
+        Perform a Kaplan-Meier survival analysis on time-to-event data for tumor progression.
+
+        Parameters:
+        - prefix (str): Prefix used for naming the output file.
+
+        The method fits the survival curve using the KaplanMeierFitter on the pre-treatment data, saves the plot image, and prints a confirmation message.
+        """
         print("\tAnalyzing time to event:")
         pre_treatment_data = self.pre_treatment_data.loc[
             self.pre_treatment_data["Date_of_First_Progression"]
@@ -685,6 +708,14 @@ class TumorAnalysis:
         print("\t\tSaved survival KaplanMeier curve.")
 
     def model_growth_trajectories(self, prefix):
+        """
+        Model the growth trajectories of patients using a mixed-effects linear model.
+
+        Parameters:
+        - prefix (str): Prefix used for naming the output files.
+
+        The method models the tumor growth percentage as a function of time since the first scan for each patient, separates the individual and predicted growth trajectories, and saves the plots to files.
+        """
         print("\tModeling growth trajectories:")
         self.pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
         self.pre_treatment_data["Time_since_First_Scan"] = self.pre_treatment_data.groupby(
@@ -697,9 +728,9 @@ class TumorAnalysis:
         self.pre_treatment_data = self.pre_treatment_data.dropna(
             subset=["Growth_pct", "Time_since_First_Scan"]
         )
-        # if self.pre_treatment_data.groupby("Patient_ID").size().min() < 3:
-        #     print("Not enough data points per patient to fit a mixed-effects model.")
-        #     return None
+        if self.pre_treatment_data.groupby("Patient_ID").size().min() < 3:
+            print("Not enough data points per patient to fit a mixed-effects model.")
+            return None
 
         model = sm.MixedLM.from_formula(
             "Growth_pct ~ Time_since_First_Scan",
@@ -707,8 +738,9 @@ class TumorAnalysis:
             groups=self.pre_treatment_data["Patient_ID"],
             data=self.pre_treatment_data,
         )
+        # pylint: disable=unexpected-keyword-arg
         result = model.fit(reml=False, method="nm", maxiter=100)  # Using Nelder-Mead optimization
-        # result = model.fit()
+        # result = model.fit() # Using default optimization, fails to converge
 
         if not result.converged:
             print("Model did not converge, try simplifying the model or check the data.")
@@ -727,11 +759,22 @@ class TumorAnalysis:
                 correlation_cfg.OUTPUT_DIR, f"{prefix}_growth_predictions.png"
             )
 
-            self.plot_individual_trajectories(growth_trajectories_plot)
+            self.plot_individual_trajectories(
+                growth_trajectories_plot, sample_size=correlation_cfg.SAMPLE_SIZE
+            )
             self.plot_growth_predictions(prediciton_plot)
             print("\t\tSaved growth trajectories plot.")
 
     def analyze_time_to_treatment_effect(self, prefix, path):
+        """
+        Analyze the correlation between the time to treatment and tumor growth.
+
+        Parameters:
+        - prefix (str): Prefix used for the output files.
+        - path (str): The directory path to save output files.
+
+        The method analyzes the correlation, fits a linear model to predict growth based on time to treatment, and visualizes the effect.
+        """
         print("\tAnalyzing time to treatment effect:")
         self.pre_treatment_data["Time_to_Treatment"] = (
             self.pre_treatment_data["First_Treatment_Date"]
@@ -758,6 +801,14 @@ class TumorAnalysis:
         visualize_time_to_treatment_effect(filtered_data, prefix, path)
 
     def analyze_tumor_stability(self):
+        """
+        Analyze the stability of tumors based on their growth rates.
+
+        Returns:
+        - stable_patients_data (DataFrame): Data of patients with stable tumors.
+
+        This method identifies tumors with negligible growth over time and analyzes the characteristics of patients with these stable tumors.
+        """
         # # Identify tumors with negligible growth over time
         # stable_growth_threshold = 0.05  # 5% growth threshold for stability
         # self.pre_treatment_data["Volume_pct_change"] = self.pre_treatment_data.groupby(
@@ -795,6 +846,14 @@ class TumorAnalysis:
         return stable_patients_data
 
     def run_analysis(self):
+        """
+        Run a comprehensive analysis pipeline consisting of data separation,
+        sensitivity analysis, propensity score matching, main analysis, corrections
+        for multiple comparisons, trend analysis, and feature engineering.
+
+        This method orchestrates the overall workflow of the analysis process,
+        including data preparation, statistical analysis, and results interpretation.
+        """
         step_idx = 1
 
         print(f"Step {step_idx}: Separating data into pre- and post-treatment dataframes...")
