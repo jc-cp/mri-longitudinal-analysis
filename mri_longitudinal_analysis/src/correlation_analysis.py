@@ -63,6 +63,18 @@ class TumorAnalysis:
         self.aggregate_summary_statistics()
 
     def validate_files(self, clinical_data_path, volumes_data_paths):
+        """
+        Check if the specified clinical data and volume data files exist.
+
+        Parameters:
+        - clinical_data_path (str): Path to the clinical data file.
+        - volumes_data_paths (list): List containing paths to volume data files.
+
+        Raises:
+        - FileNotFoundError: If any of the files specified do not exist.
+
+        Prints a validation message if all files exist.
+        """
         missing_files = [
             path
             for path in [clinical_data_path, volumes_data_paths[0], volumes_data_paths[1]]
@@ -73,6 +85,15 @@ class TumorAnalysis:
         print("\tValidated files.")
 
     def load_clinical_data(self, clinical_data_path):
+        """
+        Load clinical data from a CSV file, process the data by extracting treatment types,
+        zero-filling MRN values, and parsing the clinical data for further analysis.
+
+        Parameters:
+        - clinical_data_path (str): Path to the clinical data file.
+
+        The function updates the `self.clinical_data` attribute with processed data.
+        """
         self.clinical_data = pd.read_csv(clinical_data_path)
         self.clinical_data["Treatment_Type"] = self.extract_treatment_types()
         self.clinical_data["Treatment_Type"] = self.clinical_data["Treatment_Type"].astype(
@@ -83,6 +104,13 @@ class TumorAnalysis:
         self.parse_clinical_data()
 
     def parse_clinical_data(self):
+        """
+        Parse the clinical data to categorize diagnosis into glioma types, categorize other
+        relevant fields, and reduce the data to relevant columns for analysis.
+
+        This function should be called after clinical data is loaded to process and reduce
+        the data for further analysis. Updates the `self.clinical_data_reduced` attribute.
+        """
         diagnosis_to_glioma_type = {
             "astrocytoma": "Astrocytoma",
             "optic": "Optic Gliona",
@@ -141,6 +169,15 @@ class TumorAnalysis:
         print("\tParsed clinical data.")
 
     def load_volumes_data(self, volumes_data_paths):
+        """
+        Load volumes data from specified paths. Each path contains CSV files for different patients.
+        The data from each file is loaded, processed, and concatenated into a single DataFrame.
+
+        Parameters:
+        - volumes_data_paths (list): List containing paths to directories of volume data CSV files.
+
+        The function updates the `self.volumes_data` attribute with the concatenated DataFrame.
+        """
         data_frames = []
         for volumes_data_path in volumes_data_paths:
             all_files = [f for f in os.listdir(volumes_data_path) if f.endswith(".csv")]
@@ -158,6 +195,15 @@ class TumorAnalysis:
         self.volumes_data = pd.concat(data_frames, ignore_index=True)
 
     def extract_treatment_types(self):
+        """
+        Extract treatment types from the clinical data based on whether surgical resection,
+        systemic therapy, or radiation was part of the initial treatment.
+
+        Returns:
+        - treatment_list (list): A list of treatment types derived from the clinical data.
+
+        This function is called within the `load_clinical_data` method.
+        """
         treatment_list = []
 
         for _, row in self.clinical_data.iterrows():
@@ -184,6 +230,11 @@ class TumorAnalysis:
         return treatment_list
 
     def merge_data(self):
+        """
+        Merge reduced clinical data with the volumes data based on patient ID, excluding redundant columns.
+
+        This function updates the `self.merged_data` attribute with the merged DataFrame.
+        """
         self.clinical_data_reduced.loc[:, "BCH MRN"] = self.clinical_data_reduced["BCH MRN"].astype(
             str
         )
@@ -199,6 +250,12 @@ class TumorAnalysis:
         print("\tMerged data.")
 
     def aggregate_summary_statistics(self):
+        """
+        Calculate summary statistics for specified columns in the merged data.
+
+        This function updates the `self.merged_data` with new columns for mean, median, and standard deviation
+        for each of the specified columns.
+        """
         for column in ["Growth[%]", "Age", "Volume"]:
             self.merged_data[
                 [f"{column}_mean", f"{column}_median", f"{column}_std"]
@@ -206,6 +263,11 @@ class TumorAnalysis:
         print("\tAggregated summary statistics.")
 
     def longitudinal_separation(self):
+        """
+        Separate the merged data into two DataFrames based on whether the data is from before or after the first treatment date.
+
+        This function updates `self.pre_treatment_data` and `self.post_treatment_data` with the separated data.
+        """
         pre_treatment_data_frames = []
         post_treatment_data_frames = []
 
@@ -239,6 +301,15 @@ class TumorAnalysis:
         self.post_treatment_data = pd.concat(post_treatment_data_frames, ignore_index=True)
 
     def extract_treatment_dates(self, patient_id):
+        """
+        Extract the dates of treatments from the clinical data for a specific patient.
+
+        Parameters:
+        - patient_id (str): The ID of the patient.
+
+        Returns:
+        - treatment_dates (dict): A dictionary of treatment types and their corresponding dates for the specified patient.
+        """
         first_row = self.clinical_data[self.clinical_data["BCH MRN"] == patient_id].iloc[0]
 
         treatment_dates = {}
@@ -256,6 +327,17 @@ class TumorAnalysis:
         return treatment_dates
 
     def perform_separation(self, data, treatment_dates):
+        """
+        Separate the patient data into pre- and post-treatment data based on the treatment dates.
+
+        Parameters:
+        - data (DataFrame): The patient data to be separated.
+        - treatment_dates (dict): The dates of treatments to be used as separation points.
+
+        Returns:
+        - pre_treatment_df (DataFrame): Data before the first treatment date.
+        - post_treatment_df (DataFrame): Data after the first treatment date.
+        """
         treatment_dates = {
             k: pd.to_datetime(v, errors="coerce", dayfirst=True)
             for k, v in treatment_dates.items()
@@ -318,17 +400,20 @@ class TumorAnalysis:
 
         return pre_treatment_df, post_treatment_df
 
-    def get_treatment_type(self, patient_row):
-        if pd.notna(patient_row.get("Date of first surgery")):
-            return "Surgery"
-        elif patient_row.get("Systemic therapy before radiation") == "Yes":
-            return "Chemotherapy"
-        elif patient_row.get("Radiation as part of initial treatment") == "Yes":
-            return "Radiation"
-        else:
-            return "Unknown"
-
     def analyze_correlation(self, x_val, y_val, data, prefix, method="spearman"):
+        """
+        Perform and print the results of a statistical test to analyze the correlation
+        between two variables.
+
+        Parameters:
+        - x_val (str): The name of the first variable.
+        - y_val (str): The name of the second variable.
+        - data (DataFrame): The data containing the variables.
+        - prefix (str): The prefix to be used for naming visualizations.
+        - method (str): The statistical method to be used (default is "spearman").
+
+        Updates the class attributes with the results of the test and prints the outcome.
+        """
         test_result = None  # Initialize test_result
         test_type = ""
         x_dtype = data[x_val].dtype
@@ -397,10 +482,7 @@ class TumorAnalysis:
         """
         Analyze data for pre-treatment cases. This involves finding correlations
         between variables such as initial tumor volume, age, sex, mutations, and race.
-
-        Returns:
-            dict: Dictionary of correlation results.
-        """ ""
+        """
         print("\tPre-treatment Correlations:")
 
         for growth_metric in ["Growth[%]", "Growth[%]_mean", "Growth[%]_std"]:
@@ -430,9 +512,6 @@ class TumorAnalysis:
         """
         Analyze data for post-treatment cases. This involves finding correlations between
         variables such as treatment types, tumor volume changes, and specific mutations.
-
-        Returns:
-            dict: Dictionary of correlation results.
         """
         print("Post-treatment Correlations:")
         self.analyze_correlation(
@@ -476,7 +555,9 @@ class TumorAnalysis:
             x_val, y_val (str): Column names for the variables analyzed.
             data (DataFrame): The dataframe containing the data.
             test_result (tuple): The result of the statistical test (e.g., (statistic, p_value)).
-            test_type (str): The type of statistical test ('correlation', 't-test', 'anova', 'chi-squared').
+            prefix (str): The prefix to be used for naming visualizations.
+            test_type (str): The type of statistical test ('correlation', 't-test',
+            'anova', 'chi-squared').
             method (str): The correlation method used ('pearson' or 'spearman'), if applicable.
         """
         save_dir = correlation_cfg.OUTPUT_DIR
@@ -531,30 +612,6 @@ class TumorAnalysis:
             heat_map_file = os.path.join(save_dir, f"{prefix}_{method}_correlation_heatmap.png")
             plt.savefig(heat_map_file)
             plt.close()
-
-    def determine_plot_type(self, data, x_var, y_var):
-        """
-        Determine the type of plot to use based on the data types of x_var and y_var.
-
-        Parameters:
-            data (DataFrame): The dataframe containing the data.
-            x_var (str): The name of the x variable.
-            y_var (str): The name of the y variable.
-
-        Returns:
-            str: The type of plot to use ('scatter', 'box', 'violin', etc.).
-        """
-        x_dtype = data[x_var].dtype
-        y_dtype = data[y_var].dtype
-
-        # Define logic to determine plot type
-        if pd.api.types.is_numeric_dtype(x_dtype) and pd.api.types.is_numeric_dtype(y_dtype):
-            return "scatter"
-        elif pd.api.types.is_categorical_dtype(x_dtype) or pd.api.types.is_object_dtype(x_dtype):
-            return "box"  # You can change to 'violin' or other types as preferred
-        else:
-            # More conditions can be added for different scenarios
-            return "unknown"
 
     def plot_individual_trajectories(self, name):
         # Create a new figure
