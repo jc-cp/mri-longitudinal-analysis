@@ -287,17 +287,18 @@ class TumorAnalysis:
         for patient_id, data in self.merged_data.groupby("Patient_ID"):
             first_treatment_date = self.extract_treatment_dates(patient_id)
 
-            if first_treatment_date is pd.NaT:
-                pre_treatment = data.assign(Received_Treatment=False)
-                pre_treatment_data_frames.append(pre_treatment)
-            else:
-                pre_treatment = data[data["Date"] < first_treatment_date].copy()
-                post_treatment = data[data["Date"] >= first_treatment_date].copy()
+            received_treatment = not pd.isna(first_treatment_date)
+            data["Received_Treatment"] = received_treatment
 
-                pre_treatment["Received_Treatment"] = False
-                post_treatment["Received_Treatment"] = True
+            pre_treatment = (
+                data[data["Date"] < first_treatment_date] if received_treatment else data
+            )
+            post_treatment = (
+                data[data["Date"] >= first_treatment_date] if received_treatment else pd.DataFrame()
+            )
 
-                pre_treatment_data_frames.append(pre_treatment)
+            pre_treatment_data_frames.append(pre_treatment)
+            if not post_treatment.empty:
                 post_treatment_data_frames.append(post_treatment)
 
         # Concatenate the list of DataFrames into a single DataFrame for pre and post treatment
@@ -329,7 +330,11 @@ class TumorAnalysis:
             treatment_dates["Radiation"] = patient_data["Start Date of Radiation"]
 
         # print(f"Patient {patient_id} - Treatment Dates: {treatment_dates}")
-        treatment_dates = [pd.to_datetime(date, dayfirst=True) for date in treatment_dates.values()]
+        treatment_dates = [
+            pd.to_datetime(date, dayfirst=True)
+            for date in treatment_dates.values()
+            if pd.notnull(date)
+        ]
 
         first_treatment_date = min(treatment_dates, default=pd.NaT)
         return first_treatment_date
@@ -419,7 +424,7 @@ class TumorAnalysis:
         """
         print("\tPre-treatment Correlations:")
 
-        for growth_metric in ["Growth[%]", "Growth[%]_mean", "Growth[%]_std"]:
+        for growth_metric in ["Growth[%]", "Growth[%]_RollMean", "Growth[%]_RollStd"]:
             self.analyze_correlation(
                 "Glioma_Type",
                 growth_metric,
@@ -434,7 +439,7 @@ class TumorAnalysis:
                     var, "Growth[%]", self.pre_treatment_data, prefix, method=corr_method
                 )
 
-        for age_metric in ["Age_mean", "Age_median", "Age_std"]:
+        for age_metric in ["Age_RollMean", "Age_RollMedian", "Age_RollStd"]:
             self.analyze_correlation(
                 age_metric, "Growth[%]", self.pre_treatment_data, prefix, method=correlation_method
             )
@@ -863,8 +868,6 @@ class TumorAnalysis:
         )
         step_idx += 1
 
-        print(self.pre_treatment_data["Received_Treatment"].unique())
-
         if correlation_cfg.SENSITIVITY:
             print(f"Step {step_idx}: Performing Sensitivity Analysis...")
 
@@ -912,11 +915,11 @@ class TumorAnalysis:
         if correlation_cfg.PROPENSITY:
             print(f"Step {step_idx}: Performing Propensity Score Matching...")
 
-            for data in [self.pre_treatment_data]:  # self.post_treatment_data]:
+            for data in [self.pre_treatment_data]:
                 treatment_column = "Received_Treatment"
                 covariate_columns = ["Age", "Volume", "Growth[%]"]
 
-                data[treatment_column] = data[treatment_column].map({"Yes": 1, "No": 0})
+                data[treatment_column] = data[treatment_column].map({True: 1, False: 0})
                 propensity_scores = calculate_propensity_scores(
                     data, treatment_column, covariate_columns
                 )
