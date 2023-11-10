@@ -14,7 +14,6 @@ from lifelines import KaplanMeierFitter
 from scipy.signal import find_peaks
 from utils.helper_functions import (
     bonferroni_correction,
-    calculate_stats,
     chi_squared_test,
     f_one,
     pearson_correlation,
@@ -75,9 +74,7 @@ class TumorAnalysis:
         Prints a validation message if all files exist.
         """
         missing_files = [
-            path
-            for path in [clinical_data_path, volumes_data_paths[0], volumes_data_paths[1]]
-            if not os.path.exists(path)
+            path for path in [clinical_data_path] + volumes_data_paths if not os.path.exists(path)
         ]
         if missing_files:
             raise FileNotFoundError(f"The following files could not be found: {missing_files}")
@@ -85,8 +82,10 @@ class TumorAnalysis:
 
     def load_clinical_data(self, clinical_data_path):
         """
-        Load clinical data from a CSV file, process the data by extracting treatment types,
-        zero-filling MRN values, and parsing the clinical data for further analysis.
+        Load clinical data from a CSV file, parse the clinical data to
+        categorize diagnosis into glioma types, and categorize other
+        relevant fields, and reduce the data to relevant columns for analysis.
+        Updates the `self.clinical_data_reduced` attribute.
 
         Parameters:
         - clinical_data_path (str): Path to the clinical data file.
@@ -94,22 +93,10 @@ class TumorAnalysis:
         The function updates the `self.clinical_data` attribute with processed data.
         """
         self.clinical_data = pd.read_csv(clinical_data_path)
+
         self.clinical_data["Treatment_Type"] = self.extract_treatment_types()
-        self.clinical_data["Treatment_Type"] = self.clinical_data["Treatment_Type"].astype(
-            "category"
-        )
-
         self.clinical_data["BCH MRN"] = zero_fill(self.clinical_data["BCH MRN"], 7)
-        self.parse_clinical_data()
 
-    def parse_clinical_data(self):
-        """
-        Parse the clinical data to categorize diagnosis into glioma types, categorize other
-        relevant fields, and reduce the data to relevant columns for analysis.
-
-        This function should be called after clinical data is loaded to process and reduce
-        the data for further analysis. Updates the `self.clinical_data_reduced` attribute.
-        """
         diagnosis_to_glioma_type = {
             "astrocytoma": "Astrocytoma",
             "optic": "Optic Gliona",
@@ -127,13 +114,13 @@ class TumorAnalysis:
                     return glioma_type
             return "Other"
 
-        self.clinical_data["Glioma_Type"] = (
-            self.clinical_data["Pathologic diagnosis"].apply(map_diagnosis).astype("category")
+        self.clinical_data["Glioma_Type"] = self.clinical_data["Pathologic diagnosis"].apply(
+            map_diagnosis
         )
-        self.clinical_data["Sex"] = (
-            self.clinical_data["Sex"].apply(lambda x: "Female" if x == "Female" else "Male")
-        ).astype("category")
-        self.clinical_data["Race"] = self.clinical_data["Race/Ethnicity"].astype("category")
+        self.clinical_data["Sex"] = self.clinical_data["Sex"].apply(
+            lambda x: "Female" if x == "Female" else "Male"
+        )
+        self.clinical_data["Race"] = self.clinical_data["Race/Ethnicity"]
         self.clinical_data["Mutations"] = self.clinical_data.apply(
             lambda row: "Yes"
             if row["BRAF V600E mutation"] == "Yes"
@@ -141,30 +128,35 @@ class TumorAnalysis:
             or row["FGFR fusion"] == "Yes"
             else "No",
             axis=1,
-        ).astype("category")
+        )
         self.clinical_data["Date_of_Diagnosis"] = pd.to_datetime(
             self.clinical_data["Date of MRI diagnosis"], dayfirst=True
         )
         self.clinical_data["Date_of_First_Progression"] = pd.to_datetime(
             self.clinical_data["Date of First Progression"], dayfirst=True
         )
-        self.clinical_data["Tumor_Progression"] = (
-            self.clinical_data["Progression"].map({"Yes": True, "No": False, None: False})
-        ).astype(bool)
+        self.clinical_data["Tumor_Progression"] = self.clinical_data["Progression"].map(
+            {"Yes": True, "No": False, None: False}
+        )
 
-        relevant_columns = [
-            "Treatment_Type",
-            "BCH MRN",
-            "Glioma_Type",
-            "Sex",
-            "Race",
-            "Mutations",
-            "Date_of_First_Progression",
-            "Date_of_Diagnosis",
-            "Tumor_Progression",
-        ]
+        dtype_mapping = {
+            "BCH MRN": "string",
+            "Glioma_Type": "category",
+            "Sex": "category",
+            "Race": "category",
+            "Mutations": "category",
+            "Treatment_Type": "category",
+            "Tumor_Progression": "bool",
+        }
 
-        self.clinical_data_reduced = self.clinical_data[relevant_columns]
+        # Apply the type conversions according to the dictionary
+        for column, dtype in dtype_mapping.items():
+            self.clinical_data[column] = self.clinical_data[column].astype(dtype)
+
+        datetime_columns = ["Date_of_Diagnosis", "Date_of_First_Progression"]
+        all_relevant_columns = list(dtype_mapping.keys()) + datetime_columns
+        self.clinical_data_reduced = self.clinical_data[all_relevant_columns]
+
         print("\tParsed clinical data.")
 
     def load_volumes_data(self, volumes_data_paths):
@@ -184,14 +176,14 @@ class TumorAnalysis:
                 patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
                 patient_id = file.split(".")[0]
                 patient_df["Patient_ID"] = patient_id
-                patient_df["Patient_ID"] = patient_df["Patient_ID"].astype(str).str.zfill(7)
-                patient_df["Date"] = pd.to_datetime(
-                    patient_df["Date"], errors="coerce", format="%Y-%m-%d"
+                patient_df["Patient_ID"] = (
+                    patient_df["Patient_ID"].astype(str).str.zfill(7).astype("string")
                 )
                 data_frames.append(patient_df)
 
             print(f"\tLoaded volume data {volumes_data_path}.")
         self.volumes_data = pd.concat(data_frames, ignore_index=True)
+        self.volumes_data["Date"] = pd.to_datetime(self.volumes_data["Date"], format="%Y-%m-%d")
 
     def extract_treatment_types(self):
         """
@@ -230,73 +222,86 @@ class TumorAnalysis:
 
     def merge_data(self):
         """
-        Merge reduced clinical data with the volumes data based on patient ID, excluding redundant columns.
+        Merge reduced clinical data with the volumes data based on patient ID,
+        excluding redundant columns.
 
         This function updates the `self.merged_data` attribute with the merged DataFrame.
         """
-        self.clinical_data_reduced.loc[:, "BCH MRN"] = self.clinical_data_reduced["BCH MRN"].astype(
-            str
-        )
-        grouped_volume_data = self.volumes_data.groupby("Patient_ID").agg(list).reset_index()
         self.merged_data = pd.merge(
             self.clinical_data_reduced,
-            grouped_volume_data,
+            self.volumes_data,
             left_on=["BCH MRN"],
             right_on=["Patient_ID"],
             how="right",
         )
         self.merged_data = self.merged_data.drop(columns=["BCH MRN"])
-        print("\tMerged data.")
+        print("\tMerged clinical and volume data.")
 
     def aggregate_summary_statistics(self):
         """
         Calculate summary statistics for specified columns in the merged data.
 
-        This function updates the `self.merged_data` with new columns for mean, median, and standard deviation
-        for each of the specified columns.
+        This function updates the `self.merged_data` with new columns for mean,
+        median, and standard deviation for each of the specified columns.
         """
-        for column in ["Growth[%]", "Age", "Volume"]:
-            self.merged_data[
-                [f"{column}_mean", f"{column}_median", f"{column}_std"]
-            ] = self.merged_data.apply(lambda row: calculate_stats(row, column), axis=1)
-        print("\tAggregated summary statistics.")
+
+        def cumulative_stats(group, variable):
+            group[f"{variable}_CumMean"] = group[variable].expanding().mean()
+            group[f"{variable}_CumMedian"] = group[variable].expanding().median()
+            group[f"{variable}_CumStd"] = group[variable].expanding().std()
+            return group
+
+        def rolling_stats(group, variable, window_size=3, min_periods=1):
+            group[f"{variable}_RollMean"] = (
+                group[variable].rolling(window=window_size, min_periods=min_periods).mean()
+            )
+            group[f"{variable}_RollMedian"] = (
+                group[variable].rolling(window=window_size, min_periods=min_periods).median()
+            )
+            group[f"{variable}_RollStd"] = (
+                group[variable].rolling(window=window_size, min_periods=min_periods).std()
+            )
+            return group
+
+        for var in ["Volume", "Growth[%]", "Age"]:
+            self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
+                cumulative_stats, var
+            )
+            self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
+                rolling_stats, var
+            )
+
+        print("\tAdded rolling and accumulative summary statistics.")
 
     def longitudinal_separation(self):
         """
-        Separate the merged data into two DataFrames based on whether the data is from before or after the first treatment date.
+        Separate the merged data into two DataFrames based on whether the
+        data is from before or after the first treatment date.
 
-        This function updates `self.pre_treatment_data` and `self.post_treatment_data` with the separated data.
+        This function updates `self.pre_treatment_data` and `self.post_treatment_data`
+        with the separated data.
         """
         pre_treatment_data_frames = []
         post_treatment_data_frames = []
 
         for patient_id, data in self.merged_data.groupby("Patient_ID"):
-            treatment_dates = self.extract_treatment_dates(patient_id)
+            first_treatment_date = self.extract_treatment_dates(patient_id)
 
-            pre_treatment_df, post_treatment_df = self.perform_separation(data, treatment_dates)
-            pre_treatment_data_frames.append(pre_treatment_df)
-            post_treatment_data_frames.append(post_treatment_df)
+            if first_treatment_date is pd.NaT:
+                pre_treatment = data.assign(Received_Treatment=False)
+                pre_treatment_data_frames.append(pre_treatment)
+            else:
+                pre_treatment = data[data["Date"] < first_treatment_date].copy()
+                post_treatment = data[data["Date"] >= first_treatment_date].copy()
 
-        # Concatenate and convert to appropriate data types
+                pre_treatment["Received_Treatment"] = False
+                post_treatment["Received_Treatment"] = True
+
+                pre_treatment_data_frames.append(pre_treatment)
+                post_treatment_data_frames.append(post_treatment)
+
+        # Concatenate the list of DataFrames into a single DataFrame for pre and post treatment
         self.pre_treatment_data = pd.concat(pre_treatment_data_frames, ignore_index=True)
-        self.pre_treatment_data["Sex"] = self.pre_treatment_data["Sex"].astype("category")
-        self.pre_treatment_data["Glioma_Type"] = self.pre_treatment_data["Glioma_Type"].astype(
-            "category"
-        )
-        self.pre_treatment_data["Race"] = self.pre_treatment_data["Race"].astype("category")
-        self.pre_treatment_data["Mutations"] = self.pre_treatment_data["Mutations"].astype(
-            "category"
-        )
-        self.pre_treatment_data["Treatment_Type"] = self.pre_treatment_data[
-            "Treatment_Type"
-        ].astype("category")
-
-        self.pre_treatment_data["Patient_ID"] = self.pre_treatment_data["Patient_ID"].astype(int)
-        self.pre_treatment_data["Tumor_Progression"] = self.pre_treatment_data[
-            "Tumor_Progression"
-        ].astype(bool)
-
-        # TODO: concatenate and convert to proper data types
         self.post_treatment_data = pd.concat(post_treatment_data_frames, ignore_index=True)
 
     def extract_treatment_dates(self, patient_id):
@@ -307,97 +312,27 @@ class TumorAnalysis:
         - patient_id (str): The ID of the patient.
 
         Returns:
-        - treatment_dates (dict): A dictionary of treatment types and their corresponding dates for the specified patient.
+        - treatment_dates (dict): A dictionary of treatment types and their corresponding
+        dates for the specified patient.
         """
-        first_row = self.clinical_data[self.clinical_data["BCH MRN"] == patient_id].iloc[0]
+        patient_data = self.clinical_data[self.clinical_data["BCH MRN"] == patient_id].iloc[0]
 
         treatment_dates = {}
 
-        if first_row["Surgical Resection"] == "Yes":
-            treatment_dates["Surgery"] = first_row["Date of first surgery"]
+        if patient_data["Surgical Resection"] == "Yes":
+            treatment_dates["Surgery"] = patient_data["Date of first surgery"]
 
-        if first_row["Systemic therapy before radiation"] == "Yes":
-            treatment_dates["Chemotherapy"] = first_row["Date of Systemic Therapy Start"]
+        if patient_data["Systemic therapy before radiation"] == "Yes":
+            treatment_dates["Chemotherapy"] = patient_data["Date of Systemic Therapy Start"]
 
-        if first_row["Radiation as part of initial treatment"] == "Yes":
-            treatment_dates["Radiation"] = first_row["Start Date of Radiation"]
+        if patient_data["Radiation as part of initial treatment"] == "Yes":
+            treatment_dates["Radiation"] = patient_data["Start Date of Radiation"]
 
         # print(f"Patient {patient_id} - Treatment Dates: {treatment_dates}")
-        return treatment_dates
+        treatment_dates = [pd.to_datetime(date, dayfirst=True) for date in treatment_dates.values()]
 
-    def perform_separation(self, data, treatment_dates):
-        """
-        Separate the patient data into pre- and post-treatment data based on the treatment dates.
-
-        Parameters:
-        - data (DataFrame): The patient data to be separated.
-        - treatment_dates (dict): The dates of treatments to be used as separation points.
-
-        Returns:
-        - pre_treatment_df (DataFrame): Data before the first treatment date.
-        - post_treatment_df (DataFrame): Data after the first treatment date.
-        """
-        treatment_dates = {
-            k: pd.to_datetime(v, errors="coerce", dayfirst=True)
-            for k, v in treatment_dates.items()
-            if pd.notnull(v)
-        }
-
-        first_treatment_date = min(treatment_dates.values(), default=pd.Timestamp.max)
-
-        pre_treatment_rows = {col: [] for col in data.columns}
-        post_treatment_rows = {col: [] for col in data.columns}
-
-        pre_treatment_rows["First_Treatment_Date"] = first_treatment_date
-        post_treatment_rows["First_Treatment_Date"] = first_treatment_date
-
-        # Iterate over each row in the data for the patient
-        for _, row in data.iterrows():
-            dates = row["Date"]
-            # Ensure that 'dates' is a list before iterating
-            if isinstance(dates, list):
-                for i, date_str in enumerate(dates):
-                    date = pd.to_datetime(date_str, errors="coerce")
-                    if pd.notnull(date):
-                        # Split each element based on the treatment date
-                        for col in data.columns:
-                            # Check if the column contains a list and only then try to index it
-                            if isinstance(row[col], list):
-                                value_to_append = row[col][i]
-                            else:
-                                value_to_append = row[col]
-                            if date < first_treatment_date:
-                                pre_treatment_rows[col].append(value_to_append)
-                            else:
-                                post_treatment_rows[col].append(value_to_append)
-            else:
-                # If 'dates' is not a list, handle the scalar case here
-                date = pd.to_datetime(dates, errors="coerce")
-                for col in data.columns:
-                    if pd.notnull(date) and date < first_treatment_date:
-                        pre_treatment_rows[col].append(row[col])
-                    else:
-                        post_treatment_rows[col].append(row[col])
-
-        if first_treatment_date != pd.Timestamp.max:
-            pre_treatment_rows["Received_Treatment"] = ["Yes"] * len(
-                pre_treatment_rows["Patient_ID"]
-            )
-            post_treatment_rows["Received_Treatment"] = ["Yes"] * len(
-                post_treatment_rows["Patient_ID"]
-            )
-        else:
-            pre_treatment_rows["Received_Treatment"] = ["No"] * len(
-                pre_treatment_rows["Patient_ID"]
-            )
-            post_treatment_rows["Received_Treatment"] = ["No"] * len(
-                post_treatment_rows["Patient_ID"]
-            )
-        # Convert the lists of series to DataFrames
-        pre_treatment_df = pd.DataFrame(pre_treatment_rows)
-        post_treatment_df = pd.DataFrame(post_treatment_rows)
-
-        return pre_treatment_df, post_treatment_df
+        first_treatment_date = min(treatment_dates, default=pd.NaT)
+        return first_treatment_date
 
     def analyze_correlation(self, x_val, y_val, data, prefix, method="spearman"):
         """
@@ -919,32 +854,58 @@ class TumorAnalysis:
         print(f"Step {step_idx}: Separating data into pre- and post-treatment dataframes...")
         self.longitudinal_separation()
         assert self.pre_treatment_data.columns.all() == self.post_treatment_data.columns.all()
-        print("\tData separated, assertation for same columns in separated dataframes done.")
+        assert (len(self.pre_treatment_data) + len(self.post_treatment_data)) == len(
+            self.merged_data
+        )
+        print(
+            "\tData separated, assertation for same columns in separated dataframes and"
+            " corresponding lenghts passed."
+        )
         step_idx += 1
+
+        print(self.pre_treatment_data["Received_Treatment"].unique())
 
         if correlation_cfg.SENSITIVITY:
             print(f"Step {step_idx}: Performing Sensitivity Analysis...")
 
-            pre_treatment_vars = ["Volume", "Growth[%]", "Growth[%]_mean", "Growth[%]_std"]
-            post_treatment_vars = []
+            pre_treatment_vars = [
+                "Volume",
+                "Growth[%]",
+                "Volume_RollMean",
+                "Volume_RollStd",
+                "Growth[%]_RollMean",
+                "Growth[%]_RollStd",
+                "Age_RollMean",
+                "Age_RollStd",
+            ]
+            post_treatment_vars = [
+                "Volume",
+                "Growth[%]",
+                "Volume_CumMean",
+                "Volume_CumStd",
+                "Growth[%]_CumMean",
+                "Growth[%]_CumStd",
+                "Age_CumMean",
+                "Age_CumStd",
+            ]
 
             for pre_var in pre_treatment_vars:
-                print(f"\tPerforming sensitivity analysis on pre-treatmen variables {pre_var}...")
+                print(f"\tPerforming sensitivity analysis on pre-treatment variables {pre_var}...")
                 self.pre_treatment_data = sensitivity_analysis(
-                    self.pre_treatment_data, pre_var, z_threshold=1.5
+                    self.pre_treatment_data,
+                    pre_var,
+                    z_threshold=correlation_cfg.SENSITIVITY_THRESHOLD,
                 )
 
-            # TODO: concatenate and convert to proper data types
-            # print(self.post_treatment_data.dtypes)
-            # for post_var in post_treatment_vars:
-            #     self.post_treatment_data = sensitivity_analysis(
-            #         self.post_treatment_data, post_var, z_threshold=2
-            #     )
-
-            #     print(
-            #         "   Data after excluding outliers based on Z-score in post-treatment setting:"
-            #         f" {self.post_treatment_data}"
-            #     )
+            for post_var in post_treatment_vars:
+                print(
+                    f"\tPerforming sensitivity analysis on post-treatment variables {post_var}..."
+                )
+                self.post_treatment_data = sensitivity_analysis(
+                    self.post_treatment_data,
+                    post_var,
+                    z_threshold=correlation_cfg.SENSITIVITY_THRESHOLD,
+                )
 
             step_idx += 1
 

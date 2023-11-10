@@ -443,3 +443,11 @@ def calculate_brain_growth(data, younger_age, older_age):
 
     percentage_growth = ((older_volume - younger_volume) / younger_volume) * 100
     return percentage_growth
+
+
+def calculate_cumulative_stats(group):
+    return group.expanding().agg(["mean", "median", "std"])
+
+
+def calculate_rolling_stats(group, window_size, min_periods=1):
+    return group.rolling(window=window_size, min_periods=min_periods).agg(["mean", "median", "std"])
