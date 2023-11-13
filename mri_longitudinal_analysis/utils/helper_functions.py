@@ -445,9 +445,30 @@ def calculate_brain_growth(data, younger_age, older_age):
     return percentage_growth
 
 
-def calculate_cumulative_stats(group):
-    return group.expanding().agg(["mean", "median", "std"])
+def process_race_ethnicity(race):
+    # Removing 'Non-Hispanic' from the string
+    if "Non-Hispanic" in race:
+        race = race.replace("Non-Hispanic ", "")
+    return race
 
 
-def calculate_rolling_stats(group, window_size, min_periods=1):
-    return group.rolling(window=window_size, min_periods=min_periods).agg(["mean", "median", "std"])
+def categorize_age_group(data, debug=False):
+    if debug:
+        print(data["Age"].max())
+        print(data["Age"].min())
+        print(data["Age"].mean())
+        print(data["Age"].median())
+        print(data["Age"].std())
+
+    age = data["Age"]
+
+    if age <= 2:
+        return "Infant"
+    elif age <= 5:
+        return "Preschool"
+    elif age <= 11:
+        return "School Age"
+    elif age <= 18:
+        return "Adolescent"
+    else:
+        return "Young Adult"

@@ -31,6 +31,8 @@ from utils.helper_functions import (
     visualize_fdr_correction,
     visualize_time_to_treatment_effect,
     save_for_deep_learning,
+    process_race_ethnicity,
+    categorize_age_group,
 )
 
 
@@ -99,13 +101,23 @@ class TumorAnalysis:
 
         diagnosis_to_glioma_type = {
             "astrocytoma": "Astrocytoma",
-            "optic": "Optic Gliona",
+            "JPA": "Astrocytoma",
+            "xanthoastrocytoma": "Astrocytoma",
             "tectal": "Tectal Glioma",
-            "ganglioglioma": "Ganglioglioma",
             "glioneuronal neoplasm": "Glioneuronal Neoplasm",
-            "DNET": "DNET",
-            "low grade glioma": "Plain Low Grade Glioma",
-            "other": "Other",
+            "glioneuroma": "Glioneuronal Neoplasm",
+            "DNET": "Glioneuronal Neoplasm",
+            "pseudotumor cerebri": "Glioneuronal Neoplasm",
+            "neuroepithelial": "Glioneuronal Neoplasm",
+            "ganglioglioma": "Ganglioglioma",
+            "optic": "Optic Glioma",
+            "NF1": "Optic Glioma",
+            "low grade glioma": "Low Grade Glioma",
+            "low-grade glioma": "Low Grade Glioma",
+            "low grade neoplasm": "Low Grade Glioma",
+            "IDH": "Low Grade Glioma",
+            "oligodendroglioma ": "Low Grade Glioma",
+            "infiltrating glioma": "Low Grade Glioma",
         }
 
         def map_diagnosis(diagnosis):
@@ -117,10 +129,13 @@ class TumorAnalysis:
         self.clinical_data["Glioma_Type"] = self.clinical_data["Pathologic diagnosis"].apply(
             map_diagnosis
         )
+        print(self.clinical_data["Glioma_Type"].value_counts())
+
         self.clinical_data["Sex"] = self.clinical_data["Sex"].apply(
             lambda x: "Female" if x == "Female" else "Male"
         )
         self.clinical_data["Race"] = self.clinical_data["Race/Ethnicity"]
+        self.clinical_data["Race"] = self.clinical_data["Race"].apply(process_race_ethnicity)
         self.clinical_data["Mutations"] = self.clinical_data.apply(
             lambda row: "Yes"
             if row["BRAF V600E mutation"] == "Yes"
@@ -235,6 +250,9 @@ class TumorAnalysis:
             how="right",
         )
         self.merged_data = self.merged_data.drop(columns=["BCH MRN"])
+        self.merged_data["Age_Group"] = self.merged_data.apply(categorize_age_group, axis=1).astype(
+            "category"
+        )
         print("\tMerged clinical and volume data.")
 
     def aggregate_summary_statistics(self):
@@ -263,7 +281,7 @@ class TumorAnalysis:
             )
             return group
 
-        for var in ["Volume", "Growth[%]", "Age"]:
+        for var in ["Volume", "Growth[%]"]:
             self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
                 cumulative_stats, var
             )
@@ -288,6 +306,7 @@ class TumorAnalysis:
             first_treatment_date = self.extract_treatment_dates(patient_id)
 
             received_treatment = not pd.isna(first_treatment_date)
+            data["Date_of_First_Treatment"] = first_treatment_date
             data["Received_Treatment"] = received_treatment
 
             pre_treatment = (
@@ -423,29 +442,82 @@ class TumorAnalysis:
         between variables such as initial tumor volume, age, sex, mutations, and race.
         """
         print("\tPre-treatment Correlations:")
+        # Data preparation for correlations
+        self.pre_treatment_data["Received_Treatment"] = self.pre_treatment_data[
+            "Received_Treatment"
+        ].map({1: True, 0: False})
+        self.pre_treatment_data["Time_to_Treatment"] = (
+            self.pre_treatment_data["Date_of_First_Treatment"]
+            - self.pre_treatment_data["Date_of_Diagnosis"]
+        ).dt.days
 
-        for growth_metric in ["Growth[%]", "Growth[%]_RollMean", "Growth[%]_RollStd"]:
-            self.analyze_correlation(
-                "Glioma_Type",
-                growth_metric,
-                self.pre_treatment_data,
-                prefix,
-                method=correlation_method,
-            )
+        binary_vars = ["Tumor_Progression", "Received_Treatment"]
+        categorical_vars = [
+            "Glioma_Type",
+            # "Race",
+            "Treatment_Type",
+            "Age_Group",
+            "Sex",
+            "Mutations",
+        ]
+        numerical_vars = [
+            "Age",
+            "Volume",
+            "Growth[%]",
+            "Volume_CumMean",
+            "Volume_CumMedian",
+            "Volume_CumStd",
+            "Volume_RollMean",
+            "Volume_RollMedian",
+            "Volume_RollStd",
+            "Growth[%]_CumMean",
+            "Growth[%]_CumMedian",
+            "Growth[%]_CumStd",
+            "Growth[%]_RollMean",
+            "Growth[%]_RollMedian",
+            "Growth[%]_RollStd",
+            "Time_to_Treatment",
+        ]
 
-        for var in ["Sex", "Mutations", "Race"]:
-            for corr_method in ["t-test", "point-biserial"]:
+        for num_var in numerical_vars:
+            for bin_var in binary_vars:
                 self.analyze_correlation(
-                    var, "Growth[%]", self.pre_treatment_data, prefix, method=corr_method
+                    num_var,
+                    bin_var,
+                    self.pre_treatment_data,
+                    prefix,
+                    method=correlation_method,
                 )
+            for cat_var in categorical_vars:
+                for corr_method in ["t-test", "point-biserial"]:
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.pre_treatment_data,
+                        prefix,
+                        method=corr_method,
+                    )
 
-        for age_metric in ["Age_RollMean", "Age_RollMedian", "Age_RollStd"]:
-            self.analyze_correlation(
-                age_metric, "Growth[%]", self.pre_treatment_data, prefix, method=correlation_method
-            )
+        for bin_var in binary_vars:
+            for cat_var in categorical_vars:
+                self.analyze_correlation(
+                    cat_var, bin_var, self.pre_treatment_data, prefix, method=correlation_method
+                )
+                for other_cat_var in categorical_vars:
+                    if cat_var == other_cat_var:
+                        continue
+                    self.analyze_correlation(
+                        cat_var,
+                        other_cat_var,
+                        self.pre_treatment_data,
+                        prefix,
+                        method=correlation_method,
+                    )
 
-        # unchanging_tumors = self.pre_treatment_data[self.pre_treatment_data["Volume_mean"] == 0]
-        # print(f"Tumors with no change in volume: {len(unchanging_tumors)}")
+            for other_bin_var in binary_vars:
+                if bin_var == other_bin_var:
+                    continue
+                self.analyze_correlation(bin_var, other_bin_var, self.pre_treatment_data, prefix)
 
     def analyze_post_treatment(self, prefix, correlation_method="spearman"):
         """
@@ -626,7 +698,7 @@ class TumorAnalysis:
         print("\tAnalyzing time to event:")
         pre_treatment_data = self.pre_treatment_data.loc[
             self.pre_treatment_data["Date_of_First_Progression"]
-            < self.pre_treatment_data["First_Treatment_Date"]
+            < self.pre_treatment_data["Date_of_First_Treatment"]
         ].copy()
 
         pre_treatment_data.loc[:, "Duration"] = (
@@ -735,7 +807,7 @@ class TumorAnalysis:
         """
         print("\tAnalyzing time to treatment effect:")
         self.pre_treatment_data["Time_to_Treatment"] = (
-            self.pre_treatment_data["First_Treatment_Date"]
+            self.pre_treatment_data["Date_of_First_Treatment"]
             - self.pre_treatment_data["Date_of_Diagnosis"]
         ).dt.days
 
@@ -878,8 +950,6 @@ class TumorAnalysis:
                 "Volume_RollStd",
                 "Growth[%]_RollMean",
                 "Growth[%]_RollStd",
-                "Age_RollMean",
-                "Age_RollStd",
             ]
             post_treatment_vars = [
                 "Volume",
@@ -888,8 +958,6 @@ class TumorAnalysis:
                 "Volume_CumStd",
                 "Growth[%]_CumMean",
                 "Growth[%]_CumStd",
-                "Age_CumMean",
-                "Age_CumStd",
             ]
 
             for pre_var in pre_treatment_vars:
@@ -937,11 +1005,13 @@ class TumorAnalysis:
 
             prefix = "pre-treatment"
             path = correlation_cfg.OUTPUT_DIR
+            print(self.pre_treatment_data.dtypes)
             self.analyze_pre_treatment(
                 correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix
             )
+
             self.time_to_event_analysis(prefix)
-            self.analyze_time_to_treatment_effect(prefix, path)
+            # self.analyze_time_to_treatment_effect(prefix, path)
             self.model_growth_trajectories(prefix)
             self.analyze_tumor_stability(unchanging_threshold=correlation_cfg.UNCHANGING_THRESHOLD)
 
