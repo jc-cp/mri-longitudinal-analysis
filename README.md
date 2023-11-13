@@ -55,8 +55,7 @@ This folder contains several files with different purposes, from simple file che
 
 
 ## To Do's
-- [ ] Check the whole BF correction properly as well the order, currently done in the registration
-- [ ] Add instruction for HD-BET installation, considering adjustments and Aydans installment, e.g. branch
+- [ ] Add instruction for HD-BET installation, considering adjustments and segmentation installment, e.g. branch
 - [ ] Add instruction for nnUnet installation
 - [ ] Check the segmentation quality in slicer
 - [ ] Rethink the interpolation in volume estimation with splines and statistical imputation
