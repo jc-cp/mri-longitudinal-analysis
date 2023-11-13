@@ -29,7 +29,6 @@ from utils.helper_functions import (
     visualize_p_value_bonferroni_corrections,
     fdr_correction,
     visualize_fdr_correction,
-    visualize_time_to_treatment_effect,
     save_for_deep_learning,
     process_race_ethnicity,
     categorize_age_group,
@@ -129,7 +128,6 @@ class TumorAnalysis:
         self.clinical_data["Glioma_Type"] = self.clinical_data["Pathologic diagnosis"].apply(
             map_diagnosis
         )
-        print(self.clinical_data["Glioma_Type"].value_counts())
 
         self.clinical_data["Sex"] = self.clinical_data["Sex"].apply(
             lambda x: "Female" if x == "Female" else "Male"
@@ -348,7 +346,7 @@ class TumorAnalysis:
         if patient_data["Radiation as part of initial treatment"] == "Yes":
             treatment_dates["Radiation"] = patient_data["Start Date of Radiation"]
 
-        # print(f"Patient {patient_id} - Treatment Dates: {treatment_dates}")
+        print(f"Patient {patient_id} - Treatment Dates: {treatment_dates}")
         treatment_dates = [
             pd.to_datetime(date, dayfirst=True)
             for date in treatment_dates.values()
@@ -446,11 +444,9 @@ class TumorAnalysis:
         self.pre_treatment_data["Received_Treatment"] = self.pre_treatment_data[
             "Received_Treatment"
         ].map({1: True, 0: False})
-        self.pre_treatment_data["Time_to_Treatment"] = (
-            self.pre_treatment_data["Date_of_First_Treatment"]
-            - self.pre_treatment_data["Date_of_Diagnosis"]
-        ).dt.days
+        self.time_to_treatment_effect()
 
+        # variable types
         binary_vars = ["Tumor_Progression", "Received_Treatment"]
         categorical_vars = [
             "Glioma_Type",
@@ -497,6 +493,12 @@ class TumorAnalysis:
                         prefix,
                         method=corr_method,
                     )
+            for other_num_var in numerical_vars:
+                if other_num_var.startswith(("Growth[%]_", "Volume_")):
+                    continue
+                if other_num_var == num_var:
+                    continue
+                self.analyze_correlation(num_var, other_num_var, self.pre_treatment_data, prefix)
 
         for bin_var in binary_vars:
             for cat_var in categorical_vars:
@@ -513,7 +515,6 @@ class TumorAnalysis:
                         prefix,
                         method=correlation_method,
                     )
-
             for other_bin_var in binary_vars:
                 if bin_var == other_bin_var:
                     continue
@@ -795,7 +796,7 @@ class TumorAnalysis:
             self.plot_growth_predictions(prediciton_plot)
             print("\t\tSaved growth trajectories plot.")
 
-    def analyze_time_to_treatment_effect(self, prefix, path):
+    def time_to_treatment_effect(self):
         """
         Analyze the correlation between the time to treatment and tumor growth.
 
@@ -805,30 +806,52 @@ class TumorAnalysis:
 
         The method analyzes the correlation, fits a linear model to predict growth based on time to treatment, and visualizes the effect.
         """
-        print("\tAnalyzing time to treatment effect:")
+        # print("\tAnalyzing time to treatment effect:")
+        for patient_id in self.pre_treatment_data["Patient_ID"].unique():
+            patient_data = self.pre_treatment_data[
+                self.pre_treatment_data["Patient_ID"] == patient_id
+            ]
+
+            # Assuming 'Last_Scan_Date' is the column with the last date for the patient
+            if patient_data["Date_of_First_Treatment"].isna().any():
+                last_scan_date = patient_data["Date"].max()
+                self.pre_treatment_data.loc[
+                    patient_data.index, "Date_of_First_Treatment"
+                ] = last_scan_date
+
         self.pre_treatment_data["Time_to_Treatment"] = (
             self.pre_treatment_data["Date_of_First_Treatment"]
             - self.pre_treatment_data["Date_of_Diagnosis"]
         ).dt.days
 
-        filtered_data = self.pre_treatment_data.dropna(subset=["Time_to_Treatment", "Growth[%]"])
-        filtered_data = filtered_data.replace([np.inf, -np.inf], np.nan).dropna(
-            subset=["Time_to_Treatment", "Growth[%]"]
-        )
-        self.analyze_correlation(
-            "Time_to_Treatment", "Growth[%]", filtered_data, prefix, method="pearson"
-        )
+        for index, row in self.pre_treatment_data.iterrows():
+            if pd.isna(row["Time_to_Treatment"]):
+                reason = ""
+                if pd.isna(row["Date_of_First_Treatment"]):
+                    reason += "Missing Date_of_First_Treatment. "
+                if pd.isna(row["Date_of_Diagnosis"]):
+                    reason += "Missing Date_of_Diagnosis. "
+                print(
+                    f"Patient ID {row['Patient_ID']} has NaN in Time_to_Treatment. Reason: {reason}"
+                )
 
-        model = sm.OLS(
-            filtered_data["Growth[%]"], sm.add_constant(filtered_data["Time_to_Treatment"])
-        )
-        results = model.fit()
-        # print(results.summary())
+        # filtered_data = self.pre_treatment_data.dropna(subset=["Time_to_Treatment", "Growth[%]"])
+        # filtered_data = filtered_data.replace([np.inf, -np.inf], np.nan).dropna(
+        #     subset=["Time_to_Treatment", "Growth[%]"]
+        # )
+        # self.analyze_correlation(
+        #     "Time_to_Treatment", "Growth[%]", filtered_data, prefix, method="pearson"
+        # )
 
-        filtered_data["Predicted_Growth"] = results.predict(
-            sm.add_constant(filtered_data["Time_to_Treatment"])
-        )
-        visualize_time_to_treatment_effect(filtered_data, prefix, path)
+        # model = sm.OLS(
+        #     filtered_data["Growth[%]"], sm.add_constant(filtered_data["Time_to_Treatment"])
+        # )
+        # results = model.fit()
+        # # print(results.summary())
+
+        # filtered_data["Predicted_Growth"] = results.predict(
+        #     sm.add_constant(filtered_data["Time_to_Treatment"])
+        # )
 
     def analyze_tumor_stability(self, unchanging_threshold=0.05):
         """
@@ -1005,7 +1028,6 @@ class TumorAnalysis:
 
             prefix = "pre-treatment"
             path = correlation_cfg.OUTPUT_DIR
-            print(self.pre_treatment_data.dtypes)
             self.analyze_pre_treatment(
                 correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix
             )
