@@ -346,7 +346,7 @@ class TumorAnalysis:
         if patient_data["Radiation as part of initial treatment"] == "Yes":
             treatment_dates["Radiation"] = patient_data["Start Date of Radiation"]
 
-        print(f"Patient {patient_id} - Treatment Dates: {treatment_dates}")
+        # print(f"\tPatient {patient_id} - Treatment Dates: {treatment_dates}")
         treatment_dates = [
             pd.to_datetime(date, dayfirst=True)
             for date in treatment_dates.values()
@@ -441,13 +441,17 @@ class TumorAnalysis:
         """
         print("\tPre-treatment Correlations:")
         # Data preparation for correlations
-        self.pre_treatment_data["Received_Treatment"] = self.pre_treatment_data[
-            "Received_Treatment"
-        ].map({1: True, 0: False})
-        self.time_to_treatment_effect()
+        self.pre_treatment_data["Received_Treatment"] = (
+            self.pre_treatment_data["Received_Treatment"]
+            .map({1: True, 0: False})
+            .astype("category")
+        )
+        self.pre_treatment_data["Tumor_Progression"] = self.pre_treatment_data[
+            "Tumor_Progression"
+        ].astype("category")
+        # self.time_to_treatment_effect()
 
         # variable types
-        binary_vars = ["Tumor_Progression", "Received_Treatment"]
         categorical_vars = [
             "Glioma_Type",
             # "Race",
@@ -455,6 +459,8 @@ class TumorAnalysis:
             "Age_Group",
             "Sex",
             "Mutations",
+            "Received_Treatment",
+            "Tumor_Progression",
         ]
         numerical_vars = [
             "Age",
@@ -472,42 +478,43 @@ class TumorAnalysis:
             "Growth[%]_RollMean",
             "Growth[%]_RollMedian",
             "Growth[%]_RollStd",
-            "Time_to_Treatment",
+            # "Time_to_Treatment",
         ]
 
         for num_var in numerical_vars:
-            for bin_var in binary_vars:
-                self.analyze_correlation(
-                    num_var,
-                    bin_var,
-                    self.pre_treatment_data,
-                    prefix,
-                    method=correlation_method,
-                )
             for cat_var in categorical_vars:
-                for corr_method in ["t-test", "point-biserial"]:
+                if self.pre_treatment_data[cat_var].nunique() == 2:
                     self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.pre_treatment_data,
-                        prefix,
-                        method=corr_method,
+                        cat_var, num_var, self.pre_treatment_data, prefix, method="t-test"
+                    )
+                    self.analyze_correlation(
+                        cat_var, num_var, self.pre_treatment_data, prefix, method="point-biserial"
+                    )
+                else:
+                    self.analyze_correlation(
+                        cat_var, num_var, self.pre_treatment_data, prefix, method="ANOVA"
                     )
             for other_num_var in numerical_vars:
-                if other_num_var.startswith(("Growth[%]_", "Volume_")):
-                    continue
-                if other_num_var == num_var:
-                    continue
-                self.analyze_correlation(num_var, other_num_var, self.pre_treatment_data, prefix)
-
-        for bin_var in binary_vars:
-            for cat_var in categorical_vars:
-                self.analyze_correlation(
-                    cat_var, bin_var, self.pre_treatment_data, prefix, method=correlation_method
-                )
-                for other_cat_var in categorical_vars:
-                    if cat_var == other_cat_var:
-                        continue
+                if (other_num_var != num_var) and (
+                    not other_num_var.startswith(("Growth[%]_", "Volume_"))
+                ):
+                    self.analyze_correlation(
+                        num_var,
+                        other_num_var,
+                        self.pre_treatment_data,
+                        prefix,
+                        method="spearman",
+                    )
+                    self.analyze_correlation(
+                        num_var,
+                        other_num_var,
+                        self.pre_treatment_data,
+                        prefix,
+                        method="pearson",
+                    )
+        for cat_var in categorical_vars:
+            for other_cat_var in categorical_vars:
+                if cat_var != other_cat_var:
                     self.analyze_correlation(
                         cat_var,
                         other_cat_var,
@@ -515,10 +522,6 @@ class TumorAnalysis:
                         prefix,
                         method=correlation_method,
                     )
-            for other_bin_var in binary_vars:
-                if bin_var == other_bin_var:
-                    continue
-                self.analyze_correlation(bin_var, other_bin_var, self.pre_treatment_data, prefix)
 
     def analyze_post_treatment(self, prefix, correlation_method="spearman"):
         """
@@ -601,7 +604,7 @@ class TumorAnalysis:
         plt.ylabel(y_val)
         plt.tight_layout()
 
-        save_file = os.path.join(save_dir, f"{prefix}_{x_val}_vs_{y_val}_{test_type}.png")
+        save_file = os.path.join(save_dir, f"{prefix}_{x_val}_vs_{y_val}_{test_type}_{method}.png")
         plt.savefig(save_file)
         plt.close()
 
@@ -824,7 +827,7 @@ class TumorAnalysis:
             - self.pre_treatment_data["Date_of_Diagnosis"]
         ).dt.days
 
-        for index, row in self.pre_treatment_data.iterrows():
+        for _, row in self.pre_treatment_data.iterrows():
             if pd.isna(row["Time_to_Treatment"]):
                 reason = ""
                 if pd.isna(row["Date_of_First_Treatment"]):
@@ -1028,6 +1031,7 @@ class TumorAnalysis:
 
             prefix = "pre-treatment"
             path = correlation_cfg.OUTPUT_DIR
+            # print(self.pre_treatment_data.dtypes)
             self.analyze_pre_treatment(
                 correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix
             )
