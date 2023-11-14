@@ -356,7 +356,7 @@ class TumorAnalysis:
         first_treatment_date = min(treatment_dates, default=pd.NaT)
         return first_treatment_date
 
-    def analyze_correlation(self, x_val, y_val, data, prefix, method="spearman"):
+    def analyze_correlation(self, x_val, y_val, data, prefix, output_dir, method="spearman"):
         """
         Perform and print the results of a statistical test to analyze the correlation
         between two variables.
@@ -422,7 +422,7 @@ class TumorAnalysis:
         if test_result:
             # Visualize the statistical test
             self.visualize_statistical_test(
-                x_val, y_val, data, test_result, prefix, test_type, method=method
+                x_val, y_val, data, test_result, prefix, output_dir, test_type, method=method
             )
 
             self.p_values.append(p_val)
@@ -434,7 +434,7 @@ class TumorAnalysis:
                 " types."
             )
 
-    def analyze_pre_treatment(self, prefix, correlation_method="spearman"):
+    def analyze_pre_treatment(self, prefix, output_dir, correlation_method="spearman"):
         """
         Analyze data for pre-treatment cases. This involves finding correlations
         between variables such as initial tumor volume, age, sex, mutations, and race.
@@ -485,14 +485,29 @@ class TumorAnalysis:
             for cat_var in categorical_vars:
                 if self.pre_treatment_data[cat_var].nunique() == 2:
                     self.analyze_correlation(
-                        cat_var, num_var, self.pre_treatment_data, prefix, method="t-test"
+                        cat_var,
+                        num_var,
+                        self.pre_treatment_data,
+                        prefix,
+                        output_dir,
+                        method="t-test",
                     )
                     self.analyze_correlation(
-                        cat_var, num_var, self.pre_treatment_data, prefix, method="point-biserial"
+                        cat_var,
+                        num_var,
+                        self.pre_treatment_data,
+                        prefix,
+                        output_dir,
+                        method="point-biserial",
                     )
                 else:
                     self.analyze_correlation(
-                        cat_var, num_var, self.pre_treatment_data, prefix, method="ANOVA"
+                        cat_var,
+                        num_var,
+                        self.pre_treatment_data,
+                        prefix,
+                        output_dir,
+                        method="ANOVA",
                     )
             for other_num_var in numerical_vars:
                 if (other_num_var != num_var) and (
@@ -503,6 +518,7 @@ class TumorAnalysis:
                         other_num_var,
                         self.pre_treatment_data,
                         prefix,
+                        output_dir,
                         method="spearman",
                     )
                     self.analyze_correlation(
@@ -510,6 +526,7 @@ class TumorAnalysis:
                         other_num_var,
                         self.pre_treatment_data,
                         prefix,
+                        output_dir,
                         method="pearson",
                     )
         for cat_var in categorical_vars:
@@ -520,10 +537,11 @@ class TumorAnalysis:
                         other_cat_var,
                         self.pre_treatment_data,
                         prefix,
+                        output_dir,
                         method=correlation_method,
                     )
 
-    def analyze_post_treatment(self, prefix, correlation_method="spearman"):
+    def analyze_post_treatment(self, prefix, output_dir, correlation_method="spearman"):
         """
         Analyze data for post-treatment cases. This involves finding correlations between
         variables such as treatment types, tumor volume changes, and specific mutations.
@@ -534,6 +552,7 @@ class TumorAnalysis:
             "Tumor_Volume_Change",
             self.post_treatment_data,
             prefix,
+            output_dir,
             method=correlation_method,
         )
         self.analyze_correlation(
@@ -541,6 +560,7 @@ class TumorAnalysis:
             "Tumor_Volume_Change",
             self.post_treatment_data,
             prefix,
+            output_dir,
             method=correlation_method,
         )
         self.analyze_correlation(
@@ -548,6 +568,7 @@ class TumorAnalysis:
             "Treatment_Response",
             self.post_treatment_data,
             prefix,
+            output_dir,
             method=correlation_method,
         )
 
@@ -561,7 +582,15 @@ class TumorAnalysis:
         # )
 
     def visualize_statistical_test(
-        self, x_val, y_val, data, test_result, prefix, test_type="correlation", method="spearman"
+        self,
+        x_val,
+        y_val,
+        data,
+        test_result,
+        prefix,
+        output_dir,
+        test_type="correlation",
+        method="spearman",
     ):
         """
         Visualize the result of a statistical test, including correlation heatmaps.
@@ -575,7 +604,6 @@ class TumorAnalysis:
             'anova', 'chi-squared').
             method (str): The correlation method used ('pearson' or 'spearman'), if applicable.
         """
-        save_dir = correlation_cfg.OUTPUT_DIR
         stat, p_val = test_result
         title = f"{x_val} vs {y_val} ({test_type.capitalize()}) \n"
 
@@ -604,7 +632,9 @@ class TumorAnalysis:
         plt.ylabel(y_val)
         plt.tight_layout()
 
-        save_file = os.path.join(save_dir, f"{prefix}_{x_val}_vs_{y_val}_{test_type}_{method}.png")
+        save_file = os.path.join(
+            output_dir, f"{prefix}_{x_val}_vs_{y_val}_{test_type}_{method}.png"
+        )
         plt.savefig(save_file)
         plt.close()
 
@@ -624,7 +654,7 @@ class TumorAnalysis:
             )
             plt.title(f"Heatmap of {method.capitalize()} Correlation")
             plt.tight_layout()
-            heat_map_file = os.path.join(save_dir, f"{prefix}_{method}_correlation_heatmap.png")
+            heat_map_file = os.path.join(output_dir, f"{prefix}_{method}_correlation_heatmap.png")
             plt.savefig(heat_map_file)
             plt.close()
 
@@ -640,19 +670,51 @@ class TumorAnalysis:
         """
         plt.figure(figsize=(10, 6))
 
+        # Error handling for sample size
+        unique_patient_count = self.pre_treatment_data["Patient_ID"].nunique()
+        if sample_size > unique_patient_count:
+            print(
+                f"Sample size {sample_size} is greater than the number of unique patients"
+                f" {unique_patient_count}."
+            )
+            sample_size = len(unique_patient_count)
+
+        # Get the sample IDs and data
         sample_ids = self.pre_treatment_data["Patient_ID"].drop_duplicates().sample(n=sample_size)
         sampled_data = self.pre_treatment_data[
             self.pre_treatment_data["Patient_ID"].isin(sample_ids)
         ]
+        # Get the median and mean data
+        median_data = (
+            sampled_data.groupby("Time_since_First_Scan")["Growth_pct"].median().reset_index()
+        )
+        mean_data = sampled_data.groupby("Time_since_First_Scan")["Growth_pct"].mean().reset_index()
 
         sns.lineplot(
             x="Time_since_First_Scan",
             y="Growth_pct",
             hue="Patient_ID",
             data=sampled_data,
-            legend="brief",  # Set to 'brief' or 'full' if you want the legend
+            legend=None,  # Set to 'brief' or 'full' if you want the legend
             alpha=0.5,  # Set lower alpha for better visibility when lines overlap
         )
+        # sns.lineplot(
+        #     x="Time_since_First_Scan",
+        #     y="Growth_pct",
+        #     data=mean_data,
+        #     color="blue",
+        #     linestyle="--",
+        #     label="Mean Trajectory",
+        # )
+        sns.lineplot(
+            x="Time_since_First_Scan",
+            y="Growth_pct",
+            data=median_data,
+            color="black",
+            linestyle="--",
+            label="Median Trajectory",
+        )
+
         plt.xlabel("Days Since First Scan")
         plt.ylabel("Tumor Growth Percentage")
         plt.title("Individual Growth Trajectories")
@@ -667,7 +729,8 @@ class TumorAnalysis:
         Parameters:
         - filename (str): The filename to save the plot image.
 
-        This method plots the actual and predicted growth percentages from the pre-treatment data and saves the plot as an image.
+        This method plots the actual and predicted growth percentages from the
+        pre-treatment data and saves the plot as an image.
         """
         sns.scatterplot(
             x="Time_since_First_Scan",
@@ -690,40 +753,7 @@ class TumorAnalysis:
         plt.savefig(filename)
         plt.close()
 
-    def time_to_event_analysis(self, prefix):
-        """
-        Perform a Kaplan-Meier survival analysis on time-to-event data for tumor progression.
-
-        Parameters:
-        - prefix (str): Prefix used for naming the output file.
-
-        The method fits the survival curve using the KaplanMeierFitter on the pre-treatment data, saves the plot image, and prints a confirmation message.
-        """
-        print("\tAnalyzing time to event:")
-        pre_treatment_data = self.pre_treatment_data.loc[
-            self.pre_treatment_data["Date_of_First_Progression"]
-            < self.pre_treatment_data["Date_of_First_Treatment"]
-        ].copy()
-
-        pre_treatment_data.loc[:, "Duration"] = (
-            pre_treatment_data["Date_of_First_Progression"]
-            - pre_treatment_data["Date_of_Diagnosis"]
-        ).dt.days
-
-        pre_treatment_data["Event_Occurred"] = self.pre_treatment_data["Tumor_Progression"]
-        kmf = KaplanMeierFitter()
-        kmf.fit(pre_treatment_data["Duration"], event_observed=pre_treatment_data["Event_Occurred"])
-        ax = kmf.plot_survival_function()
-        ax.set_title("Survival function of Tumor Progression")
-        ax.set_xlabel("Days since Diagnosis")
-        ax.set_ylabel("Survival Probability")
-
-        survival_plot = os.path.join(correlation_cfg.OUTPUT_DIR, f"{prefix}_survival_plot.png")
-        plt.savefig(survival_plot, dpi=300)
-        plt.close()
-        print("\t\tSaved survival KaplanMeier curve.")
-
-    def model_growth_trajectories(self, prefix):
+    def model_growth_trajectories(self, prefix, output_dir):
         """
         Model the growth trajectories of patients using a mixed-effects linear model.
 
@@ -787,17 +817,48 @@ class TumorAnalysis:
             )
 
             growth_trajectories_plot = os.path.join(
-                correlation_cfg.OUTPUT_DIR, f"{prefix}_growth_trajectories_plot.png"
+                output_dir, f"{prefix}_growth_trajectories_plot.png"
             )
-            prediciton_plot = os.path.join(
-                correlation_cfg.OUTPUT_DIR, f"{prefix}_growth_predictions.png"
-            )
+            prediciton_plot = os.path.join(output_dir, f"{prefix}_growth_predictions.png")
 
             self.plot_individual_trajectories(
                 growth_trajectories_plot, sample_size=correlation_cfg.SAMPLE_SIZE
             )
             self.plot_growth_predictions(prediciton_plot)
             print("\t\tSaved growth trajectories plot.")
+
+    def time_to_event_analysis(self, prefix, output_dir):
+        """
+        Perform a Kaplan-Meier survival analysis on time-to-event data for tumor progression.
+
+        Parameters:
+        - prefix (str): Prefix used for naming the output file.
+
+        The method fits the survival curve using the KaplanMeierFitter on the pre-treatment data, saves the plot image, and prints a confirmation message.
+        """
+        print("\tAnalyzing time to event:")
+        pre_treatment_data = self.pre_treatment_data.loc[
+            self.pre_treatment_data["Date_of_First_Progression"]
+            < self.pre_treatment_data["Date_of_First_Treatment"]
+        ].copy()
+
+        pre_treatment_data.loc[:, "Duration"] = (
+            pre_treatment_data["Date_of_First_Progression"]
+            - pre_treatment_data["Date_of_Diagnosis"]
+        ).dt.days
+
+        pre_treatment_data["Event_Occurred"] = self.pre_treatment_data["Tumor_Progression"]
+        kmf = KaplanMeierFitter()
+        kmf.fit(pre_treatment_data["Duration"], event_observed=pre_treatment_data["Event_Occurred"])
+        ax = kmf.plot_survival_function()
+        ax.set_title("Survival function of Tumor Progression")
+        ax.set_xlabel("Days since Diagnosis")
+        ax.set_ylabel("Survival Probability")
+
+        survival_plot = os.path.join(output_dir, f"{prefix}_survival_plot.png")
+        plt.savefig(survival_plot, dpi=300)
+        plt.close()
+        print("\t\tSaved survival KaplanMeier curve.")
 
     def time_to_treatment_effect(self):
         """
@@ -843,7 +904,7 @@ class TumorAnalysis:
         #     subset=["Time_to_Treatment", "Growth[%]"]
         # )
         # self.analyze_correlation(
-        #     "Time_to_Treatment", "Growth[%]", filtered_data, prefix, method="pearson"
+        #     "Time_to_Treatment", "Growth[%]", filtered_data, prefix, output_dir, method="pearson"
         # )
 
         # model = sm.OLS(
@@ -856,7 +917,7 @@ class TumorAnalysis:
         #     sm.add_constant(filtered_data["Time_to_Treatment"])
         # )
 
-    def analyze_tumor_stability(self, unchanging_threshold=0.05):
+    def analyze_tumor_stability(self, output_dir, unchanging_threshold=0.05):
         """
         Analyze the stability of tumors based on their growth rates.
 
@@ -896,9 +957,13 @@ class TumorAnalysis:
         print("Changing patients:", len(changing_patients_data))
         print(changing_patients_data["Patient_ID"].unique())
 
-        self.compare_stable_unstable_distributions(stable_patients_data, changing_patients_data)
+        self.compare_stable_unstable_distributions(
+            stable_patients_data, changing_patients_data, output_dir
+        )
 
-    def compare_stable_unstable_distributions(self, stable_patients_data, changing_patients_data):
+    def compare_stable_unstable_distributions(
+        self, stable_patients_data, changing_patients_data, output_dir
+    ):
         # Calculate descriptive statistics for Age and Volume for stable patients
         stable_age_stats = stable_patients_data["Age"].describe()
         stable_volume_stats = stable_patients_data["Volume"].describe()
@@ -931,7 +996,7 @@ class TumorAnalysis:
         plt.xlabel("Volume")
         plt.legend()
 
-        filename = os.path.join(correlation_cfg.OUTPUT_DIR, "stable_unstable_distributions.png")
+        filename = os.path.join(output_dir, "stable_unstable_distributions.png")
         plt.tight_layout()
         plt.savefig(filename)
 
@@ -943,7 +1008,7 @@ class TumorAnalysis:
             "changing_volume_stats": changing_volume_stats,
         }
 
-    def run_analysis(self):
+    def run_analysis(self, output_correlations, output_stats):
         """
         Run a comprehensive analysis pipeline consisting of data separation,
         sensitivity analysis, propensity score matching, main analysis, corrections
@@ -1022,7 +1087,7 @@ class TumorAnalysis:
                 )
                 smd_results = check_balance(matched_data, covariate_columns, treatment_column)
 
-                visualize_smds(smd_results, path=correlation_cfg.OUTPUT_DIR)
+                visualize_smds(smd_results, path=output_stats)
 
             step_idx += 1
 
@@ -1030,16 +1095,17 @@ class TumorAnalysis:
             print(f"Step {step_idx}: Starting main analyses...")
 
             prefix = "pre-treatment"
-            path = correlation_cfg.OUTPUT_DIR
             # print(self.pre_treatment_data.dtypes)
-            self.analyze_pre_treatment(
-                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix
-            )
+            # self.analyze_pre_treatment(
+            #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix, output_dir=output_correlations
+            # )
 
-            self.time_to_event_analysis(prefix)
-            # self.analyze_time_to_treatment_effect(prefix, path)
-            self.model_growth_trajectories(prefix)
-            self.analyze_tumor_stability(unchanging_threshold=correlation_cfg.UNCHANGING_THRESHOLD)
+            self.time_to_event_analysis(prefix, output_dir=output_stats)
+            # self.analyze_time_to_treatment_effect(prefix, output_correlations)
+            self.model_growth_trajectories(prefix, output_dir=output_stats)
+            self.analyze_tumor_stability(
+                unchanging_threshold=correlation_cfg.UNCHANGING_THRESHOLD, output_dir=output_stats
+            )
 
             # prefix = "post-treatment"
             # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT, prefix=prefix)
@@ -1049,17 +1115,16 @@ class TumorAnalysis:
         if correlation_cfg.CORRECTION:
             print(f"Step {step_idx}: Starting Corrections...")
             print("\tBonferroni Correction... ")
-            path = correlation_cfg.OUTPUT_DIR
             alpha = correlation_cfg.CORRECTION_ALPHA
 
             corrected_p_values_bonf = bonferroni_correction(self.p_values, alpha=alpha)
             visualize_p_value_bonferroni_corrections(
-                self.p_values, corrected_p_values_bonf, alpha, path
+                self.p_values, corrected_p_values_bonf, alpha, output_stats
             )
             print("\tFalse Discovery Rate Correction... ")
             corrected_p_values_fdr, is_rejected = fdr_correction(self.p_values, alpha=alpha)
             visualize_fdr_correction(
-                self.p_values, corrected_p_values_fdr, is_rejected, alpha, path
+                self.p_values, corrected_p_values_fdr, is_rejected, alpha, output_stats
             )
             step_idx += 1
 
@@ -1070,9 +1135,8 @@ class TumorAnalysis:
 
         if correlation_cfg.FEATURE_ENG:
             print(f"Step {step_idx}: Starting Feature Engineering...")
-            output_dir = correlation_cfg.OUTPUT_DIR
-            save_for_deep_learning(self.pre_treatment_data, output_dir, prefix="pre-treatment")
-            save_for_deep_learning(self.post_treatment_data, output_dir, prefix="post-treatment")
+            save_for_deep_learning(self.pre_treatment_data, output_stats, prefix="pre-treatment")
+            save_for_deep_learning(self.post_treatment_data, output_stats, prefix="post-treatment")
             step_idx += 1
 
 
@@ -1081,7 +1145,7 @@ if __name__ == "__main__":
         correlation_cfg.CLINICAL_CSV,
         [correlation_cfg.VOLUMES_CSVs_45, correlation_cfg.VOLUMES_CSVs_63],
     )
-    analysis.run_analysis()
+    analysis.run_analysis(correlation_cfg.OUTPUT_DIR_CORRELATIONS, correlation_cfg.OUTPUT_DIR_STATS)
 
 
 # def extract_trends(self, data):

@@ -12,7 +12,10 @@ VOLUMES_CSVs_63 = Path(
     "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_63_cohort_reviewed/output/time_series_csv"
 )
 
-OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output/correlation")
+OUTPUT_DIR_CORRELATIONS = Path(
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/output/correlation_plots"
+)
+OUTPUT_DIR_STATS = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output/correlation_stats")
 
 CORRELATION_PRE_TREATMENT = "spearman"
 CORRELATION_POST_TREATMENT = "spearman"
@@ -28,7 +31,7 @@ PROPENSITY = True
 # Step 3
 ANLYSIS = True
 
-SAMPLE_SIZE = 10  # for plotting growth trajectories
+SAMPLE_SIZE = 20  # for plotting growth trajectories
 UNCHANGING_THRESHOLD = 0.05  # for trakcing stable volumes
 
 # Step 4
