@@ -773,11 +773,13 @@ class TumorAnalysis:
         This method plots the actual and predicted growth percentages from the
         pre-treatment data and saves the plot as an image.
         """
-        sns.scatterplot(
+        # TODO: Rethink the prediction plot and what exactly should be plotted.
+        sns.lineplot(
             x="Time_since_First_Scan",
             y="Growth_pct",
             data=data,
             alpha=0.5,
+            color="blue",
             label="Actual Growth",
         )
         sns.lineplot(
@@ -811,7 +813,6 @@ class TumorAnalysis:
         pre_treatment_data["Time_since_First_Scan"] = pre_treatment_data.groupby("Patient_ID")[
             "Date"
         ].transform(lambda x: (x - x.min()).dt.days)
-
         pre_treatment_data["Growth_pct"] = pd.to_numeric(
             pre_treatment_data["Growth[%]"], errors="coerce"
         )
