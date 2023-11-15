@@ -6,10 +6,10 @@ CLINICAL_CSV = Path(
 )
 
 VOLUMES_CSVs_45 = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/output/time_series_csv"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/output/time_series_csv_kernel_smoothed"
 )
 VOLUMES_CSVs_63 = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_63_cohort_reviewed/output/time_series_csv"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_63_cohort_reviewed/output/time_series_csv_kernel_smoothed"
 )
 
 OUTPUT_DIR_CORRELATIONS = Path(
@@ -31,7 +31,7 @@ PROPENSITY = True
 # Step 3
 ANLYSIS = True
 
-SAMPLE_SIZE = 20  # for plotting growth trajectories
+SAMPLE_SIZE = 300  # for plotting growth trajectories
 UNCHANGING_THRESHOLD = 0.05  # for trakcing stable volumes
 
 # Step 4

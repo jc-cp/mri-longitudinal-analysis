@@ -302,8 +302,8 @@ class TumorAnalysis:
 
         for patient_id, data in self.merged_data.groupby("Patient_ID"):
             first_treatment_date = self.extract_treatment_dates(patient_id)
-
             received_treatment = not pd.isna(first_treatment_date)
+
             data["Date_of_First_Treatment"] = first_treatment_date
             data["Received_Treatment"] = received_treatment
 
@@ -315,7 +315,9 @@ class TumorAnalysis:
             )
 
             pre_treatment_data_frames.append(pre_treatment)
-            if not post_treatment.empty:
+
+            if not post_treatment.empty:  # Only append if there is post-treatment data, i.e. if
+                # treatment was received at any point, avoid patients with no treatment
                 post_treatment_data_frames.append(post_treatment)
 
         # Concatenate the list of DataFrames into a single DataFrame for pre and post treatment
@@ -658,7 +660,7 @@ class TumorAnalysis:
             plt.savefig(heat_map_file)
             plt.close()
 
-    def plot_individual_trajectories(self, name, sample_size):
+    def plot_individual_trajectories(self, name, data, sample_size):
         """
         Plot the individual growth trajectories for a sample of patients.
 
@@ -671,33 +673,60 @@ class TumorAnalysis:
         plt.figure(figsize=(10, 6))
 
         # Error handling for sample size
-        unique_patient_count = self.pre_treatment_data["Patient_ID"].nunique()
+        unique_patient_count = data["Patient_ID"].nunique()
         if sample_size > unique_patient_count:
             print(
-                f"Sample size {sample_size} is greater than the number of unique patients"
-                f" {unique_patient_count}."
+                f"\t\tSample size {sample_size} is greater than the number of unique patients"
+                f" {unique_patient_count}. Using {unique_patient_count} instead."
             )
-            sample_size = len(unique_patient_count)
+            sample_size = unique_patient_count
 
         # Get the sample IDs and data
-        sample_ids = self.pre_treatment_data["Patient_ID"].drop_duplicates().sample(n=sample_size)
-        sampled_data = self.pre_treatment_data[
-            self.pre_treatment_data["Patient_ID"].isin(sample_ids)
-        ]
-        # Get the median and mean data
-        median_data = (
-            sampled_data.groupby("Time_since_First_Scan")["Growth_pct"].median().reset_index()
-        )
-        mean_data = sampled_data.groupby("Time_since_First_Scan")["Growth_pct"].mean().reset_index()
+        sample_ids = data["Patient_ID"].drop_duplicates().sample(n=sample_size)
+        sampled_data = data[data["Patient_ID"].isin(sample_ids)]
+        # Cutoff the data at 4000 days
+        sampled_data = sampled_data[sampled_data["Time_since_First_Scan"] <= 4000]
+        # included_treatments = [
+        #     "Surgery Only",
+        #     "Chemotherapy Only",
+        #     "Radiation Only",
+        #     "No Treatment",
+        # ]
+        # sampled_data = sampled_data[sampled_data["Treatment_Type"].isin(included_treatments)]
 
-        sns.lineplot(
+        # sampled_data["Normalized_Growth"] = sampled_data["Growth[%]"] / sampled_data["Volume"]
+        sampled_data["Normalized_Growth"] = sampled_data["Growth[%]_RollMean"]
+        # Get the median every 6 months
+        median_data = (
+            sampled_data.groupby(
+                pd.cut(
+                    sampled_data["Time_since_First_Scan"],
+                    pd.interval_range(
+                        start=0, end=sampled_data["Time_since_First_Scan"].max(), freq=182
+                    ),
+                )
+            )["Normalized_Growth"]
+            .median()
+            .reset_index()
+        )
+        # Get the median and mean data based on the datapoints available
+        # median_data = (
+        #     sampled_data.groupby("Time_since_First_Scan")["Normalized_Growth"]
+        #     .median()
+        #     .reset_index()
+        # )
+
+        ax = sns.lineplot(
             x="Time_since_First_Scan",
-            y="Growth_pct",
-            hue="Patient_ID",
+            y="Normalized_Growth",
+            hue="Treatment_Type",  # "Patient_ID",
             data=sampled_data,
-            legend=None,  # Set to 'brief' or 'full' if you want the legend
+            palette="CMRmap",
+            legend="brief",  # Set to 'brief' or 'full' if you want the legend
             alpha=0.5,  # Set lower alpha for better visibility when lines overlap
         )
+
+        # mean_data = sampled_data.groupby("Time_since_First_Scan")["Growth_pct"].mean().reset_index()
         # sns.lineplot(
         #     x="Time_since_First_Scan",
         #     y="Growth_pct",
@@ -706,23 +735,35 @@ class TumorAnalysis:
         #     linestyle="--",
         #     label="Mean Trajectory",
         # )
+
         sns.lineplot(
-            x="Time_since_First_Scan",
-            y="Growth_pct",
+            x=median_data["Time_since_First_Scan"].apply(lambda x: x.mid),
+            y="Normalized_Growth",
             data=median_data,
-            color="black",
+            color="blue",
             linestyle="--",
             label="Median Trajectory",
         )
 
         plt.xlabel("Days Since First Scan")
-        plt.ylabel("Tumor Growth Percentage")
+        plt.ylabel("Tumor Growth Pct -- Rolling Mean")
         plt.title("Individual Growth Trajectories")
+
+        # Adjust the legend to only include the categories present in the filtered data
+        # handles, labels = ax.get_legend_handles_labels()
+        # filtered_labels_handles = dict(zip(labels, handles))
+        # included_handles = [
+        #     filtered_labels_handles[label]
+        #     for label in included_treatments
+        #     if label in filtered_labels_handles
+        # ]
+        # ax.legend(included_handles, included_treatments)
+
         plt.legend()
         plt.savefig(name)
         plt.close()
 
-    def plot_growth_predictions(self, filename):
+    def plot_growth_predictions(self, data, filename):
         """
         Plot the actual versus predicted tumor growth percentages over time.
 
@@ -735,14 +776,14 @@ class TumorAnalysis:
         sns.scatterplot(
             x="Time_since_First_Scan",
             y="Growth_pct",
-            data=self.pre_treatment_data,
+            data=data,
             alpha=0.5,
             label="Actual Growth",
         )
         sns.lineplot(
             x="Time_since_First_Scan",
             y="Predicted_Growth_pct",
-            data=self.pre_treatment_data,
+            data=data,
             color="red",
             label="Predicted Growth",
         )
@@ -765,100 +806,132 @@ class TumorAnalysis:
         saves the plots to files.
         """
         print("\tModeling growth trajectories:")
-        self.pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
+        pre_treatment_data = self.pre_treatment_data.copy()
+        pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
+        pre_treatment_data["Time_since_First_Scan"] = pre_treatment_data.groupby("Patient_ID")[
+            "Date"
+        ].transform(lambda x: (x - x.min()).dt.days)
 
-        self.pre_treatment_data["Time_since_First_Scan"] = self.pre_treatment_data.groupby(
-            "Patient_ID"
-        )["Date"].transform(lambda x: (x - x.min()).dt.days)
-
-        self.pre_treatment_data["Growth_pct"] = pd.to_numeric(
-            self.pre_treatment_data["Growth[%]"], errors="coerce"
+        pre_treatment_data["Growth_pct"] = pd.to_numeric(
+            pre_treatment_data["Growth[%]"], errors="coerce"
         )
-        self.pre_treatment_data = self.pre_treatment_data.dropna(
+        pre_treatment_data = pre_treatment_data.dropna(
             subset=["Growth_pct", "Time_since_First_Scan"]
         )
 
-        # Ensure we have enough data points per patient
-        sufficient_data_patients = (
-            self.pre_treatment_data.groupby("Patient_ID")
-            .filter(lambda x: len(x) >= 3)["Patient_ID"]
-            .unique()
-        )
-        filtered_data = self.pre_treatment_data[
-            self.pre_treatment_data["Patient_ID"].isin(sufficient_data_patients)
-        ]
+        # TODO: adjust for post-treatment data
 
-        # Reset index after filtering
-        filtered_data.reset_index(drop=True, inplace=True)
-
-        # Continue with filtered data
-        if filtered_data.empty:
-            print("No patients have enough data points for mixed-effects model analysis.")
-            return
-
-        model = sm.MixedLM.from_formula(
-            "Growth_pct ~ Time_since_First_Scan",
-            re_formula="~Time_since_First_Scan",
-            groups=filtered_data["Patient_ID"],
-            data=filtered_data,
-        )
-        # pylint: disable=unexpected-keyword-arg
-        result = model.fit(reml=False, method="nm", maxiter=100)  # Using Nelder-Mead optimization
-        # result = model.fit() # Using default optimization, fails to converge
-
-        if not result.converged:
-            print("Model did not converge, try simplifying the model or check the data.")
-            return None
-        else:
-            print(result.summary())
-            print("\t\tModel converged.")
-            self.pre_treatment_data["Predicted_Growth_pct"] = result.predict(
-                self.pre_treatment_data
+        try:
+            # Ensure we have enough data points per patient
+            sufficient_data_patients = (
+                pre_treatment_data.groupby("Patient_ID")
+                .filter(lambda x: len(x) >= 3)["Patient_ID"]
+                .unique()
             )
+            filtered_data = pre_treatment_data[
+                pre_treatment_data["Patient_ID"].isin(sufficient_data_patients)
+            ]
 
+            # Reset index after filtering
+            filtered_data.reset_index(drop=True, inplace=True)
+
+            # Continue with filtered data
+            if filtered_data.empty:
+                print("No patients have enough data points for mixed-effects model analysis.")
+                return
+
+            model = sm.MixedLM.from_formula(
+                "Growth_pct ~ Time_since_First_Scan",
+                re_formula="~Time_since_First_Scan",
+                groups=filtered_data["Patient_ID"],
+                data=filtered_data,
+            )
+            # pylint: disable=unexpected-keyword-arg
+            result = model.fit(reml=False, method="nm", maxiter=200)
+            # Using method Nelder-Mead optimization, although not really needed
+            # 200 iterations for kernel smoothed data
+            # result = model.fit()  # Using default optimization, fails to converge
+
+            if not result.converged:
+                print("\t\tModel did not converge, try simplifying the model or check the data.")
+                return None
+            else:
+                # print(result.summary())
+                print("\t\tModel converged.")
+                pre_treatment_data["Predicted_Growth_pct"] = result.predict(pre_treatment_data)
+                prediciton_plot = os.path.join(output_dir, f"{prefix}_growth_predictions.png")
+                self.plot_growth_predictions(data=pre_treatment_data, filename=prediciton_plot)
+                print("\t\tSaved growth predictions plot.")
+        except ValueError as err:
+            print(f"ValueError: {err}")
+
+        finally:
             growth_trajectories_plot = os.path.join(
                 output_dir, f"{prefix}_growth_trajectories_plot.png"
             )
-            prediciton_plot = os.path.join(output_dir, f"{prefix}_growth_predictions.png")
-
             self.plot_individual_trajectories(
-                growth_trajectories_plot, sample_size=correlation_cfg.SAMPLE_SIZE
+                growth_trajectories_plot,
+                data=pre_treatment_data,
+                sample_size=correlation_cfg.SAMPLE_SIZE,
             )
-            self.plot_growth_predictions(prediciton_plot)
             print("\t\tSaved growth trajectories plot.")
 
-    def time_to_event_analysis(self, prefix, output_dir):
+    def time_to_event_analysis(self, prefix, output_dir, stratify_by=None):
         """
         Perform a Kaplan-Meier survival analysis on time-to-event data for tumor progression.
 
         Parameters:
         - prefix (str): Prefix used for naming the output file.
 
-        The method fits the survival curve using the KaplanMeierFitter on the pre-treatment data, saves the plot image, and prints a confirmation message.
+        The method fits the survival curve using the KaplanMeierFitter on the pre-treatment data,
+        saves the plot image, and prints a confirmation message.
         """
-        print("\tAnalyzing time to event:")
-        pre_treatment_data = self.pre_treatment_data.loc[
+        print(f"\tAnalyzing time to event for {stratify_by}:")
+        # pre_treatment_data as df copy for KM curves
+        # only patients who showed tumor progression before the first treatment
+        analysis_data_pre = self.pre_treatment_data.copy()
+        analysis_data_pre = analysis_data_pre[
             self.pre_treatment_data["Date_of_First_Progression"]
             < self.pre_treatment_data["Date_of_First_Treatment"]
-        ].copy()
-
-        pre_treatment_data.loc[:, "Duration"] = (
-            pre_treatment_data["Date_of_First_Progression"]
-            - pre_treatment_data["Date_of_Diagnosis"]
+        ]
+        analysis_data_pre.loc[:, "Duration"] = (
+            analysis_data_pre["Date_of_First_Progression"] - analysis_data_pre["Date_of_Diagnosis"]
         ).dt.days
 
-        pre_treatment_data["Event_Occurred"] = self.pre_treatment_data["Tumor_Progression"]
+        analysis_data_pre["Event_Occurred"] = ~analysis_data_pre["Date_of_First_Progression"].isna()
+
+        # TODO: Add cases of survival in the post treatment setting, adjust the data accordingly
+        # TODO: Add a if/else condition based on the prefix and generalize data_handling
+
         kmf = KaplanMeierFitter()
-        kmf.fit(pre_treatment_data["Duration"], event_observed=pre_treatment_data["Event_Occurred"])
-        ax = kmf.plot_survival_function()
-        ax.set_title("Survival function of Tumor Progression")
+
+        if stratify_by and stratify_by in analysis_data_pre.columns:
+            for category in analysis_data_pre[stratify_by].unique():
+                category_data = analysis_data_pre[analysis_data_pre[stratify_by] == category]
+                kmf.fit(
+                    category_data["Duration"],
+                    event_observed=category_data["Event_Occurred"],
+                    label=str(category),
+                )
+                ax = kmf.plot_survival_function()
+            plt.title(f"Stratified Survival Function by {stratify_by}")
+
+        else:
+            kmf.fit(
+                analysis_data_pre["Duration"], event_observed=analysis_data_pre["Event_Occurred"]
+            )
+            ax = kmf.plot_survival_function()
+            ax.set_title("Survival function of Tumor Progression")
+
         ax.set_xlabel("Days since Diagnosis")
         ax.set_ylabel("Survival Probability")
 
-        survival_plot = os.path.join(output_dir, f"{prefix}_survival_plot.png")
+        survival_plot = os.path.join(
+            output_dir, f"{prefix}_survival_plot_stratifyby_{stratify_by}.png"
+        )
         plt.savefig(survival_plot, dpi=300)
         plt.close()
-        print("\t\tSaved survival KaplanMeier curve.")
+        print(f"\t\tSaved survival KaplanMeier curve for {stratify_by}.")
 
     def time_to_treatment_effect(self):
         """
@@ -1021,6 +1094,9 @@ class TumorAnalysis:
 
         print(f"Step {step_idx}: Separating data into pre- and post-treatment dataframes...")
         self.longitudinal_separation()
+        # print(self.pre_treatment_data["Patient_ID"].nunique())
+        # print(self.post_treatment_data["Patient_ID"].nunique())
+
         assert self.pre_treatment_data.columns.all() == self.post_treatment_data.columns.all()
         assert (len(self.pre_treatment_data) + len(self.post_treatment_data)) == len(
             self.merged_data
@@ -1070,6 +1146,8 @@ class TumorAnalysis:
                 )
 
             step_idx += 1
+            # print(self.pre_treatment_data["Patient_ID"].nunique())
+            # print(self.post_treatment_data["Patient_ID"].nunique())
 
         if correlation_cfg.PROPENSITY:
             print(f"Step {step_idx}: Performing Propensity Score Matching...")
@@ -1093,14 +1171,18 @@ class TumorAnalysis:
 
         if correlation_cfg.ANLYSIS:
             print(f"Step {step_idx}: Starting main analyses...")
-
             prefix = "pre-treatment"
             # print(self.pre_treatment_data.dtypes)
             # self.analyze_pre_treatment(
             #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix, output_dir=output_correlations
             # )
 
-            self.time_to_event_analysis(prefix, output_dir=output_stats)
+            print(self.pre_treatment_data.dtypes)
+            # Survival analysis
+            stratify_by_list = ["Glioma_Type", "Sex", "Mutations", "Age_Group"]
+            for element in stratify_by_list:
+                self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
+
             # self.analyze_time_to_treatment_effect(prefix, output_correlations)
             self.model_growth_trajectories(prefix, output_dir=output_stats)
             self.analyze_tumor_stability(

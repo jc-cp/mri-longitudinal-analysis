@@ -375,7 +375,7 @@ class VolumeEstimator:
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
 
-        for patient_id, volume_data in self.filtered_data.items():
+        for patient_id, volume_data in self.kernel_smoothing_data.items():
             csv_file_path = os.path.join(output_folder, f"{patient_id}.csv")
 
             with open(csv_file_path, "w", newline="", encoding="utf-8") as csvfile:
