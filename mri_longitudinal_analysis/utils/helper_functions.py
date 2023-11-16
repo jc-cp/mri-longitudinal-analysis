@@ -10,6 +10,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import seaborn as sns
 
 
 #####################################
@@ -472,3 +474,74 @@ def categorize_age_group(data, debug=False):
         return "Adolescent"
     else:
         return "Young Adult"
+
+
+def calculate_group_norms_and_stability(data, output_dir):
+    # Calculate group-wise statistics for each age group
+    group_norms = (
+        data.groupby("Age_Group")
+        .agg(
+            {
+                "Volume_RollStd": "median",  # Or mean, based on preference
+                "Growth[%]_RollStd": "median",  # Or mean
+            }
+        )
+        .reset_index()
+    )
+
+    data = data.merge(group_norms, on="Age_Group", suffixes=("", "_GroupNorm"))
+    data["Volume_Stability_Score"] = data["Volume_RollStd"] / data["Volume_RollStd_GroupNorm"]
+    data["Growth_Stability_Score"] = data["Growth[%]_RollStd"] / data["Growth[%]_RollStd_GroupNorm"]
+    data["Period"] = data["Date"].dt.to_period("M")
+
+    # Plotting Stability Scores
+    fig = plt.figure(figsize=(18, 12))
+    gs = gridspec.GridSpec(
+        3,
+        2,
+    )
+
+    # Heatmap
+    # heatmap_data = (
+    #     data.groupby(["Age_Group", "Period"])["Volume_Stability_Score"].median().unstack()
+    # )
+    ax0 = plt.subplot(gs[0, 0])
+    heatmap_data = data.pivot_table(
+        index="Age_Group", columns="Period", values="Volume_Stability_Score", aggfunc="median"
+    )
+    sns.heatmap(heatmap_data, cmap="coolwarm", ax=ax0)
+    ax0.set_title("Median Volume Stability Score Across Age Groups Over Time")
+
+    # Violin Plot
+    ax1 = plt.subplot(gs[0, 1])
+    sns.violinplot(x="Age_Group", y="Volume_Stability_Score", data=data, ax=ax1, bw=0.2)
+    sns.swarmplot(
+        x="Age_Group", y="Volume_Stability_Score", data=data, ax=ax1, color="k", alpha=0.6
+    )
+    ax1.set_title("Distribution of Volume Stability Scores Across Age Groups")
+
+    # Scatter Plot with Trend Lines
+    ax2 = plt.subplot(gs[1:, :])
+    for age_group in data["Age_Group"].unique():
+        group_data = data[data["Age_Group"] == age_group]
+        group_data = group_data.sort_values("Date")
+        moving_average = (
+            group_data["Volume_Stability_Score"].rolling(window=3, min_periods=1).mean()
+        )
+        ax2.plot(group_data["Date"], moving_average, label=age_group)
+        # sns.scatterplot(
+        #     x="Date", y="Volume_Stability_Score", data=group_data, label=age_group, ax=ax2
+        # )
+        # sns.lineplot(x="Date", y="Volume_Stability_Score", data=group_data, ax=ax2)
+        ax2.scatter(data["Date"], data["Volume_Stability_Score"], alpha=0.3)
+        ax2.set_xlabel("Years")
+        ax2.set_ylabel("Volume Stability Score")
+    ax2.set_title("Scatter Plot of Volume Stability Scores Over Time by Age Group")
+    ax2.legend(title="Age Group")
+
+    plt.tight_layout()
+    filename = os.path.join(output_dir, "stability_scores.png")
+    plt.savefig(filename)
+    plt.close()
+
+    return data

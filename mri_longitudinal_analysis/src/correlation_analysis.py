@@ -32,6 +32,7 @@ from utils.helper_functions import (
     save_for_deep_learning,
     process_race_ethnicity,
     categorize_age_group,
+    calculate_group_norms_and_stability,
 )
 
 
@@ -991,96 +992,81 @@ class TumorAnalysis:
         #     sm.add_constant(filtered_data["Time_to_Treatment"])
         # )
 
-    def analyze_tumor_stability(self, output_dir, unchanging_threshold=0.05):
+    def analyze_tumor_stability(self, data, output_dir, volume_weight=0.5, growth_weight=0.5):
         """
-        Analyze the stability of tumors based on their growth rates.
+        Analyze the stability of tumors based on their growth rates and volume changes.
+
+        Parameters:
+        - data (DataFrame): Data containing tumor growth and volume information.
+        - output_dir (str): Directory to save the output plots.
+        - volume_weight (float): Clinical significance weight for tumor volume stability.
+        - growth_weight (float): Clinical significance weight for tumor growth stability.
 
         Returns:
-        - stable_patients_data (DataFrame): Data of patients with stable tumors.
-
-        This method identifies tumors with negligible growth over time and analyzes
-        the characteristics of patients with these stable tumors.
+        - data (DataFrame): Data with added Stability Index and Tumor Classification.
         """
-        # Calculate the absolute change in tumor growth for each scan
-        self.pre_treatment_data["Absolute_Growth_change"] = (
-            self.pre_treatment_data.groupby("Patient_ID")["Growth[%]"].diff().abs()
+        print("\tAnalyzing tumor stability:")
+        data = data.copy()
+        data = calculate_group_norms_and_stability(data, output_dir)
+
+        # Calculate the Stability Index using weighted scores
+        data["Stability_Index"] = volume_weight * data["Volume_Stability_Score"] + growth_weight * (
+            1 / (data["Growth[%]_RollStd"] + 1)
         )
 
-        patients_with_significant_change = self.pre_treatment_data.groupby("Patient_ID")[
-            "Growth[%]"
-        ].apply(lambda x: (x.abs() > unchanging_threshold).any())
+        # Normalize the Stability Index to have a mean of 1
+        data["Stability_Index"] /= np.mean(data["Stability_Index"])
 
-        # Get lists of patient IDs for stable and changing tumors
-        stable_patients_ids = patients_with_significant_change[
-            ~patients_with_significant_change
-        ].index.tolist()
-        changing_patients_ids = patients_with_significant_change[
-            patients_with_significant_change
-        ].index.tolist()
+        # Define thresholds for classification based on the normalized Stability Index
+        # Use the 50th percentile (median) as the threshold by default, can be adjusted if needed
+        stability_threshold = np.median(data["Stability_Index"])
 
-        # Extract data for stable and changing tumors
-        stable_patients_data = self.pre_treatment_data[
-            self.pre_treatment_data["Patient_ID"].isin(stable_patients_ids)
-        ]
-        changing_patients_data = self.pre_treatment_data[
-            self.pre_treatment_data["Patient_ID"].isin(changing_patients_ids)
-        ]
-
-        print("Stable patients:", len(stable_patients_data))
-        print(stable_patients_data["Patient_ID"].unique())
-        print("Changing patients:", len(changing_patients_data))
-        print(changing_patients_data["Patient_ID"].unique())
-
-        self.compare_stable_unstable_distributions(
-            stable_patients_data, changing_patients_data, output_dir
+        data["Tumor_Classification"] = data["Stability_Index"].apply(
+            lambda x: "Stable" if x <= stability_threshold else "Unstable"
         )
+        classification_distribution = data["Tumor_Classification"].value_counts(normalize=True)
 
-    def compare_stable_unstable_distributions(
-        self, stable_patients_data, changing_patients_data, output_dir
-    ):
-        # Calculate descriptive statistics for Age and Volume for stable patients
-        stable_age_stats = stable_patients_data["Age"].describe()
-        stable_volume_stats = stable_patients_data["Volume"].describe()
-
-        # Calculate descriptive statistics for Age and Volume for changing patients
-        changing_age_stats = changing_patients_data["Age"].describe()
-        changing_volume_stats = changing_patients_data["Volume"].describe()
-
-        # print("Stable Tumors Age Statistics:\n", stable_age_stats)
-        # print("Stable Tumors Volume Statistics:\n", stable_volume_stats)
-        # print("Changing Tumors Age Statistics:\n", changing_age_stats)
-        # print("Changing Tumors Volume Statistics:\n", changing_volume_stats)
-
-        # Visualization of Age Distributions
-        plt.figure(figsize=(12, 5))
-        plt.subplot(1, 2, 1)
-        sns.histplot(stable_patients_data["Age"], color="blue", kde=True, label="Stable Tumors")
-        sns.histplot(changing_patients_data["Age"], color="red", kde=True, label="Changing Tumors")
-        plt.title("Distribution of Ages")
-        plt.xlabel("Age")
-        plt.legend()
-
-        # Visualization of Volume Distributions
-        plt.subplot(1, 2, 2)
-        sns.histplot(stable_patients_data["Volume"], color="blue", kde=True, label="Stable Tumors")
-        sns.histplot(
-            changing_patients_data["Volume"], color="red", kde=True, label="Changing Tumors"
-        )
-        plt.title("Distribution of Volumes")
-        plt.xlabel("Volume")
-        plt.legend()
-
-        filename = os.path.join(output_dir, "stable_unstable_distributions.png")
+        # Visualization of Tumor Classification
+        plt.figure(figsize=(10, 6))
+        sns.countplot(x="Age_Group", hue="Tumor_Classification", data=data)
+        plt.title("Count of Stable vs. Unstable Tumors Across Age Groups")
+        plt.xlabel("Age Group")
+        plt.ylabel("Count")
+        plt.legend(title="Tumor Classification")
         plt.tight_layout()
+        filename = os.path.join(output_dir, "tumor_classification.png")
         plt.savefig(filename)
+        plt.close()
 
-        # Return the statistics for potential further analysis
-        return {
-            "stable_age_stats": stable_age_stats,
-            "stable_volume_stats": stable_volume_stats,
-            "changing_age_stats": changing_age_stats,
-            "changing_volume_stats": changing_volume_stats,
-        }
+        plt.figure(figsize=(10, 6))
+        plt.pie(
+            classification_distribution,
+            labels=classification_distribution.index,
+            autopct="%1.1f%%",
+            startangle=140,
+        )
+        plt.title("Proportion of Stable vs. Unstable Tumors")
+        plt.axis("equal")
+        filename_dist = os.path.join(output_dir, "tumor_classification_distribution.png")
+        plt.savefig(filename_dist)
+        plt.close()
+
+        # Enhanced Scatter Plot with Labels for Extremes
+        plt.figure(figsize=(18, 6))
+        ax = sns.scatterplot(
+            x="Date", y="Stability_Index", hue="Tumor_Classification", data=data, alpha=0.6
+        )
+        extremes = data.nlargest(5, "Stability_Index")  # Adjust the number of points as needed
+        for i, point in extremes.iterrows():
+            ax.text(point["Date"], point["Stability_Index"], str(point["Patient_ID"]))
+        plt.title("Scatter Plot of Stability Index Over Time by Classification")
+        plt.xlabel("Date")
+        plt.ylabel("Stability Index")
+        plt.legend(title="Tumor Classification")
+        plt.tight_layout()
+        filename_scatter = os.path.join(output_dir, "stability_index_scatter.png")
+        plt.savefig(filename_scatter)
+        plt.close()
 
     def run_analysis(self, output_correlations, output_stats):
         """
@@ -1178,7 +1164,8 @@ class TumorAnalysis:
             #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix, output_dir=output_correlations
             # )
 
-            print(self.pre_treatment_data.dtypes)
+            # print(self.pre_treatment_data.dtypes)
+
             # Survival analysis
             stratify_by_list = ["Glioma_Type", "Sex", "Mutations", "Age_Group"]
             for element in stratify_by_list:
@@ -1186,8 +1173,10 @@ class TumorAnalysis:
 
             # self.analyze_time_to_treatment_effect(prefix, output_correlations)
             self.model_growth_trajectories(prefix, output_dir=output_stats)
+
             self.analyze_tumor_stability(
-                unchanging_threshold=correlation_cfg.UNCHANGING_THRESHOLD, output_dir=output_stats
+                data=self.pre_treatment_data,
+                output_dir=output_stats,
             )
 
             # prefix = "post-treatment"
