@@ -265,7 +265,7 @@ class TumorAnalysis:
         def cumulative_stats(group, variable):
             group[f"{variable}_CumMean"] = group[variable].expanding().mean()
             group[f"{variable}_CumMedian"] = group[variable].expanding().median()
-            group[f"{variable}_CumStd"] = group[variable].expanding().std()
+            group[f"{variable}_CumStd"] = group[variable].expanding().std().fillna(0)
             return group
 
         def rolling_stats(group, variable, window_size=3, min_periods=1):
@@ -276,7 +276,7 @@ class TumorAnalysis:
                 group[variable].rolling(window=window_size, min_periods=min_periods).median()
             )
             group[f"{variable}_RollStd"] = (
-                group[variable].rolling(window=window_size, min_periods=min_periods).std()
+                group[variable].rolling(window=window_size, min_periods=min_periods).std().fillna(0)
             )
             return group
 
@@ -307,6 +307,7 @@ class TumorAnalysis:
 
             data["Date_of_First_Treatment"] = first_treatment_date
             data["Received_Treatment"] = received_treatment
+            data["No_Treatment"] = False if received_treatment else True
 
             pre_treatment = (
                 data[data["Date"] < first_treatment_date] if received_treatment else data
@@ -324,6 +325,28 @@ class TumorAnalysis:
         # Concatenate the list of DataFrames into a single DataFrame for pre and post treatment
         self.pre_treatment_data = pd.concat(pre_treatment_data_frames, ignore_index=True)
         self.post_treatment_data = pd.concat(post_treatment_data_frames, ignore_index=True)
+
+        self.pre_treatment_data["Treatment_Type"] = self.pre_treatment_data[
+            "Treatment_Type"
+        ].cat.remove_unused_categories()
+        self.post_treatment_data["Treatment_Type"] = self.post_treatment_data[
+            "Treatment_Type"
+        ].cat.remove_unused_categories()
+
+        for patient_id in self.pre_treatment_data["Patient_ID"].unique():
+            if (
+                self.pre_treatment_data[self.pre_treatment_data["Patient_ID"] == patient_id][
+                    "Date_of_First_Treatment"
+                ]
+                .isna()
+                .any()
+            ):
+                last_scan_date = self.pre_treatment_data[
+                    self.pre_treatment_data["Patient_ID"] == patient_id
+                ]["Date"].max()
+                self.pre_treatment_data.loc[
+                    self.pre_treatment_data["Patient_ID"] == patient_id, "Date_of_First_Treatment"
+                ] = last_scan_date
 
     def extract_treatment_dates(self, patient_id):
         """
@@ -452,7 +475,11 @@ class TumorAnalysis:
         self.pre_treatment_data["Tumor_Progression"] = self.pre_treatment_data[
             "Tumor_Progression"
         ].astype("category")
-        # self.time_to_treatment_effect()
+
+        self.pre_treatment_data["Time_to_Treatment"] = (
+            self.pre_treatment_data["Date_of_First_Treatment"]
+            - self.pre_treatment_data["Date_of_Diagnosis"]
+        ).dt.days
 
         # variable types
         categorical_vars = [
@@ -481,7 +508,7 @@ class TumorAnalysis:
             "Growth[%]_RollMean",
             "Growth[%]_RollMedian",
             "Growth[%]_RollStd",
-            # "Time_to_Treatment",
+            "Time_to_Treatment",
         ]
 
         for num_var in numerical_vars:
@@ -935,63 +962,6 @@ class TumorAnalysis:
         plt.close()
         print(f"\t\tSaved survival KaplanMeier curve for {stratify_by}.")
 
-    def time_to_treatment_effect(self):
-        """
-        Analyze the correlation between the time to treatment and tumor growth.
-
-        Parameters:
-        - prefix (str): Prefix used for the output files.
-        - path (str): The directory path to save output files.
-
-        The method analyzes the correlation, fits a linear model to predict growth based on time to treatment, and visualizes the effect.
-        """
-        # print("\tAnalyzing time to treatment effect:")
-        for patient_id in self.pre_treatment_data["Patient_ID"].unique():
-            patient_data = self.pre_treatment_data[
-                self.pre_treatment_data["Patient_ID"] == patient_id
-            ]
-
-            # Assuming 'Last_Scan_Date' is the column with the last date for the patient
-            if patient_data["Date_of_First_Treatment"].isna().any():
-                last_scan_date = patient_data["Date"].max()
-                self.pre_treatment_data.loc[
-                    patient_data.index, "Date_of_First_Treatment"
-                ] = last_scan_date
-
-        self.pre_treatment_data["Time_to_Treatment"] = (
-            self.pre_treatment_data["Date_of_First_Treatment"]
-            - self.pre_treatment_data["Date_of_Diagnosis"]
-        ).dt.days
-
-        for _, row in self.pre_treatment_data.iterrows():
-            if pd.isna(row["Time_to_Treatment"]):
-                reason = ""
-                if pd.isna(row["Date_of_First_Treatment"]):
-                    reason += "Missing Date_of_First_Treatment. "
-                if pd.isna(row["Date_of_Diagnosis"]):
-                    reason += "Missing Date_of_Diagnosis. "
-                print(
-                    f"Patient ID {row['Patient_ID']} has NaN in Time_to_Treatment. Reason: {reason}"
-                )
-
-        # filtered_data = self.pre_treatment_data.dropna(subset=["Time_to_Treatment", "Growth[%]"])
-        # filtered_data = filtered_data.replace([np.inf, -np.inf], np.nan).dropna(
-        #     subset=["Time_to_Treatment", "Growth[%]"]
-        # )
-        # self.analyze_correlation(
-        #     "Time_to_Treatment", "Growth[%]", filtered_data, prefix, output_dir, method="pearson"
-        # )
-
-        # model = sm.OLS(
-        #     filtered_data["Growth[%]"], sm.add_constant(filtered_data["Time_to_Treatment"])
-        # )
-        # results = model.fit()
-        # # print(results.summary())
-
-        # filtered_data["Predicted_Growth"] = results.predict(
-        #     sm.add_constant(filtered_data["Time_to_Treatment"])
-        # )
-
     def analyze_tumor_stability(self, data, output_dir, volume_weight=0.5, growth_weight=0.5):
         """
         Analyze the stability of tumors based on their growth rates and volume changes.
@@ -1079,20 +1049,127 @@ class TumorAnalysis:
         """
         step_idx = 1
 
-        print(f"Step {step_idx}: Separating data into pre- and post-treatment dataframes...")
-        self.longitudinal_separation()
-        # print(self.pre_treatment_data["Patient_ID"].nunique())
-        # print(self.post_treatment_data["Patient_ID"].nunique())
+        if correlation_cfg.SEPARATION:
+            print(f"Step {step_idx}: Separating data into pre- and post-treatment dataframes...")
 
-        assert self.pre_treatment_data.columns.all() == self.post_treatment_data.columns.all()
-        assert (len(self.pre_treatment_data) + len(self.post_treatment_data)) == len(
-            self.merged_data
-        )
-        print(
-            "\tData separated, assertation for same columns in separated dataframes and"
-            " corresponding lenghts passed."
-        )
-        step_idx += 1
+            self.longitudinal_separation()
+            # print(self.pre_treatment_data["Patient_ID"].nunique())
+            # print(self.post_treatment_data["Patient_ID"].nunique())
+
+            assert self.pre_treatment_data.columns.all() == self.post_treatment_data.columns.all()
+            assert (len(self.pre_treatment_data) + len(self.post_treatment_data)) == len(
+                self.merged_data
+            )
+            print(
+                "\tData separated, assertation for same columns in separated dataframes and"
+                " corresponding lenghts passed."
+            )
+
+            # Total number of unique patient IDs in both pre-treatment and post-treatment
+            # datasets matches the number in the original dataset. This ensures that no
+            # patients were lost during the data separation process.
+            unique_ids_original = set(self.merged_data["Patient_ID"].unique())
+            unique_ids_pre = set(self.pre_treatment_data["Patient_ID"].unique())
+            unique_ids_post = set(self.post_treatment_data["Patient_ID"].unique())
+
+            if unique_ids_original != unique_ids_pre.union(unique_ids_post):
+                print("\tError: Mismatch in patient IDs between original and separated datasets.")
+            else:
+                print("\tAll patient IDs are consistent.")
+            # Date_of_First_Treatment is consistent across all records within each dataset.
+            # It should be the same in both pre-treatment and post-treatment data for any
+            # given patient.
+            for patient_id in unique_ids_original:
+                treatment_dates_pre = self.pre_treatment_data[
+                    self.pre_treatment_data["Patient_ID"] == patient_id
+                ]["Date_of_First_Treatment"].unique()
+
+                treatment_dates_post = self.post_treatment_data[
+                    self.post_treatment_data["Patient_ID"] == patient_id
+                ]["Date_of_First_Treatment"].unique()
+
+                # Check if there's more than one unique treatment date or inconsistent dates between pre and post datasets
+                if (
+                    len(treatment_dates_pre) > 1
+                    or len(treatment_dates_post) > 1
+                    or (
+                        len(treatment_dates_pre) == 1
+                        and len(treatment_dates_post) == 1
+                        and treatment_dates_pre[0] != treatment_dates_post[0]
+                    )
+                ):
+                    print(f"\tError: Inconsistent treatment dates for patient {patient_id}")
+            print("\tTreatment dates are consistent for all other patients.")
+
+            # All dates in the pre-treatment data are indeed before Date_of_First_Treatment
+            # and all dates in the post-treatment data are on or after this date.
+            date_range_issues = False
+            for patient_id in unique_ids_pre:
+                first_treatment_date = self.extract_treatment_dates(patient_id)
+
+                # Check if the treatment date is not set (NaN) and use the last scan date in that case
+                if pd.isna(first_treatment_date):
+                    first_treatment_date = self.pre_treatment_data[
+                        self.pre_treatment_data["Patient_ID"] == patient_id
+                    ]["Date"].max()
+
+                # Pre-treatment data should be before the first treatment date
+                if not all(
+                    self.pre_treatment_data[self.pre_treatment_data["Patient_ID"] == patient_id][
+                        "Date"
+                    ]
+                    <= first_treatment_date
+                ):
+                    print(f"\tError: Pre-treatment date inconsistency for patient {patient_id}")
+                    date_range_issues = True
+            for patient_id in unique_ids_post:
+                first_treatment_date = self.extract_treatment_dates(patient_id)
+
+                # Check if the treatment date is not set (NaN) and use the last scan date in that case
+                if pd.isna(first_treatment_date):
+                    first_treatment_date = self.post_treatment_data[
+                        self.post_treatment_data["Patient_ID"] == patient_id
+                    ]["Date"].max()
+
+                # Post-treatment data should be on or after the first treatment date
+                if not all(
+                    self.post_treatment_data[self.post_treatment_data["Patient_ID"] == patient_id][
+                        "Date"
+                    ]
+                    >= first_treatment_date
+                ):
+                    print(f"\tError: Post-treatment date inconsistency for patient {patient_id}")
+                    date_range_issues = True
+            if not date_range_issues:
+                print("\tAll date ranges are consistent.")
+
+            # Check for any missing or NaN values in critical columns after the separation process.
+            for column in self.pre_treatment_data.columns:
+                if column == "Date_of_First_Progression":
+                    # Check for missing Date_of_First_Progression only if Tumor_Progression is True
+                    missing_progression_data = self.pre_treatment_data[
+                        (self.pre_treatment_data["Tumor_Progression"] == True)
+                        & (self.pre_treatment_data["Date_of_First_Progression"].isna())
+                    ]
+                    if not missing_progression_data.empty:
+                        print(f"\tError: Missing data in pre_treatment column - {column}")
+                elif self.pre_treatment_data[column].isna().any():
+                    print(f"\tError: Missing data in pre_treatment column - {column}")
+            print("\tNo more missing data in pre_treatment columns.")
+            for column in self.post_treatment_data.columns:
+                if column == "Date_of_First_Progression":
+                    # Group the conditions correctly
+                    missing_progression_data = self.post_treatment_data[
+                        (self.post_treatment_data["Tumor_Progression"] == True)
+                        & (self.post_treatment_data["Date_of_First_Progression"].isna())
+                    ]
+                    if not missing_progression_data.empty:
+                        print(f"\tError: Missing data in post-treatment column - {column}")
+                elif self.post_treatment_data[column].isna().any():
+                    print(f"\tError: Missing data in post-treatment column - {column}")
+            print("\tNo more missing data in post_treatment columns.")
+
+            step_idx += 1
 
         if correlation_cfg.SENSITIVITY:
             print(f"Step {step_idx}: Performing Sensitivity Analysis...")
@@ -1160,20 +1237,22 @@ class TumorAnalysis:
             print(f"Step {step_idx}: Starting main analyses...")
             prefix = "pre-treatment"
             # print(self.pre_treatment_data.dtypes)
-            # self.analyze_pre_treatment(
-            #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT, prefix=prefix, output_dir=output_correlations
-            # )
 
+            self.analyze_pre_treatment(
+                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
+                prefix=prefix,
+                output_dir=output_correlations,
+            )
             # print(self.pre_treatment_data.dtypes)
 
+            # Additionally to all correlations, let's also do:
             # Survival analysis
             stratify_by_list = ["Glioma_Type", "Sex", "Mutations", "Age_Group"]
             for element in stratify_by_list:
                 self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
-
-            # self.analyze_time_to_treatment_effect(prefix, output_correlations)
+            # Growth trajectories
             self.model_growth_trajectories(prefix, output_dir=output_stats)
-
+            # Tumor stability
             self.analyze_tumor_stability(
                 data=self.pre_treatment_data,
                 output_dir=output_stats,

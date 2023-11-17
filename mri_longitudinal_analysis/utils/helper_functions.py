@@ -534,8 +534,6 @@ def calculate_group_norms_and_stability(data, output_dir):
         # )
         # sns.lineplot(x="Date", y="Volume_Stability_Score", data=group_data, ax=ax2)
         ax2.scatter(data["Date"], data["Volume_Stability_Score"], alpha=0.3)
-        ax2.set_xlabel("Years")
-        ax2.set_ylabel("Volume Stability Score")
     ax2.set_title("Scatter Plot of Volume Stability Scores Over Time by Age Group")
     ax2.legend(title="Age Group")
 

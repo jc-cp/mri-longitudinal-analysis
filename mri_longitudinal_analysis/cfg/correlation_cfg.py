@@ -20,6 +20,8 @@ OUTPUT_DIR_STATS = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output/c
 CORRELATION_PRE_TREATMENT = "spearman"
 CORRELATION_POST_TREATMENT = "spearman"
 
+# Step 0
+SEPARATION = True
 
 # Step 1
 SENSITIVITY = True
