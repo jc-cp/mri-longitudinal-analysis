@@ -11,7 +11,6 @@ import numpy as np
 import statsmodels.api as sm
 from cfg import correlation_cfg
 from lifelines import KaplanMeierFitter
-from scipy.signal import find_peaks
 from utils.helper_functions import (
     bonferroni_correction,
     chi_squared_test,
@@ -33,6 +32,9 @@ from utils.helper_functions import (
     process_race_ethnicity,
     categorize_age_group,
     calculate_group_norms_and_stability,
+    classify_patient,
+    plot_trend_trajectories,
+    plot_growth_predictions,
 )
 
 
@@ -55,7 +57,11 @@ class TumorAnalysis:
         self.pre_treatment_data = pd.DataFrame()
         self.p_values = []
         self.coef_values = []
+        self.early_progression_threshold = correlation_cfg.EARLY_PROGRESSION_THRESHOLD
+        self.stability_threshold = correlation_cfg.STABILITY_THRESHOLD
+        self.high_risk_threshold = correlation_cfg.HIGH_RISK_THRESHOLD
         print("Step 0: Initializing TumorAnalysis class...")
+
         self.validate_files(clinical_data_path, volumes_data_paths)
         self.load_clinical_data(clinical_data_path)
         self.load_volumes_data(volumes_data_paths)
@@ -791,39 +797,6 @@ class TumorAnalysis:
         plt.savefig(name)
         plt.close()
 
-    def plot_growth_predictions(self, data, filename):
-        """
-        Plot the actual versus predicted tumor growth percentages over time.
-
-        Parameters:
-        - filename (str): The filename to save the plot image.
-
-        This method plots the actual and predicted growth percentages from the
-        pre-treatment data and saves the plot as an image.
-        """
-        # TODO: Rethink the prediction plot and what exactly should be plotted.
-        sns.lineplot(
-            x="Time_since_First_Scan",
-            y="Growth_pct",
-            data=data,
-            alpha=0.5,
-            color="blue",
-            label="Actual Growth",
-        )
-        sns.lineplot(
-            x="Time_since_First_Scan",
-            y="Predicted_Growth_pct",
-            data=data,
-            color="red",
-            label="Predicted Growth",
-        )
-        plt.xlabel("Days Since First Scan")
-        plt.ylabel("Tumor Growth Percentage")
-        plt.title("Actual vs Predicted Tumor Growth Over Time")
-        plt.legend()
-        plt.savefig(filename)
-        plt.close()
-
     def model_growth_trajectories(self, prefix, output_dir):
         """
         Model the growth trajectories of patients using a mixed-effects linear model.
@@ -836,41 +809,47 @@ class TumorAnalysis:
         saves the plots to files.
         """
         print("\tModeling growth trajectories:")
+        # Data preparation for modeling
         pre_treatment_data = self.pre_treatment_data.copy()
         pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
         pre_treatment_data["Time_since_First_Scan"] = pre_treatment_data.groupby("Patient_ID")[
             "Date"
         ].transform(lambda x: (x - x.min()).dt.days)
-        pre_treatment_data["Growth_pct"] = pd.to_numeric(
+
+        column_name = "Growth_pct"
+        pre_treatment_data[column_name] = pd.to_numeric(
             pre_treatment_data["Growth[%]"], errors="coerce"
         )
-        pre_treatment_data = pre_treatment_data.dropna(
-            subset=["Growth_pct", "Time_since_First_Scan"]
+        pre_treatment_data[f"{column_name}_RollingMean"] = (
+            pre_treatment_data.groupby("Patient_ID")[column_name]
+            .rolling(window=3, min_periods=1)
+            .mean()
+            .reset_index(level=0, drop=True)
         )
 
         # TODO: adjust for post-treatment data
 
+        # Ensure we have enough data points per patient
+        sufficient_data_patients = (
+            pre_treatment_data.groupby("Patient_ID")
+            .filter(lambda x: len(x) >= 3)["Patient_ID"]
+            .unique()
+        )
+        filtered_data = pre_treatment_data[
+            pre_treatment_data["Patient_ID"].isin(sufficient_data_patients)
+        ]
+
+        # Reset index after filtering
+        filtered_data.reset_index(drop=True, inplace=True)
+
+        # Continue with filtered data
+        if filtered_data.empty:
+            print("No patients have enough data points for mixed-effects model analysis.")
+            return
+
         try:
-            # Ensure we have enough data points per patient
-            sufficient_data_patients = (
-                pre_treatment_data.groupby("Patient_ID")
-                .filter(lambda x: len(x) >= 3)["Patient_ID"]
-                .unique()
-            )
-            filtered_data = pre_treatment_data[
-                pre_treatment_data["Patient_ID"].isin(sufficient_data_patients)
-            ]
-
-            # Reset index after filtering
-            filtered_data.reset_index(drop=True, inplace=True)
-
-            # Continue with filtered data
-            if filtered_data.empty:
-                print("No patients have enough data points for mixed-effects model analysis.")
-                return
-
             model = sm.MixedLM.from_formula(
-                "Growth_pct ~ Time_since_First_Scan",
+                "Growth_pct_RollingMean ~ Time_since_First_Scan",
                 re_formula="~Time_since_First_Scan",
                 groups=filtered_data["Patient_ID"],
                 data=filtered_data,
@@ -887,9 +866,13 @@ class TumorAnalysis:
             else:
                 # print(result.summary())
                 print("\t\tModel converged.")
-                pre_treatment_data["Predicted_Growth_pct"] = result.predict(pre_treatment_data)
-                prediciton_plot = os.path.join(output_dir, f"{prefix}_growth_predictions.png")
-                self.plot_growth_predictions(data=pre_treatment_data, filename=prediciton_plot)
+                pre_treatment_data[f"Predicted_{column_name}"] = result.predict(pre_treatment_data)
+                prediciton_plot = os.path.join(
+                    output_dir, f"{prefix}_{column_name}_predictions.png"
+                )
+                plot_growth_predictions(
+                    data=pre_treatment_data, filename=prediciton_plot, column_name=column_name
+                )
                 print("\t\tSaved growth predictions plot.")
         except ValueError as err:
             print(f"ValueError: {err}")
@@ -904,6 +887,24 @@ class TumorAnalysis:
                 sample_size=correlation_cfg.SAMPLE_SIZE,
             )
             print("\t\tSaved growth trajectories plot.")
+
+            print("\tStarting Trend Analysis:")
+            patient_classifications = {
+                patient_id: classify_patient(
+                    pre_treatment_data,
+                    patient_id,
+                    column_name,
+                    self.early_progression_threshold,
+                    self.stability_threshold,
+                    self.high_risk_threshold,
+                )
+                for patient_id in sufficient_data_patients
+            }
+            pre_treatment_data["Classification"] = pre_treatment_data["Patient_ID"].map(
+                patient_classifications
+            )
+            output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
+            plot_trend_trajectories(pre_treatment_data, output_filename, column_name)
 
     def time_to_event_analysis(self, prefix, output_dir, stratify_by=None):
         """
@@ -920,8 +921,8 @@ class TumorAnalysis:
         # only patients who showed tumor progression before the first treatment
         analysis_data_pre = self.pre_treatment_data.copy()
         analysis_data_pre = analysis_data_pre[
-            self.pre_treatment_data["Date_of_First_Progression"]
-            < self.pre_treatment_data["Date_of_First_Treatment"]
+            analysis_data_pre["Date_of_First_Progression"]
+            < analysis_data_pre["Date_of_First_Treatment"]
         ]
         analysis_data_pre.loc[:, "Duration"] = (
             analysis_data_pre["Date_of_First_Progression"] - analysis_data_pre["Date_of_Diagnosis"]
@@ -1088,7 +1089,8 @@ class TumorAnalysis:
                     self.post_treatment_data["Patient_ID"] == patient_id
                 ]["Date_of_First_Treatment"].unique()
 
-                # Check if there's more than one unique treatment date or inconsistent dates between pre and post datasets
+                # Check if there's more than one unique treatment date or
+                # inconsistent dates between pre and post datasets
                 if (
                     len(treatment_dates_pre) > 1
                     or len(treatment_dates_post) > 1
@@ -1107,7 +1109,8 @@ class TumorAnalysis:
             for patient_id in unique_ids_pre:
                 first_treatment_date = self.extract_treatment_dates(patient_id)
 
-                # Check if the treatment date is not set (NaN) and use the last scan date in that case
+                # Check if the treatment date is not set (NaN) and use the last scan
+                # date in that case
                 if pd.isna(first_treatment_date):
                     first_treatment_date = self.pre_treatment_data[
                         self.pre_treatment_data["Patient_ID"] == patient_id
@@ -1125,7 +1128,8 @@ class TumorAnalysis:
             for patient_id in unique_ids_post:
                 first_treatment_date = self.extract_treatment_dates(patient_id)
 
-                # Check if the treatment date is not set (NaN) and use the last scan date in that case
+                # Check if the treatment date is not set (NaN) and
+                # use the last scan date in that case
                 if pd.isna(first_treatment_date):
                     first_treatment_date = self.post_treatment_data[
                         self.post_treatment_data["Patient_ID"] == patient_id
@@ -1148,7 +1152,7 @@ class TumorAnalysis:
                 if column == "Date_of_First_Progression":
                     # Check for missing Date_of_First_Progression only if Tumor_Progression is True
                     missing_progression_data = self.pre_treatment_data[
-                        (self.pre_treatment_data["Tumor_Progression"] == True)
+                        (self.pre_treatment_data["Tumor_Progression"] is True)
                         & (self.pre_treatment_data["Date_of_First_Progression"].isna())
                     ]
                     if not missing_progression_data.empty:
@@ -1160,7 +1164,7 @@ class TumorAnalysis:
                 if column == "Date_of_First_Progression":
                     # Group the conditions correctly
                     missing_progression_data = self.post_treatment_data[
-                        (self.post_treatment_data["Tumor_Progression"] == True)
+                        (self.post_treatment_data["Tumor_Progression"] is True)
                         & (self.post_treatment_data["Date_of_First_Progression"].isna())
                     ]
                     if not missing_progression_data.empty:
@@ -1238,20 +1242,22 @@ class TumorAnalysis:
             prefix = "pre-treatment"
             # print(self.pre_treatment_data.dtypes)
 
-            self.analyze_pre_treatment(
-                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
-                prefix=prefix,
-                output_dir=output_correlations,
-            )
+            # self.analyze_pre_treatment(
+            #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
+            #     prefix=prefix,
+            #     output_dir=output_correlations,
+            # )
             # print(self.pre_treatment_data.dtypes)
 
             # Additionally to all correlations, let's also do:
             # Survival analysis
-            stratify_by_list = ["Glioma_Type", "Sex", "Mutations", "Age_Group"]
-            for element in stratify_by_list:
-                self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
-            # Growth trajectories
+            # stratify_by_list = ["Glioma_Type", "Sex", "Mutations", "Age_Group"]
+            # for element in stratify_by_list:
+            #     self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
+
+            # Growth trajectories & Trend analysis
             self.model_growth_trajectories(prefix, output_dir=output_stats)
+
             # Tumor stability
             self.analyze_tumor_stability(
                 data=self.pre_treatment_data,
@@ -1279,11 +1285,6 @@ class TumorAnalysis:
             )
             step_idx += 1
 
-        if correlation_cfg.TRENDS:
-            print(f"Step {step_idx}: Starting Trend Analysis...")
-            # TODO: Add trend analysis here
-            step_idx += 1
-
         if correlation_cfg.FEATURE_ENG:
             print(f"Step {step_idx}: Starting Feature Engineering...")
             save_for_deep_learning(self.pre_treatment_data, output_stats, prefix="pre-treatment")
@@ -1297,67 +1298,3 @@ if __name__ == "__main__":
         [correlation_cfg.VOLUMES_CSVs_45, correlation_cfg.VOLUMES_CSVs_63],
     )
     analysis.run_analysis(correlation_cfg.OUTPUT_DIR_CORRELATIONS, correlation_cfg.OUTPUT_DIR_STATS)
-
-
-# def extract_trends(self, data):
-#     trends = {}
-
-#     if data.empty:
-#         return trends
-
-#     # For demonstration, assume we are interested in a time series of tumor_volume
-#     time_series = data.sort_values("Date")["tumor_volume"]
-
-#     # Polynomial Curve Fitting (2nd degree here)
-#     x = np.linspace(0, len(time_series) - 1, len(time_series))
-#     y = time_series.values
-#     coefficients = np.polyfit(x, y, 2)
-#     poly = np.poly1d(coefficients)
-
-#     # Store the polynomial coefficients as features
-#     trends["poly_coef"] = coefficients
-
-#     # Find peaks and valleys
-#     peaks, _ = find_peaks(time_series)
-#     valleys, _ = find_peaks(-1 * time_series)
-
-#     # Store number of peaks and valleys as features
-#     trends["num_peaks"] = len(peaks)
-#     trends["num_valleys"] = len(valleys)
-
-#     # Calculate the mean distance between peaks as a feature (if feasible)
-#     if len(peaks) > 1:
-#         trends["mean_peak_distance"] = np.mean(np.diff(peaks))
-
-#     # Calculate the mean distance between valleys as a feature (if feasible)
-#     if len(valleys) > 1:
-#         trends["mean_valley_distance"] = np.mean(np.diff(valleys))
-
-#     return trends
-
-# def trend_analysis(self, prefix):
-#    self.pre_treatment_data["Time_since_Diagnosis"] = (
-#     self.pre_treatment_data["Date"]
-#     - self.pre_treatment_data["Date_of_Diagnosis"]
-# ).dt.days
-
-#     model = sm.OLS(
-#         self.pre_treatment_data["Growth[%]"],
-#         sm.add_constant(self.pre_treatment_data["Time_since_Diagnosis"])
-#     )
-#     results = model.fit()
-#     print(results.summary())
-
-#     # Visualize trend over time using regression results
-#     fig, ax = plt.subplots(figsize=(10, 6))
-#     sns.regplot(
-#         x="Time_since_Diagnosis", y="Growth[%]", data=self.pre_treatment_data, ax=ax,
-#         line_kws={'label': f"y={results.params['Time_since_Diagnosis']:.2f}x+{results.params['const']:.2f}"}
-#     )
-#     ax.legend()
-#     plt.title("Trend of Tumor Growth Over Time")
-#     plt.xlabel("Time since Diagnosis (days)")
-#     plt.ylabel("Tumor Growth (%)")
-#     plt.tight_layout()
-#     plt.savefig(f"{prefix}_trend_analysis.png")
-#     plt.close()

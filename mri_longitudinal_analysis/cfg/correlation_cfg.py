@@ -25,14 +25,16 @@ SEPARATION = True
 
 # Step 1
 SENSITIVITY = True
-SENSITIVITY_THRESHOLD = 2
+SENSITIVITY_THRESHOLD = 1.5
 
 # Step 2
 PROPENSITY = True
 
 # Step 3
 ANLYSIS = True
-
+EARLY_PROGRESSION_THRESHOLD = 500  # days
+HIGH_RISK_THRESHOLD = 15  # growth rate in percentage that is tolerable
+STABILITY_THRESHOLD = 5
 SAMPLE_SIZE = 300  # for plotting growth trajectories
 UNCHANGING_THRESHOLD = 0.1  # for trakcing stable volumes
 
@@ -41,7 +43,4 @@ CORRECTION = True
 CORRECTION_ALPHA = 0.05
 
 # Step 5
-TRENDS = False
-
-# Step 6
 FEATURE_ENG = False

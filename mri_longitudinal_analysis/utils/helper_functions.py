@@ -7,7 +7,7 @@ from scipy.stats import norm, zscore
 from scipy.stats import pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -543,3 +543,137 @@ def calculate_group_norms_and_stability(data, output_dir):
     plt.close()
 
     return data
+
+
+def calculate_slope(data, patient_id, column_name):
+    """
+    Calculate the slope of the trend line for a patient's data.
+    """
+    patient_data = data[data["Patient_ID"] == patient_id]
+    if len(patient_data) < 2:
+        return None  # Not enough data to calculate a slope
+
+    # Reshape for sklearn
+    x = patient_data["Time_since_First_Scan"].values.reshape(-1, 1)
+    y = patient_data[column_name].values
+
+    # Fit linear model
+    model = LinearRegression()
+    model.fit(x, y)
+    slope = model.coef_[0]
+    return slope
+
+
+def classify_patient(
+    data,
+    patient_id,
+    column_name,
+    early_progression_threshold,
+    stability_threshold,
+    high_risk_threshold,
+):
+    """
+    Classify a patient based on the slope of actual and predicted growth rates.
+    """
+    patient_data = data[data["Patient_ID"] == patient_id]
+    if len(patient_data) < 2:
+        return f"Insufficient Data for patient {patient_id}"
+
+    actual_slope = calculate_slope(data, patient_id, column_name)
+    predicted_slope = calculate_slope(data, patient_id, "Predicted_" + column_name)
+
+    if actual_slope is None or predicted_slope is None:
+        return f"Failed to calculate slope for patient {patient_id}"
+
+    if actual_slope > 0 and predicted_slope > 0:
+        # Determine early vs late progression
+        progression_time = patient_data["Time_since_First_Scan"].iloc[
+            np.argmax(patient_data[column_name] > 0)
+        ]
+        if progression_time < early_progression_threshold:
+            progression_type = "Early Progressor"
+        else:
+            progression_type = "Late Progressor"
+        # Determine risk level based on the magnitude of the slope
+        risk_level = (
+            "High-risk" if max(actual_slope, predicted_slope) > high_risk_threshold else "Low-risk"
+        )
+        return f"{progression_type}, {risk_level}"
+
+    if abs(actual_slope) < stability_threshold and abs(predicted_slope) < stability_threshold:
+        return "Stable"
+    if actual_slope < 0 and predicted_slope < 0:
+        return "Regressor"
+    return "Erratic"
+
+
+def plot_trend_trajectories(data, output_filename, column_name):
+    """
+    Plot the growth trajectories of patients with classifications.
+
+    Parameters:
+    - data: DataFrame containing patient growth data and classifications.
+    - output_filename: Name of the file to save the plot.
+    """
+    plt.figure(figsize=(15, 8))
+
+    # Unique classifications
+    classifications = data["Classification"].unique()
+
+    # Define a color palette
+    palette = sns.color_palette("hsv", len(classifications))
+
+    for classification, color in zip(classifications, palette):
+        # Filter data for each classification
+        class_data = data[data["Classification"] == classification]
+
+        # Plot actual growth
+        sns.lineplot(
+            x="Time_since_First_Scan",
+            y=column_name,
+            data=class_data,
+            label=f"{classification} - Actual",
+            color=color,
+            linestyle="-",
+            alpha=0.7,
+        )
+
+    plt.xlabel("Days Since First Scan")
+    plt.ylabel(f"Tumor {column_name}")
+    plt.title("Patient Trend Trajectories")
+    plt.legend()
+    plt.savefig(output_filename)
+    plt.close()
+
+
+def plot_growth_predictions(data, filename, column_name):
+    """
+    Plot the actual versus predicted values over time.
+
+    Parameters:
+    - filename (str): The filename to save the plot image.
+
+    This method plots the actual and predicted growth percentages from the
+    pre-treatment data and saves the plot as an image.
+    """
+    sns.lineplot(
+        x="Time_since_First_Scan",
+        y=f"{column_name}",
+        data=data,
+        alpha=0.5,
+        color="blue",
+        label=f"Actual {column_name}",
+    )
+    sns.lineplot(
+        x="Time_since_First_Scan",
+        y=f"Predicted_{column_name}",
+        data=data,
+        color="red",
+        label=f"Predicted {column_name}",
+    )
+    plt.xlabel("Days Since First Scan")
+    plt.ylabel(f"Tumor {column_name}")
+    plt.title(f"Actual vs Predicted {column_name} Over Time")
+    plt.legend()
+    plt.savefig(filename)
+    plt.close()
