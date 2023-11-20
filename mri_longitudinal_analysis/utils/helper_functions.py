@@ -545,7 +545,7 @@ def calculate_group_norms_and_stability(data, output_dir):
     return data
 
 
-def calculate_slope(data, patient_id, column_name):
+def calculate_slope_and_angle(data, patient_id, column_name):
     """
     Calculate the slope of the trend line for a patient's data.
     """
@@ -561,7 +561,9 @@ def calculate_slope(data, patient_id, column_name):
     model = LinearRegression()
     model.fit(x, y)
     slope = model.coef_[0]
-    return slope
+    angle = np.arctan(slope) * 180 / np.pi
+
+    return slope, angle
 
 
 def classify_patient(
@@ -579,13 +581,13 @@ def classify_patient(
     if len(patient_data) < 2:
         return f"Insufficient Data for patient {patient_id}"
 
-    actual_slope = calculate_slope(data, patient_id, column_name)
-    predicted_slope = calculate_slope(data, patient_id, "Predicted_" + column_name)
+    _, actual_angle = calculate_slope_and_angle(data, patient_id, column_name)
+    _, predicted_angle = calculate_slope_and_angle(data, patient_id, "Predicted_" + column_name)
 
-    if actual_slope is None or predicted_slope is None:
+    if actual_angle is None or predicted_angle is None:
         return f"Failed to calculate slope for patient {patient_id}"
 
-    if actual_slope > 0 and predicted_slope > 0:
+    if actual_angle > 0 and predicted_angle > 0:
         # Determine early vs late progression
         progression_time = patient_data["Time_since_First_Scan"].iloc[
             np.argmax(patient_data[column_name] > 0)
@@ -596,13 +598,13 @@ def classify_patient(
             progression_type = "Late Progressor"
         # Determine risk level based on the magnitude of the slope
         risk_level = (
-            "High-risk" if max(actual_slope, predicted_slope) > high_risk_threshold else "Low-risk"
+            "High-risk" if max(actual_angle, predicted_angle) > high_risk_threshold else "Low-risk"
         )
         return f"{progression_type}, {risk_level}"
 
-    if abs(actual_slope) < stability_threshold and abs(predicted_slope) < stability_threshold:
+    if abs(actual_angle) < stability_threshold and abs(predicted_angle) < stability_threshold:
         return "Stable"
-    if actual_slope < 0 and predicted_slope < 0:
+    if actual_angle < 0 and predicted_angle < 0:
         return "Regressor"
     return "Erratic"
 

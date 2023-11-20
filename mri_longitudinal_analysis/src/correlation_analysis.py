@@ -817,10 +817,11 @@ class TumorAnalysis:
         ].transform(lambda x: (x - x.min()).dt.days)
 
         column_name = "Growth_pct"
+        column_name_rolling_mean = f"{column_name}_RollingMean"
         pre_treatment_data[column_name] = pd.to_numeric(
             pre_treatment_data["Growth[%]"], errors="coerce"
         )
-        pre_treatment_data[f"{column_name}_RollingMean"] = (
+        pre_treatment_data[f"{column_name_rolling_mean}"] = (
             pre_treatment_data.groupby("Patient_ID")[column_name]
             .rolling(window=3, min_periods=1)
             .mean()
@@ -849,7 +850,7 @@ class TumorAnalysis:
 
         try:
             model = sm.MixedLM.from_formula(
-                "Growth_pct_RollingMean ~ Time_since_First_Scan",
+                f"{column_name_rolling_mean} ~ Time_since_First_Scan",
                 re_formula="~Time_since_First_Scan",
                 groups=filtered_data["Patient_ID"],
                 data=filtered_data,
@@ -866,12 +867,16 @@ class TumorAnalysis:
             else:
                 # print(result.summary())
                 print("\t\tModel converged.")
-                pre_treatment_data[f"Predicted_{column_name}"] = result.predict(pre_treatment_data)
+                pre_treatment_data[f"Predicted_{column_name_rolling_mean}"] = result.predict(
+                    pre_treatment_data
+                )
                 prediciton_plot = os.path.join(
-                    output_dir, f"{prefix}_{column_name}_predictions.png"
+                    output_dir, f"{prefix}_{column_name_rolling_mean}_predictions.png"
                 )
                 plot_growth_predictions(
-                    data=pre_treatment_data, filename=prediciton_plot, column_name=column_name
+                    data=pre_treatment_data,
+                    filename=prediciton_plot,
+                    column_name=column_name_rolling_mean,
                 )
                 print("\t\tSaved growth predictions plot.")
         except ValueError as err:
@@ -893,7 +898,7 @@ class TumorAnalysis:
                 patient_id: classify_patient(
                     pre_treatment_data,
                     patient_id,
-                    column_name,
+                    column_name_rolling_mean,
                     self.early_progression_threshold,
                     self.stability_threshold,
                     self.high_risk_threshold,
@@ -904,7 +909,7 @@ class TumorAnalysis:
                 patient_classifications
             )
             output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
-            plot_trend_trajectories(pre_treatment_data, output_filename, column_name)
+            plot_trend_trajectories(pre_treatment_data, output_filename, column_name_rolling_mean)
 
     def time_to_event_analysis(self, prefix, output_dir, stratify_by=None):
         """

@@ -32,9 +32,9 @@ PROPENSITY = True
 
 # Step 3
 ANLYSIS = True
-EARLY_PROGRESSION_THRESHOLD = 500  # days
-HIGH_RISK_THRESHOLD = 15  # growth rate in percentage that is tolerable
-STABILITY_THRESHOLD = 5
+EARLY_PROGRESSION_THRESHOLD = 365  # days
+HIGH_RISK_THRESHOLD = 45  # angle value that defines high increase
+STABILITY_THRESHOLD = 2  # angle value that defines stability
 SAMPLE_SIZE = 300  # for plotting growth trajectories
 UNCHANGING_THRESHOLD = 0.1  # for trakcing stable volumes
 
