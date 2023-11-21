@@ -25,16 +25,16 @@ SEPARATION = True
 
 # Step 1
 SENSITIVITY = True
-SENSITIVITY_THRESHOLD = 1.5
+SENSITIVITY_THRESHOLD = 2
 
 # Step 2
 PROPENSITY = True
 
 # Step 3
 ANLYSIS = True
-EARLY_PROGRESSION_THRESHOLD = 365  # days
-HIGH_RISK_THRESHOLD = 45  # angle value that defines high increase
-STABILITY_THRESHOLD = 2  # angle value that defines stability
+PROGRESSION_THRESHOLD = 5  # angle value that defines progression
+HIGH_RISK_THRESHOLD = 25  # angle value that defines high increase
+STABILITY_THRESHOLD = 0.5  # angle value that defines stability
 SAMPLE_SIZE = 300  # for plotting growth trajectories
 UNCHANGING_THRESHOLD = 0.1  # for trakcing stable volumes
 

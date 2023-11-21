@@ -337,27 +337,6 @@ def point_bi_serial(data, binary_var, continuous_var):
     return coef, p_val
 
 
-def visualize_time_to_treatment_effect(filtered_data, prefix, path):
-    # Plot the observed vs predicted values
-    _, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(
-        filtered_data["Time_to_Treatment"], filtered_data["Growth[%]"], label="Observed Growth"
-    )
-    ax.plot(
-        filtered_data["Time_to_Treatment"],
-        filtered_data["Predicted_Growth"],
-        color="red",
-        label="Predicted Growth",
-    )
-    ax.set_title("Effect of Time to Treatment on Tumor Growth")
-    ax.set_xlabel("Time to Treatment (days)")
-    ax.set_ylabel("Tumor Growth (%)")
-    ax.legend()
-    plt.tight_layout()
-    filename = os.path.join(path, f"{prefix}_time_to_treatment_effect.png")
-    plt.savefig(filename)
-
-
 #######################################
 # DATA HANDLING and SIMPLE OPERATIONS #
 #######################################
@@ -479,19 +458,19 @@ def categorize_age_group(data, debug=False):
 def calculate_group_norms_and_stability(data, output_dir):
     # Calculate group-wise statistics for each age group
     group_norms = (
-        data.groupby("Age_Group")
+        data.groupby("Age Group")
         .agg(
             {
-                "Volume_RollStd": "median",  # Or mean, based on preference
-                "Growth[%]_RollStd": "median",  # Or mean
+                "Volume RollStd": "mean",  # Or mean, based on preference
+                "Growth[%] RollStd": "mean",  # Or mean
             }
         )
         .reset_index()
     )
 
-    data = data.merge(group_norms, on="Age_Group", suffixes=("", "_GroupNorm"))
-    data["Volume_Stability_Score"] = data["Volume_RollStd"] / data["Volume_RollStd_GroupNorm"]
-    data["Growth_Stability_Score"] = data["Growth[%]_RollStd"] / data["Growth[%]_RollStd_GroupNorm"]
+    data = data.merge(group_norms, on="Age Group", suffixes=("", " GroupNorm"))
+    data["Volume Stability Score"] = data["Volume RollStd"] / data["Volume RollStd GroupNorm"]
+    data["Growth Stability Score"] = data["Growth[%] RollStd"] / data["Growth[%] RollStd GroupNorm"]
     data["Period"] = data["Date"].dt.to_period("M")
 
     # Plotting Stability Scores
@@ -507,33 +486,33 @@ def calculate_group_norms_and_stability(data, output_dir):
     # )
     ax0 = plt.subplot(gs[0, 0])
     heatmap_data = data.pivot_table(
-        index="Age_Group", columns="Period", values="Volume_Stability_Score", aggfunc="median"
+        index="Age Group", columns="Period", values="Volume Stability Score", aggfunc="median"
     )
     sns.heatmap(heatmap_data, cmap="coolwarm", ax=ax0)
     ax0.set_title("Median Volume Stability Score Across Age Groups Over Time")
 
     # Violin Plot
     ax1 = plt.subplot(gs[0, 1])
-    sns.violinplot(x="Age_Group", y="Volume_Stability_Score", data=data, ax=ax1, bw=0.2)
+    sns.violinplot(x="Age Group", y="Volume Stability Score", data=data, ax=ax1, bw=0.2)
     sns.swarmplot(
-        x="Age_Group", y="Volume_Stability_Score", data=data, ax=ax1, color="k", alpha=0.6
+        x="Age Group", y="Volume Stability Score", data=data, ax=ax1, color="k", alpha=0.6, size=1.5
     )
     ax1.set_title("Distribution of Volume Stability Scores Across Age Groups")
 
     # Scatter Plot with Trend Lines
     ax2 = plt.subplot(gs[1:, :])
-    for age_group in data["Age_Group"].unique():
-        group_data = data[data["Age_Group"] == age_group]
+    for age_group in data["Age Group"].unique():
+        group_data = data[data["Age Group"] == age_group]
         group_data = group_data.sort_values("Date")
         moving_average = (
-            group_data["Volume_Stability_Score"].rolling(window=3, min_periods=1).mean()
+            group_data["Volume Stability Score"].rolling(window=3, min_periods=1).mean()
         )
         ax2.plot(group_data["Date"], moving_average, label=age_group)
         # sns.scatterplot(
         #     x="Date", y="Volume_Stability_Score", data=group_data, label=age_group, ax=ax2
         # )
         # sns.lineplot(x="Date", y="Volume_Stability_Score", data=group_data, ax=ax2)
-        ax2.scatter(data["Date"], data["Volume_Stability_Score"], alpha=0.3)
+        ax2.scatter(data["Date"], data["Volume Stability Score"], alpha=0.3)
     ax2.set_title("Scatter Plot of Volume Stability Scores Over Time by Age Group")
     ax2.legend(title="Age Group")
 
@@ -570,7 +549,7 @@ def classify_patient(
     data,
     patient_id,
     column_name,
-    early_progression_threshold,
+    progression_threshold,
     stability_threshold,
     high_risk_threshold,
 ):
@@ -587,26 +566,18 @@ def classify_patient(
     if actual_angle is None or predicted_angle is None:
         return f"Failed to calculate slope for patient {patient_id}"
 
-    if actual_angle > 0 and predicted_angle > 0:
-        # Determine early vs late progression
-        progression_time = patient_data["Time_since_First_Scan"].iloc[
-            np.argmax(patient_data[column_name] > 0)
-        ]
-        if progression_time < early_progression_threshold:
-            progression_type = "Early Progressor"
-        else:
-            progression_type = "Late Progressor"
-        # Determine risk level based on the magnitude of the slope
+    if actual_angle > progression_threshold and predicted_angle > progression_threshold:
+        progression_type = "Progressor"
         risk_level = (
             "High-risk" if max(actual_angle, predicted_angle) > high_risk_threshold else "Low-risk"
         )
         return f"{progression_type}, {risk_level}"
-
-    if abs(actual_angle) < stability_threshold and abs(predicted_angle) < stability_threshold:
+    elif abs(actual_angle) < stability_threshold and abs(predicted_angle) < stability_threshold:
         return "Stable"
-    if actual_angle < 0 and predicted_angle < 0:
+    elif actual_angle < -progression_threshold and predicted_angle < -progression_threshold:
         return "Regressor"
-    return "Erratic"
+    else:
+        return "Erratic"
 
 
 def plot_trend_trajectories(data, output_filename, column_name):
@@ -634,7 +605,7 @@ def plot_trend_trajectories(data, output_filename, column_name):
             x="Time_since_First_Scan",
             y=column_name,
             data=class_data,
-            label=f"{classification} - Actual",
+            label=f"{classification}",
             color=color,
             linestyle="-",
             alpha=0.7,

@@ -57,7 +57,7 @@ class TumorAnalysis:
         self.pre_treatment_data = pd.DataFrame()
         self.p_values = []
         self.coef_values = []
-        self.early_progression_threshold = correlation_cfg.EARLY_PROGRESSION_THRESHOLD
+        self.progression_threshold = correlation_cfg.PROGRESSION_THRESHOLD
         self.stability_threshold = correlation_cfg.STABILITY_THRESHOLD
         self.high_risk_threshold = correlation_cfg.HIGH_RISK_THRESHOLD
         print("Step 0: Initializing TumorAnalysis class...")
@@ -102,7 +102,7 @@ class TumorAnalysis:
         """
         self.clinical_data = pd.read_csv(clinical_data_path)
 
-        self.clinical_data["Treatment_Type"] = self.extract_treatment_types()
+        self.clinical_data["Treatment Type"] = self.extract_treatment_types()
         self.clinical_data["BCH MRN"] = zero_fill(self.clinical_data["BCH MRN"], 7)
 
         diagnosis_to_glioma_type = {
@@ -132,7 +132,7 @@ class TumorAnalysis:
                     return glioma_type
             return "Other"
 
-        self.clinical_data["Glioma_Type"] = self.clinical_data["Pathologic diagnosis"].apply(
+        self.clinical_data["Glioma Type"] = self.clinical_data["Pathologic diagnosis"].apply(
             map_diagnosis
         )
 
@@ -149,31 +149,31 @@ class TumorAnalysis:
             else "No",
             axis=1,
         )
-        self.clinical_data["Date_of_Diagnosis"] = pd.to_datetime(
+        self.clinical_data["Date First Diagnosis"] = pd.to_datetime(
             self.clinical_data["Date of MRI diagnosis"], dayfirst=True
         )
-        self.clinical_data["Date_of_First_Progression"] = pd.to_datetime(
+        self.clinical_data["Date First Progression"] = pd.to_datetime(
             self.clinical_data["Date of First Progression"], dayfirst=True
         )
-        self.clinical_data["Tumor_Progression"] = self.clinical_data["Progression"].map(
+        self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"].map(
             {"Yes": True, "No": False, None: False}
         )
 
         dtype_mapping = {
             "BCH MRN": "string",
-            "Glioma_Type": "category",
+            "Glioma Type": "category",
             "Sex": "category",
             "Race": "category",
             "Mutations": "category",
-            "Treatment_Type": "category",
-            "Tumor_Progression": "bool",
+            "Treatment Type": "category",
+            "Tumor Progression": "bool",
         }
 
         # Apply the type conversions according to the dictionary
         for column, dtype in dtype_mapping.items():
             self.clinical_data[column] = self.clinical_data[column].astype(dtype)
 
-        datetime_columns = ["Date_of_Diagnosis", "Date_of_First_Progression"]
+        datetime_columns = ["Date First Diagnosis", "Date First Progression"]
         all_relevant_columns = list(dtype_mapping.keys()) + datetime_columns
         self.clinical_data_reduced = self.clinical_data[all_relevant_columns]
 
@@ -255,7 +255,7 @@ class TumorAnalysis:
             how="right",
         )
         self.merged_data = self.merged_data.drop(columns=["BCH MRN"])
-        self.merged_data["Age_Group"] = self.merged_data.apply(categorize_age_group, axis=1).astype(
+        self.merged_data["Age Group"] = self.merged_data.apply(categorize_age_group, axis=1).astype(
             "category"
         )
         print("\tMerged clinical and volume data.")
@@ -269,24 +269,24 @@ class TumorAnalysis:
         """
 
         def cumulative_stats(group, variable):
-            group[f"{variable}_CumMean"] = group[variable].expanding().mean()
-            group[f"{variable}_CumMedian"] = group[variable].expanding().median()
-            group[f"{variable}_CumStd"] = group[variable].expanding().std().fillna(0)
+            group[f"{variable} CumMean"] = group[variable].expanding().mean()
+            group[f"{variable} CumMedian"] = group[variable].expanding().median()
+            group[f"{variable} CumStd"] = group[variable].expanding().std().fillna(0)
             return group
 
         def rolling_stats(group, variable, window_size=3, min_periods=1):
-            group[f"{variable}_RollMean"] = (
+            group[f"{variable} RollMean"] = (
                 group[variable].rolling(window=window_size, min_periods=min_periods).mean()
             )
-            group[f"{variable}_RollMedian"] = (
+            group[f"{variable} RollMedian"] = (
                 group[variable].rolling(window=window_size, min_periods=min_periods).median()
             )
-            group[f"{variable}_RollStd"] = (
+            group[f"{variable} RollStd"] = (
                 group[variable].rolling(window=window_size, min_periods=min_periods).std().fillna(0)
             )
             return group
 
-        for var in ["Volume", "Growth[%]"]:
+        for var in ["Volume", "Normalized Volume", "Growth[%]", "Normalized Growth[%]"]:
             self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
                 cumulative_stats, var
             )
@@ -311,9 +311,9 @@ class TumorAnalysis:
             first_treatment_date = self.extract_treatment_dates(patient_id)
             received_treatment = not pd.isna(first_treatment_date)
 
-            data["Date_of_First_Treatment"] = first_treatment_date
-            data["Received_Treatment"] = received_treatment
-            data["No_Treatment"] = False if received_treatment else True
+            data["Date First Treatment"] = first_treatment_date
+            data["Received Treatment"] = received_treatment
+            data["No Treatment"] = False if received_treatment else True
 
             pre_treatment = (
                 data[data["Date"] < first_treatment_date] if received_treatment else data
@@ -332,17 +332,17 @@ class TumorAnalysis:
         self.pre_treatment_data = pd.concat(pre_treatment_data_frames, ignore_index=True)
         self.post_treatment_data = pd.concat(post_treatment_data_frames, ignore_index=True)
 
-        self.pre_treatment_data["Treatment_Type"] = self.pre_treatment_data[
-            "Treatment_Type"
+        self.pre_treatment_data["Treatment Type"] = self.pre_treatment_data[
+            "Treatment Type"
         ].cat.remove_unused_categories()
-        self.post_treatment_data["Treatment_Type"] = self.post_treatment_data[
-            "Treatment_Type"
+        self.post_treatment_data["Treatment Type"] = self.post_treatment_data[
+            "Treatment Type"
         ].cat.remove_unused_categories()
 
         for patient_id in self.pre_treatment_data["Patient_ID"].unique():
             if (
                 self.pre_treatment_data[self.pre_treatment_data["Patient_ID"] == patient_id][
-                    "Date_of_First_Treatment"
+                    "Date First Treatment"
                 ]
                 .isna()
                 .any()
@@ -351,7 +351,7 @@ class TumorAnalysis:
                     self.pre_treatment_data["Patient_ID"] == patient_id
                 ]["Date"].max()
                 self.pre_treatment_data.loc[
-                    self.pre_treatment_data["Patient_ID"] == patient_id, "Date_of_First_Treatment"
+                    self.pre_treatment_data["Patient_ID"] == patient_id, "Date First Treatment"
                 ] = last_scan_date
 
     def extract_treatment_dates(self, patient_id):
@@ -473,48 +473,60 @@ class TumorAnalysis:
         """
         print("\tPre-treatment Correlations:")
         # Data preparation for correlations
-        self.pre_treatment_data["Received_Treatment"] = (
-            self.pre_treatment_data["Received_Treatment"]
+        self.pre_treatment_data["Received Treatment"] = (
+            self.pre_treatment_data["Received Treatment"]
             .map({1: True, 0: False})
             .astype("category")
         )
-        self.pre_treatment_data["Tumor_Progression"] = self.pre_treatment_data[
-            "Tumor_Progression"
+        self.pre_treatment_data["Tumor Progression"] = self.pre_treatment_data[
+            "Tumor Progression"
         ].astype("category")
 
-        self.pre_treatment_data["Time_to_Treatment"] = (
-            self.pre_treatment_data["Date_of_First_Treatment"]
-            - self.pre_treatment_data["Date_of_Diagnosis"]
+        self.pre_treatment_data["Time to Treatment"] = (
+            self.pre_treatment_data["Date First Treatment"]
+            - self.pre_treatment_data["Date First Diagnosis"]
         ).dt.days
 
         # variable types
         categorical_vars = [
-            "Glioma_Type",
+            "Glioma Type",
             # "Race",
-            "Treatment_Type",
-            "Age_Group",
+            "Treatment Type",
+            "Age Group",
             "Sex",
             "Mutations",
-            "Received_Treatment",
-            "Tumor_Progression",
+            "Received Treatment",
+            "Tumor Progression",
         ]
         numerical_vars = [
             "Age",
             "Volume",
             "Growth[%]",
-            "Volume_CumMean",
-            "Volume_CumMedian",
-            "Volume_CumStd",
-            "Volume_RollMean",
-            "Volume_RollMedian",
-            "Volume_RollStd",
-            "Growth[%]_CumMean",
-            "Growth[%]_CumMedian",
-            "Growth[%]_CumStd",
-            "Growth[%]_RollMean",
-            "Growth[%]_RollMedian",
-            "Growth[%]_RollStd",
-            "Time_to_Treatment",
+            "Volume CumMean",
+            "Volume CumMedian",
+            "Volume CumStd",
+            "Volume RollMean",
+            "Volume RollMedian",
+            "Volume RollStd",
+            "Normalized Volume CumMean",
+            "Normalized Volume CumMedian",
+            "Normalized Volume CumStd",
+            "Normalized Volume RollMean",
+            "Normalized Volume RollMedian",
+            "Normalized Volume RollStd",
+            "Growth[%] CumMean",
+            "Growth[%] CumMedian",
+            "Growth[%] CumStd",
+            "Growth[%] RollMean",
+            "Growth[%] RollMedian",
+            "Growth[%] RollStd",
+            "Normalized Growth[%][%] CumMean",
+            "Normalized Growth[%][%] CumMedian",
+            "Normalized Growth[%][%] CumStd",
+            "Normalized Growth[%][%] RollMean",
+            "Normalized Growth[%][%] RollMedian",
+            "Normalized Growth[%][%] RollStd",
+            "Time to Treatment",
         ]
 
         for num_var in numerical_vars:
@@ -547,7 +559,7 @@ class TumorAnalysis:
                     )
             for other_num_var in numerical_vars:
                 if (other_num_var != num_var) and (
-                    not other_num_var.startswith(("Growth[%]_", "Volume_"))
+                    not other_num_var.startswith(("Growth[%] ", "Volume "))
                 ):
                     self.analyze_correlation(
                         num_var,
@@ -584,7 +596,7 @@ class TumorAnalysis:
         """
         print("Post-treatment Correlations:")
         self.analyze_correlation(
-            "Treatment_Type",
+            "Treatment Type",
             "Tumor_Volume_Change",
             self.post_treatment_data,
             prefix,
@@ -592,7 +604,7 @@ class TumorAnalysis:
             method=correlation_method,
         )
         self.analyze_correlation(
-            "Mutation_Type",
+            "Mutations",
             "Tumor_Volume_Change",
             self.post_treatment_data,
             prefix,
@@ -610,10 +622,10 @@ class TumorAnalysis:
 
         # Chi-Squared test
         # chi2, p_val = chi_squared_test(
-        #     self.post_treatment_data["Mutation_Type"], self.post_treatment_data["Treatment_Type"]
+        #     self.post_treatment_data["Mutation_Type"], self.post_treatment_data["Treatment Type"]
         # )
         # print(
-        #     f"Chi-Squared test between Mutation_Type and Treatment_Type: Chi2: {chi2}, P-value:"
+        #     f"Chi-Squared test between Mutation_Type and Treatment Type: Chi2: {chi2}, P-value:"
         #     f" {p_val}"
         # )
 
@@ -726,10 +738,11 @@ class TumorAnalysis:
         #     "Radiation Only",
         #     "No Treatment",
         # ]
-        # sampled_data = sampled_data[sampled_data["Treatment_Type"].isin(included_treatments)]
+        # sampled_data = sampled_data[sampled_data["Treatment Type"].isin(included_treatments)]
 
+        # TODO: rework this
         # sampled_data["Normalized_Growth"] = sampled_data["Growth[%]"] / sampled_data["Volume"]
-        sampled_data["Normalized_Growth"] = sampled_data["Growth[%]_RollMean"]
+        sampled_data["Normalized_Growth"] = sampled_data["Growth[%] RollMean"]
         # Get the median every 6 months
         median_data = (
             sampled_data.groupby(
@@ -745,7 +758,7 @@ class TumorAnalysis:
         )
         # Get the median and mean data based on the datapoints available
         # median_data = (
-        #     sampled_data.groupby("Time_since_First_Scan")["Normalized_Growth"]
+        #     sampled_data.groupby("Time since First Scan")["Normalized_Growth"]
         #     .median()
         #     .reset_index()
         # )
@@ -753,16 +766,16 @@ class TumorAnalysis:
         ax = sns.lineplot(
             x="Time_since_First_Scan",
             y="Normalized_Growth",
-            hue="Treatment_Type",  # "Patient_ID",
+            hue="Treatment Type",  # "Patient_ID",
             data=sampled_data,
             palette="CMRmap",
             legend="brief",  # Set to 'brief' or 'full' if you want the legend
             alpha=0.5,  # Set lower alpha for better visibility when lines overlap
         )
 
-        # mean_data = sampled_data.groupby("Time_since_First_Scan")["Growth_pct"].mean().reset_index()
+        # mean_data = sampled_data.groupby("Time since First Scan")["Growth_pct"].mean().reset_index()
         # sns.lineplot(
-        #     x="Time_since_First_Scan",
+        #     x="Time since First Scan",
         #     y="Growth_pct",
         #     data=mean_data,
         #     color="blue",
@@ -816,7 +829,7 @@ class TumorAnalysis:
             "Date"
         ].transform(lambda x: (x - x.min()).dt.days)
 
-        column_name = "Growth_pct"
+        column_name = "Volume_Change"
         column_name_rolling_mean = f"{column_name}_RollingMean"
         pre_treatment_data[column_name] = pd.to_numeric(
             pre_treatment_data["Growth[%]"], errors="coerce"
@@ -899,7 +912,7 @@ class TumorAnalysis:
                     pre_treatment_data,
                     patient_id,
                     column_name_rolling_mean,
-                    self.early_progression_threshold,
+                    self.progression_threshold,
                     self.stability_threshold,
                     self.high_risk_threshold,
                 )
@@ -926,14 +939,13 @@ class TumorAnalysis:
         # only patients who showed tumor progression before the first treatment
         analysis_data_pre = self.pre_treatment_data.copy()
         analysis_data_pre = analysis_data_pre[
-            analysis_data_pre["Date_of_First_Progression"]
-            < analysis_data_pre["Date_of_First_Treatment"]
+            analysis_data_pre["Date First Progression"] < analysis_data_pre["Date First Treatment"]
         ]
         analysis_data_pre.loc[:, "Duration"] = (
-            analysis_data_pre["Date_of_First_Progression"] - analysis_data_pre["Date_of_Diagnosis"]
+            analysis_data_pre["Date First Progression"] - analysis_data_pre["Date First Diagnosis"]
         ).dt.days
 
-        analysis_data_pre["Event_Occurred"] = ~analysis_data_pre["Date_of_First_Progression"].isna()
+        analysis_data_pre["Event_Occurred"] = ~analysis_data_pre["Date First Progression"].isna()
 
         # TODO: Add cases of survival in the post treatment setting, adjust the data accordingly
         # TODO: Add a if/else condition based on the prefix and generalize data_handling
@@ -986,25 +998,25 @@ class TumorAnalysis:
         data = calculate_group_norms_and_stability(data, output_dir)
 
         # Calculate the Stability Index using weighted scores
-        data["Stability_Index"] = volume_weight * data["Volume_Stability_Score"] + growth_weight * (
-            1 / (data["Growth[%]_RollStd"] + 1)
+        data["Stability Index"] = volume_weight * data["Volume Stability Score"] + growth_weight * (
+            1 / (data["Growth[%] RollStd"] + 1)
         )
 
         # Normalize the Stability Index to have a mean of 1
-        data["Stability_Index"] /= np.mean(data["Stability_Index"])
+        data["Stability Index"] /= np.mean(data["Stability Index"])
 
         # Define thresholds for classification based on the normalized Stability Index
         # Use the 50th percentile (median) as the threshold by default, can be adjusted if needed
-        stability_threshold = np.median(data["Stability_Index"])
+        stability_threshold = np.median(data["Stability Index"])
 
-        data["Tumor_Classification"] = data["Stability_Index"].apply(
+        data["Tumor Classification"] = data["Stability Index"].apply(
             lambda x: "Stable" if x <= stability_threshold else "Unstable"
         )
-        classification_distribution = data["Tumor_Classification"].value_counts(normalize=True)
+        classification_distribution = data["Tumor Classification"].value_counts(normalize=True)
 
         # Visualization of Tumor Classification
         plt.figure(figsize=(10, 6))
-        sns.countplot(x="Age_Group", hue="Tumor_Classification", data=data)
+        sns.countplot(x="Age Group", hue="Tumor Classification", data=data)
         plt.title("Count of Stable vs. Unstable Tumors Across Age Groups")
         plt.xlabel("Age Group")
         plt.ylabel("Count")
@@ -1030,11 +1042,11 @@ class TumorAnalysis:
         # Enhanced Scatter Plot with Labels for Extremes
         plt.figure(figsize=(18, 6))
         ax = sns.scatterplot(
-            x="Date", y="Stability_Index", hue="Tumor_Classification", data=data, alpha=0.6
+            x="Date", y="Stability Index", hue="Tumor Classification", data=data, alpha=0.6
         )
-        extremes = data.nlargest(5, "Stability_Index")  # Adjust the number of points as needed
+        extremes = data.nlargest(5, "Stability Index")  # Adjust the number of points as needed
         for i, point in extremes.iterrows():
-            ax.text(point["Date"], point["Stability_Index"], str(point["Patient_ID"]))
+            ax.text(point["Date"], point["Stability Index"], str(point["Patient_ID"]))
         plt.title("Scatter Plot of Stability Index Over Time by Classification")
         plt.xlabel("Date")
         plt.ylabel("Stability Index")
@@ -1082,17 +1094,17 @@ class TumorAnalysis:
                 print("\tError: Mismatch in patient IDs between original and separated datasets.")
             else:
                 print("\tAll patient IDs are consistent.")
-            # Date_of_First_Treatment is consistent across all records within each dataset.
+            # Date First Treatment is consistent across all records within each dataset.
             # It should be the same in both pre-treatment and post-treatment data for any
             # given patient.
             for patient_id in unique_ids_original:
                 treatment_dates_pre = self.pre_treatment_data[
                     self.pre_treatment_data["Patient_ID"] == patient_id
-                ]["Date_of_First_Treatment"].unique()
+                ]["Date First Treatment"].unique()
 
                 treatment_dates_post = self.post_treatment_data[
                     self.post_treatment_data["Patient_ID"] == patient_id
-                ]["Date_of_First_Treatment"].unique()
+                ]["Date First Treatment"].unique()
 
                 # Check if there's more than one unique treatment date or
                 # inconsistent dates between pre and post datasets
@@ -1108,7 +1120,7 @@ class TumorAnalysis:
                     print(f"\tError: Inconsistent treatment dates for patient {patient_id}")
             print("\tTreatment dates are consistent for all other patients.")
 
-            # All dates in the pre-treatment data are indeed before Date_of_First_Treatment
+            # All dates in the pre-treatment data are indeed before Date First Treatment
             # and all dates in the post-treatment data are on or after this date.
             date_range_issues = False
             for patient_id in unique_ids_pre:
@@ -1154,11 +1166,11 @@ class TumorAnalysis:
 
             # Check for any missing or NaN values in critical columns after the separation process.
             for column in self.pre_treatment_data.columns:
-                if column == "Date_of_First_Progression":
-                    # Check for missing Date_of_First_Progression only if Tumor_Progression is True
+                if column == "Date First Progression":
+                    # Check for missing Date First Progression only if Tumor Progression is True
                     missing_progression_data = self.pre_treatment_data[
-                        (self.pre_treatment_data["Tumor_Progression"] is True)
-                        & (self.pre_treatment_data["Date_of_First_Progression"].isna())
+                        (self.pre_treatment_data["Tumor Progression"] is True)
+                        & (self.pre_treatment_data["Date First Progression"].isna())
                     ]
                     if not missing_progression_data.empty:
                         print(f"\tError: Missing data in pre_treatment column - {column}")
@@ -1166,11 +1178,11 @@ class TumorAnalysis:
                     print(f"\tError: Missing data in pre_treatment column - {column}")
             print("\tNo more missing data in pre_treatment columns.")
             for column in self.post_treatment_data.columns:
-                if column == "Date_of_First_Progression":
+                if column == "Date First Progression":
                     # Group the conditions correctly
                     missing_progression_data = self.post_treatment_data[
-                        (self.post_treatment_data["Tumor_Progression"] is True)
-                        & (self.post_treatment_data["Date_of_First_Progression"].isna())
+                        (self.post_treatment_data["Tumor Progression"] is True)
+                        & (self.post_treatment_data["Date First Progression"].isna())
                     ]
                     if not missing_progression_data.empty:
                         print(f"\tError: Missing data in post-treatment column - {column}")
@@ -1186,18 +1198,18 @@ class TumorAnalysis:
             pre_treatment_vars = [
                 "Volume",
                 "Growth[%]",
-                "Volume_RollMean",
-                "Volume_RollStd",
-                "Growth[%]_RollMean",
-                "Growth[%]_RollStd",
+                "Volume RollMean",
+                "Volume RollStd",
+                "Growth[%] RollMean",
+                "Growth[%] RollStd",
             ]
             post_treatment_vars = [
                 "Volume",
                 "Growth[%]",
-                "Volume_CumMean",
-                "Volume_CumStd",
-                "Growth[%]_CumMean",
-                "Growth[%]_CumStd",
+                "Volume CumMean",
+                "Volume CumStd",
+                "Growth[%] CumMean",
+                "Growth[%] CumStd",
             ]
 
             for pre_var in pre_treatment_vars:
@@ -1226,7 +1238,7 @@ class TumorAnalysis:
             print(f"Step {step_idx}: Performing Propensity Score Matching...")
 
             for data in [self.pre_treatment_data]:
-                treatment_column = "Received_Treatment"
+                treatment_column = "Received Treatment"
                 covariate_columns = ["Age", "Volume", "Growth[%]"]
 
                 data[treatment_column] = data[treatment_column].map({True: 1, False: 0})
@@ -1245,7 +1257,7 @@ class TumorAnalysis:
         if correlation_cfg.ANLYSIS:
             print(f"Step {step_idx}: Starting main analyses...")
             prefix = "pre-treatment"
-            # print(self.pre_treatment_data.dtypes)
+            print(self.pre_treatment_data.dtypes)
 
             # self.analyze_pre_treatment(
             #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
@@ -1256,7 +1268,7 @@ class TumorAnalysis:
 
             # Additionally to all correlations, let's also do:
             # Survival analysis
-            # stratify_by_list = ["Glioma_Type", "Sex", "Mutations", "Age_Group"]
+            # stratify_by_list = ["Glioma Type", "Sex", "Mutations", "Age Group"]
             # for element in stratify_by_list:
             #     self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
 

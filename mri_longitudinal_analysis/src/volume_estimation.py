@@ -381,36 +381,48 @@ class VolumeEstimator:
             with open(csv_file_path, "w", newline="", encoding="utf-8") as csvfile:
                 csv_writer = csv.writer(csvfile)
 
-                # CSV header
+                # Determine header based on whether it's test data or not
+                header = [
+                    "Date",
+                    "Volume",
+                    "Normalized Volume",
+                    "Growth[%]",
+                    "Normalized Growth[%]",
+                ]
                 if not volume_est_cfg.TEST_DATA:
-                    csv_writer.writerow(["Date", "Volume", "Age", "Growth[%]"])
-                else:
-                    csv_writer.writerow(["Date", "Volume", "Growth[%]"])
-
+                    header.insert(3, "Age")  # Insert age before Growth[%]
+                csv_writer.writerow(header)
                 # Sort data by date to ensure time series is in order
                 sorted_volume_data = sorted(volume_data, key=lambda x: x[0])
-
+                initial_volume = sorted_volume_data[0][1] if sorted_volume_data else None
                 previous_volume = None
+
                 for entry in sorted_volume_data:
                     if not volume_est_cfg.TEST_DATA:
                         date, volume, age = entry
-                        if previous_volume:
-                            percentage_growth = ((volume - previous_volume) / previous_volume) * 100
-                        else:
-                            percentage_growth = 0  # No growth for the first data point
-                        csv_writer.writerow(
-                            [date.strftime("%Y-%m-%d"), volume, age, percentage_growth]
-                        )
-                        previous_volume = volume
-
                     else:
                         date, volume = entry
-                        if previous_volume:
-                            percentage_growth = ((volume - previous_volume) / previous_volume) * 100
-                        else:
-                            percentage_growth = 0  # No growth for the first data point
-                        csv_writer.writerow([date.strftime("%Y-%m-%d"), volume, percentage_growth])
-                        previous_volume = volume
+
+                    normalized_volume = volume / initial_volume if initial_volume else 0
+                    percentage_growth = (
+                        ((volume - previous_volume) / previous_volume) * 100
+                        if previous_volume
+                        else 0
+                    )
+                    normalized_growth = percentage_growth / volume if volume else 0
+
+                    row = [
+                        date.strftime("%Y-%m-%d"),
+                        volume,
+                        normalized_volume,
+                        percentage_growth,
+                        normalized_growth,
+                    ]
+                    if not volume_est_cfg.TEST_DATA:
+                        row.insert(3, age)  # Insert age before Growth[%]
+
+                    csv_writer.writerow(row)
+                    previous_volume = volume
 
     def apply_filtering(self, all_ids, filtered_scans) -> defaultdict(list):
         """
