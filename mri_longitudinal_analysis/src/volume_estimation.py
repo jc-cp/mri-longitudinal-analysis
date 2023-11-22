@@ -404,11 +404,7 @@ class VolumeEstimator:
                         date, volume = entry
 
                     normalized_volume = volume / initial_volume if initial_volume else 0
-                    percentage_growth = (
-                        ((volume - previous_volume) / previous_volume) * 100
-                        if previous_volume
-                        else 0
-                    )
+                    percentage_growth = self.calculate_volume_change(previous_volume, volume)
                     normalized_growth = percentage_growth / volume if volume else 0
 
                     row = [

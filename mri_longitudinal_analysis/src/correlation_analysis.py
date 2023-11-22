@@ -60,6 +60,7 @@ class TumorAnalysis:
         self.progression_threshold = correlation_cfg.PROGRESSION_THRESHOLD
         self.stability_threshold = correlation_cfg.STABILITY_THRESHOLD
         self.high_risk_threshold = correlation_cfg.HIGH_RISK_THRESHOLD
+        self.caliper = correlation_cfg.CALIPER
         print("Step 0: Initializing TumorAnalysis class...")
 
         self.validate_files(clinical_data_path, volumes_data_paths)
@@ -508,24 +509,24 @@ class TumorAnalysis:
             "Volume RollMean",
             "Volume RollMedian",
             "Volume RollStd",
-            "Normalized Volume CumMean",
-            "Normalized Volume CumMedian",
-            "Normalized Volume CumStd",
-            "Normalized Volume RollMean",
-            "Normalized Volume RollMedian",
-            "Normalized Volume RollStd",
+            # "Normalized Volume CumMean",
+            # "Normalized Volume CumMedian",
+            # "Normalized Volume CumStd",
+            # "Normalized Volume RollMean",
+            # "Normalized Volume RollMedian",
+            # "Normalized Volume RollStd",
             "Growth[%] CumMean",
             "Growth[%] CumMedian",
             "Growth[%] CumStd",
             "Growth[%] RollMean",
             "Growth[%] RollMedian",
             "Growth[%] RollStd",
-            "Normalized Growth[%][%] CumMean",
-            "Normalized Growth[%][%] CumMedian",
-            "Normalized Growth[%][%] CumStd",
-            "Normalized Growth[%][%] RollMean",
-            "Normalized Growth[%][%] RollMedian",
-            "Normalized Growth[%][%] RollStd",
+            # "Normalized Growth[%] CumMean",
+            # "Normalized Growth[%] CumMedian",
+            # "Normalized Growth[%] CumStd",
+            # "Normalized Growth[%] RollMean",
+            # "Normalized Growth[%] RollMedian",
+            # "Normalized Growth[%] RollStd",
             "Time to Treatment",
         ]
 
@@ -557,10 +558,13 @@ class TumorAnalysis:
                         output_dir,
                         method="ANOVA",
                     )
-            for other_num_var in numerical_vars:
-                if (other_num_var != num_var) and (
-                    not other_num_var.startswith(("Growth[%] ", "Volume "))
-                ):
+            filtered_vars = [
+                var
+                for var in numerical_vars
+                if not var.startswith(("Growth[%] ", "Volume ", "Normalized"))
+            ]
+            for other_num_var in filtered_vars:
+                if other_num_var != num_var:
                     self.analyze_correlation(
                         num_var,
                         other_num_var,
@@ -671,7 +675,7 @@ class TumorAnalysis:
             plt.xticks(rotation=90, fontsize="small")
             title += f"F-statistic: {stat:.2f}, P-value: {p_val:.3e}"
         elif test_type == "chi-squared":
-            contingency_table = pd.crosstab(data[x_val], data[y_val])
+            contingency_table = pd.crosstab(data[y_val], data[x_val])
             sns.heatmap(contingency_table, annot=True, cmap="coolwarm", fmt="g")
             title += f"Chi2: {stat:.2f}, P-value: {p_val:.3e}"
 
@@ -1045,7 +1049,7 @@ class TumorAnalysis:
             x="Date", y="Stability Index", hue="Tumor Classification", data=data, alpha=0.6
         )
         extremes = data.nlargest(5, "Stability Index")  # Adjust the number of points as needed
-        for i, point in extremes.iterrows():
+        for _, point in extremes.iterrows():
             ax.text(point["Date"], point["Stability Index"], str(point["Patient_ID"]))
         plt.title("Scatter Plot of Stability Index Over Time by Classification")
         plt.xlabel("Date")
@@ -1071,8 +1075,6 @@ class TumorAnalysis:
             print(f"Step {step_idx}: Separating data into pre- and post-treatment dataframes...")
 
             self.longitudinal_separation()
-            # print(self.pre_treatment_data["Patient_ID"].nunique())
-            # print(self.post_treatment_data["Patient_ID"].nunique())
 
             assert self.pre_treatment_data.columns.all() == self.post_treatment_data.columns.all()
             assert (len(self.pre_treatment_data) + len(self.post_treatment_data)) == len(
@@ -1198,18 +1200,10 @@ class TumorAnalysis:
             pre_treatment_vars = [
                 "Volume",
                 "Growth[%]",
-                "Volume RollMean",
-                "Volume RollStd",
-                "Growth[%] RollMean",
-                "Growth[%] RollStd",
             ]
             post_treatment_vars = [
                 "Volume",
                 "Growth[%]",
-                "Volume CumMean",
-                "Volume CumStd",
-                "Growth[%] CumMean",
-                "Growth[%] CumStd",
             ]
 
             for pre_var in pre_treatment_vars:
@@ -1231,22 +1225,20 @@ class TumorAnalysis:
                 )
 
             step_idx += 1
-            # print(self.pre_treatment_data["Patient_ID"].nunique())
-            # print(self.post_treatment_data["Patient_ID"].nunique())
 
         if correlation_cfg.PROPENSITY:
             print(f"Step {step_idx}: Performing Propensity Score Matching...")
-
+            print(self.pre_treatment_data.dtypes)
             for data in [self.pre_treatment_data]:
                 treatment_column = "Received Treatment"
-                covariate_columns = ["Age", "Volume", "Growth[%]"]
+                covariate_columns = ["Normalized Volume", "Growth[%]"]
 
                 data[treatment_column] = data[treatment_column].map({True: 1, False: 0})
                 propensity_scores = calculate_propensity_scores(
                     data, treatment_column, covariate_columns
                 )
                 matched_data = perform_propensity_score_matching(
-                    data, propensity_scores, treatment_column, caliper=0.05
+                    data, propensity_scores, treatment_column, caliper=self.caliper
                 )
                 smd_results = check_balance(matched_data, covariate_columns, treatment_column)
 
@@ -1257,7 +1249,7 @@ class TumorAnalysis:
         if correlation_cfg.ANLYSIS:
             print(f"Step {step_idx}: Starting main analyses...")
             prefix = "pre-treatment"
-            print(self.pre_treatment_data.dtypes)
+            # print(self.pre_treatment_data.dtypes)
 
             # self.analyze_pre_treatment(
             #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
@@ -1295,11 +1287,15 @@ class TumorAnalysis:
             visualize_p_value_bonferroni_corrections(
                 self.p_values, corrected_p_values_bonf, alpha, output_stats
             )
+            print("\tBonferroni Correction done. ")
+
             print("\tFalse Discovery Rate Correction... ")
             corrected_p_values_fdr, is_rejected = fdr_correction(self.p_values, alpha=alpha)
             visualize_fdr_correction(
                 self.p_values, corrected_p_values_fdr, is_rejected, alpha, output_stats
             )
+            print("\tFalse Discovery Rate Correction done. ")
+
             step_idx += 1
 
         if correlation_cfg.FEATURE_ENG:

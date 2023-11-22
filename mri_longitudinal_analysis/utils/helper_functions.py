@@ -118,7 +118,7 @@ def bonferroni_correction(p_values, alpha):
 
 
 def visualize_p_value_bonferroni_corrections(original_p_values, corrected_p_values, alpha, path):
-    plt.scatter(original_p_values, corrected_p_values, alpha=0.7)
+    plt.scatter(original_p_values, corrected_p_values, alpha=0.7, cmap="viridis")
     plt.axhline(y=alpha, color="r", linestyle="--", label=f"Alpha={alpha}")
     plt.xlabel("Original P-Values")
     plt.ylabel("Bonferroni Corrected P-Values")
@@ -474,7 +474,7 @@ def calculate_group_norms_and_stability(data, output_dir):
     data["Period"] = data["Date"].dt.to_period("M")
 
     # Plotting Stability Scores
-    fig = plt.figure(figsize=(18, 12))
+    _ = plt.figure(figsize=(18, 12))
     gs = gridspec.GridSpec(
         3,
         2,

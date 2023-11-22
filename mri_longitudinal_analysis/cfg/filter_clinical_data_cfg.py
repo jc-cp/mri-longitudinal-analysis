@@ -22,7 +22,7 @@ OUTPUT_FILE_NAME = OUTPUT_DIR / "output.txt"
 OUTPUT_FILE = True
 
 # Deleting after surgery data points
-REMOVING_SURGERY = True
+REMOVING_SURGERY = False
 DATA_DIR = Path(
     "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/1_no_comments"
 )

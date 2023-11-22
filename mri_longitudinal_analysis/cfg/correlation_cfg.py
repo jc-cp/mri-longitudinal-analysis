@@ -24,11 +24,12 @@ CORRELATION_POST_TREATMENT = "spearman"
 SEPARATION = True
 
 # Step 1
-SENSITIVITY = True
+SENSITIVITY = False
 SENSITIVITY_THRESHOLD = 2
 
 # Step 2
-PROPENSITY = True
+PROPENSITY = False
+CALIPER = 0.1  # usually between 0.05 and 0.2
 
 # Step 3
 ANLYSIS = True
