@@ -40,7 +40,7 @@ SAMPLE_SIZE = 300  # for plotting growth trajectories
 UNCHANGING_THRESHOLD = 0.1  # for trakcing stable volumes
 
 # Step 4
-CORRECTION = True
+CORRECTION = False
 CORRECTION_ALPHA = 0.05
 
 # Step 5

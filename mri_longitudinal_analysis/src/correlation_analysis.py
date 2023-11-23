@@ -35,6 +35,7 @@ from utils.helper_functions import (
     classify_patient,
     plot_trend_trajectories,
     plot_growth_predictions,
+    plot_individual_trajectories,
 )
 
 
@@ -61,6 +62,7 @@ class TumorAnalysis:
         self.stability_threshold = correlation_cfg.STABILITY_THRESHOLD
         self.high_risk_threshold = correlation_cfg.HIGH_RISK_THRESHOLD
         self.caliper = correlation_cfg.CALIPER
+        self.sample_size_plots = correlation_cfg.SAMPLE_SIZE
         print("Step 0: Initializing TumorAnalysis class...")
 
         self.validate_files(clinical_data_path, volumes_data_paths)
@@ -205,6 +207,12 @@ class TumorAnalysis:
             print(f"\tLoaded volume data {volumes_data_path}.")
         self.volumes_data = pd.concat(data_frames, ignore_index=True)
         self.volumes_data["Date"] = pd.to_datetime(self.volumes_data["Date"], format="%Y-%m-%d")
+        self.volumes_data = self.volumes_data.rename(
+            columns={
+                "Growth[%]": "Volume Change [%]",
+                "Normalized Growth[%]": "Normalized Volume Change [%]",
+            }
+        )
 
     def extract_treatment_types(self):
         """
@@ -287,7 +295,12 @@ class TumorAnalysis:
             )
             return group
 
-        for var in ["Volume", "Normalized Volume", "Growth[%]", "Normalized Growth[%]"]:
+        for var in [
+            "Volume",
+            "Normalized Volume",
+            "Volume Change [%]",
+            "Normalized Volume Change [%]",
+        ]:
             self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
                 cumulative_stats, var
             )
@@ -502,7 +515,7 @@ class TumorAnalysis:
         numerical_vars = [
             "Age",
             "Volume",
-            "Growth[%]",
+            "Volume Change [%]",
             "Volume CumMean",
             "Volume CumMedian",
             "Volume CumStd",
@@ -515,18 +528,18 @@ class TumorAnalysis:
             # "Normalized Volume RollMean",
             # "Normalized Volume RollMedian",
             # "Normalized Volume RollStd",
-            "Growth[%] CumMean",
-            "Growth[%] CumMedian",
-            "Growth[%] CumStd",
-            "Growth[%] RollMean",
-            "Growth[%] RollMedian",
-            "Growth[%] RollStd",
-            # "Normalized Growth[%] CumMean",
-            # "Normalized Growth[%] CumMedian",
-            # "Normalized Growth[%] CumStd",
-            # "Normalized Growth[%] RollMean",
-            # "Normalized Growth[%] RollMedian",
-            # "Normalized Growth[%] RollStd",
+            "Volume Change [%] CumMean",
+            "Volume Change [%] CumMedian",
+            "Volume Change [%] CumStd",
+            "Volume Change [%] RollMean",
+            "Volume Change [%] RollMedian",
+            "Volume Change [%] RollStd",
+            # "Normalized Volume Change [%] CumMean",
+            # "Normalized Volume Change [%] CumMedian",
+            # "Normalized Volume Change [%] CumStd",
+            # "Normalized Volume Change [%] RollMean",
+            # "Normalized Volume Change [%] RollMedian",
+            # "Normalized Volume Change [%] RollStd",
             "Time to Treatment",
         ]
 
@@ -561,7 +574,7 @@ class TumorAnalysis:
             filtered_vars = [
                 var
                 for var in numerical_vars
-                if not var.startswith(("Growth[%] ", "Volume ", "Normalized"))
+                if not var.startswith(("Volume Change [%] ", "Volume ", "Normalized"))
             ]
             for other_num_var in filtered_vars:
                 if other_num_var != num_var:
@@ -710,110 +723,6 @@ class TumorAnalysis:
             plt.savefig(heat_map_file)
             plt.close()
 
-    def plot_individual_trajectories(self, name, data, sample_size):
-        """
-        Plot the individual growth trajectories for a sample of patients.
-
-        Parameters:
-        - name (str): The filename to save the plot image.
-
-        This method samples a n number of unique patient IDs from the pre-treatment data,
-        plots their tumor growth percentage over time, and saves the plot to the specified filename.
-        """
-        plt.figure(figsize=(10, 6))
-
-        # Error handling for sample size
-        unique_patient_count = data["Patient_ID"].nunique()
-        if sample_size > unique_patient_count:
-            print(
-                f"\t\tSample size {sample_size} is greater than the number of unique patients"
-                f" {unique_patient_count}. Using {unique_patient_count} instead."
-            )
-            sample_size = unique_patient_count
-
-        # Get the sample IDs and data
-        sample_ids = data["Patient_ID"].drop_duplicates().sample(n=sample_size)
-        sampled_data = data[data["Patient_ID"].isin(sample_ids)]
-        # Cutoff the data at 4000 days
-        sampled_data = sampled_data[sampled_data["Time_since_First_Scan"] <= 4000]
-        # included_treatments = [
-        #     "Surgery Only",
-        #     "Chemotherapy Only",
-        #     "Radiation Only",
-        #     "No Treatment",
-        # ]
-        # sampled_data = sampled_data[sampled_data["Treatment Type"].isin(included_treatments)]
-
-        # TODO: rework this
-        # sampled_data["Normalized_Growth"] = sampled_data["Growth[%]"] / sampled_data["Volume"]
-        sampled_data["Normalized_Growth"] = sampled_data["Growth[%] RollMean"]
-        # Get the median every 6 months
-        median_data = (
-            sampled_data.groupby(
-                pd.cut(
-                    sampled_data["Time_since_First_Scan"],
-                    pd.interval_range(
-                        start=0, end=sampled_data["Time_since_First_Scan"].max(), freq=182
-                    ),
-                )
-            )["Normalized_Growth"]
-            .median()
-            .reset_index()
-        )
-        # Get the median and mean data based on the datapoints available
-        # median_data = (
-        #     sampled_data.groupby("Time since First Scan")["Normalized_Growth"]
-        #     .median()
-        #     .reset_index()
-        # )
-
-        ax = sns.lineplot(
-            x="Time_since_First_Scan",
-            y="Normalized_Growth",
-            hue="Treatment Type",  # "Patient_ID",
-            data=sampled_data,
-            palette="CMRmap",
-            legend="brief",  # Set to 'brief' or 'full' if you want the legend
-            alpha=0.5,  # Set lower alpha for better visibility when lines overlap
-        )
-
-        # mean_data = sampled_data.groupby("Time since First Scan")["Growth_pct"].mean().reset_index()
-        # sns.lineplot(
-        #     x="Time since First Scan",
-        #     y="Growth_pct",
-        #     data=mean_data,
-        #     color="blue",
-        #     linestyle="--",
-        #     label="Mean Trajectory",
-        # )
-
-        sns.lineplot(
-            x=median_data["Time_since_First_Scan"].apply(lambda x: x.mid),
-            y="Normalized_Growth",
-            data=median_data,
-            color="blue",
-            linestyle="--",
-            label="Median Trajectory",
-        )
-
-        plt.xlabel("Days Since First Scan")
-        plt.ylabel("Tumor Growth Pct -- Rolling Mean")
-        plt.title("Individual Growth Trajectories")
-
-        # Adjust the legend to only include the categories present in the filtered data
-        # handles, labels = ax.get_legend_handles_labels()
-        # filtered_labels_handles = dict(zip(labels, handles))
-        # included_handles = [
-        #     filtered_labels_handles[label]
-        #     for label in included_treatments
-        #     if label in filtered_labels_handles
-        # ]
-        # ax.legend(included_handles, included_treatments)
-
-        plt.legend()
-        plt.savefig(name)
-        plt.close()
-
     def model_growth_trajectories(self, prefix, output_dir):
         """
         Model the growth trajectories of patients using a mixed-effects linear model.
@@ -833,100 +742,125 @@ class TumorAnalysis:
             "Date"
         ].transform(lambda x: (x - x.min()).dt.days)
 
-        column_name = "Volume_Change"
-        column_name_rolling_mean = f"{column_name}_RollingMean"
-        pre_treatment_data[column_name] = pd.to_numeric(
-            pre_treatment_data["Growth[%]"], errors="coerce"
+        # Plot the overlaying curves plots
+        volume_change_trajectories_plot = os.path.join(
+            output_dir, f"{prefix}_volume_change_trajectories_plot.png"
         )
-        pre_treatment_data[f"{column_name_rolling_mean}"] = (
-            pre_treatment_data.groupby("Patient_ID")[column_name]
-            .rolling(window=3, min_periods=1)
-            .mean()
-            .reset_index(level=0, drop=True)
+        plot_individual_trajectories(
+            volume_change_trajectories_plot,
+            data=pre_treatment_data,
+            column="Volume Change [%]",
+            sample_size=self.sample_size_plots,
+        )
+        normalized_volume_trajectories_plot = os.path.join(
+            output_dir, f"{prefix}_normalized_volume_trajectories_plot.png"
+        )
+        plot_individual_trajectories(
+            normalized_volume_trajectories_plot,
+            data=pre_treatment_data,
+            column="Normalized Volume",
+            sample_size=self.sample_size_plots,
         )
 
-        # TODO: adjust for post-treatment data
-
-        # Ensure we have enough data points per patient
-        sufficient_data_patients = (
-            pre_treatment_data.groupby("Patient_ID")
-            .filter(lambda x: len(x) >= 3)["Patient_ID"]
-            .unique()
-        )
-        filtered_data = pre_treatment_data[
-            pre_treatment_data["Patient_ID"].isin(sufficient_data_patients)
+        category_list = [
+            "Sex",
+            "Mutations",
+            "Tumor Progression",
+            "Received Treatment",
+            "Glioma Type",
         ]
-
-        # Reset index after filtering
-        filtered_data.reset_index(drop=True, inplace=True)
-
-        # Continue with filtered data
-        if filtered_data.empty:
-            print("No patients have enough data points for mixed-effects model analysis.")
-            return
-
-        try:
-            model = sm.MixedLM.from_formula(
-                f"{column_name_rolling_mean} ~ Time_since_First_Scan",
-                re_formula="~Time_since_First_Scan",
-                groups=filtered_data["Patient_ID"],
-                data=filtered_data,
+        for cat in category_list:
+            cat_volume_change_name = os.path.join(
+                output_dir, f"{prefix}_{cat}_volume_change_trajectories_plot.png"
             )
-            # pylint: disable=unexpected-keyword-arg
-            result = model.fit(reml=False, method="nm", maxiter=200)
-            # Using method Nelder-Mead optimization, although not really needed
-            # 200 iterations for kernel smoothed data
-            # result = model.fit()  # Using default optimization, fails to converge
-
-            if not result.converged:
-                print("\t\tModel did not converge, try simplifying the model or check the data.")
-                return None
-            else:
-                # print(result.summary())
-                print("\t\tModel converged.")
-                pre_treatment_data[f"Predicted_{column_name_rolling_mean}"] = result.predict(
-                    pre_treatment_data
-                )
-                prediciton_plot = os.path.join(
-                    output_dir, f"{prefix}_{column_name_rolling_mean}_predictions.png"
-                )
-                plot_growth_predictions(
-                    data=pre_treatment_data,
-                    filename=prediciton_plot,
-                    column_name=column_name_rolling_mean,
-                )
-                print("\t\tSaved growth predictions plot.")
-        except ValueError as err:
-            print(f"ValueError: {err}")
-
-        finally:
-            growth_trajectories_plot = os.path.join(
-                output_dir, f"{prefix}_growth_trajectories_plot.png"
-            )
-            self.plot_individual_trajectories(
-                growth_trajectories_plot,
+            plot_individual_trajectories(
+                cat_volume_change_name,
                 data=pre_treatment_data,
-                sample_size=correlation_cfg.SAMPLE_SIZE,
+                column="Volume Change [%]",
+                category_column=cat,
+                sample_size=self.sample_size_plots,
             )
-            print("\t\tSaved growth trajectories plot.")
+            cat_normalized_volume_name = os.path.join(
+                output_dir, f"{prefix}_{cat}_normalized_volume_trajectories_plot.png"
+            )
+            plot_individual_trajectories(
+                cat_normalized_volume_name,
+                data=pre_treatment_data,
+                column="Normalized Volume",
+                category_column=cat,
+                sample_size=self.sample_size_plots,
+            )
 
-            print("\tStarting Trend Analysis:")
-            patient_classifications = {
-                patient_id: classify_patient(
-                    pre_treatment_data,
-                    patient_id,
-                    column_name_rolling_mean,
-                    self.progression_threshold,
-                    self.stability_threshold,
-                    self.high_risk_threshold,
-                )
-                for patient_id in sufficient_data_patients
-            }
-            pre_treatment_data["Classification"] = pre_treatment_data["Patient_ID"].map(
-                patient_classifications
-            )
-            output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
-            plot_trend_trajectories(pre_treatment_data, output_filename, column_name_rolling_mean)
+        # try:
+        #     # Ensure we have enough data points per patient
+        #     sufficient_data_patients = (
+        #         pre_treatment_data.groupby("Patient_ID")
+        #         .filter(lambda x: len(x) >= 3)["Patient_ID"]
+        #         .unique()
+        #     )
+        #     filtered_data = pre_treatment_data[
+        #         pre_treatment_data["Patient_ID"].isin(sufficient_data_patients)
+        #     ]
+
+        #     # Reset index after filtering
+        #     filtered_data.reset_index(drop=True, inplace=True)
+
+        #     # Continue with filtered data
+        #     if filtered_data.empty:
+        #         print("No patients have enough data points for mixed-effects model analysis.")
+        #         return
+
+        #     model = sm.MixedLM.from_formula(
+        #         f"{column_name_rolling_mean} ~ Time_since_First_Scan",
+        #         re_formula="~Time_since_First_Scan",
+        #         groups=filtered_data["Patient_ID"],
+        #         data=filtered_data,
+        #     )
+        #     # pylint: disable=unexpected-keyword-arg
+        #     result = model.fit(reml=False, method="nm", maxiter=200)
+        #     # Using method Nelder-Mead optimization, although not really needed
+        #     # 200 iterations for kernel smoothed data
+        #     # result = model.fit()  # Using default optimization, fails to converge
+
+        #     if not result.converged:
+        #         print("\t\tModel did not converge, try simplifying the model or check the data.")
+        #         return None
+        #     else:
+        #         # print(result.summary())
+        #         print("\t\tModel converged.")
+        #         pre_treatment_data[f"Predicted_{column_name_rolling_mean}"] = result.predict(
+        #             pre_treatment_data
+        #         )
+        #         prediciton_plot = os.path.join(
+        #             output_dir, f"{prefix}_{column_name_rolling_mean}_predictions.png"
+        #         )
+        #         plot_growth_predictions(
+        #             data=pre_treatment_data,
+        #             filename=prediciton_plot,
+        #             column_name=column_name_rolling_mean,
+        #         )
+        #         print("\t\tSaved growth predictions plot.")
+        # except ValueError as err:
+        #     print(f"ValueError: {err}")
+
+        # finally:
+        # print("\tStarting Trend Analysis:")
+        # patient_classifications = {
+        #     patient_id: classify_patient(
+        #         pre_treatment_data,
+        #         patient_id,
+        #         column_name_rolling_mean,
+        #         self.progression_threshold,
+        #         self.stability_threshold,
+        #         self.high_risk_threshold,
+        #     )
+        #     for patient_id in sufficient_data_patients
+        # }
+        # pre_treatment_data["Classification"] = pre_treatment_data["Patient_ID"].map(
+        #     patient_classifications
+        # )
+        # output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
+        # plot_trend_trajectories(pre_treatment_data, output_filename, column_name_rolling_mean)
 
     def time_to_event_analysis(self, prefix, output_dir, stratify_by=None):
         """
@@ -1003,7 +937,7 @@ class TumorAnalysis:
 
         # Calculate the Stability Index using weighted scores
         data["Stability Index"] = volume_weight * data["Volume Stability Score"] + growth_weight * (
-            1 / (data["Growth[%] RollStd"] + 1)
+            1 / (data["Volume Change [%] RollStd"] + 1)
         )
 
         # Normalize the Stability Index to have a mean of 1
@@ -1199,11 +1133,11 @@ class TumorAnalysis:
 
             pre_treatment_vars = [
                 "Volume",
-                "Growth[%]",
+                "Volume Change [%]",
             ]
             post_treatment_vars = [
                 "Volume",
-                "Growth[%]",
+                "Volume Change [%]",
             ]
 
             for pre_var in pre_treatment_vars:
@@ -1231,7 +1165,7 @@ class TumorAnalysis:
             print(self.pre_treatment_data.dtypes)
             for data in [self.pre_treatment_data]:
                 treatment_column = "Received Treatment"
-                covariate_columns = ["Normalized Volume", "Growth[%]"]
+                covariate_columns = ["Normalized Volume", "Volume Change [%]"]
 
                 data[treatment_column] = data[treatment_column].map({True: 1, False: 0})
                 propensity_scores = calculate_propensity_scores(

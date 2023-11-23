@@ -11,6 +11,7 @@ from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.lines as lines
 import seaborn as sns
 
 
@@ -462,7 +463,7 @@ def calculate_group_norms_and_stability(data, output_dir):
         .agg(
             {
                 "Volume RollStd": "mean",  # Or mean, based on preference
-                "Growth[%] RollStd": "mean",  # Or mean
+                "Volume Change [%] RollStd": "mean",  # Or mean
             }
         )
         .reset_index()
@@ -470,7 +471,9 @@ def calculate_group_norms_and_stability(data, output_dir):
 
     data = data.merge(group_norms, on="Age Group", suffixes=("", " GroupNorm"))
     data["Volume Stability Score"] = data["Volume RollStd"] / data["Volume RollStd GroupNorm"]
-    data["Growth Stability Score"] = data["Growth[%] RollStd"] / data["Growth[%] RollStd GroupNorm"]
+    data["Growth Stability Score"] = (
+        data["Volume Change [%] RollStd"] / data["Volume Change [%] RollStd GroupNorm"]
+    )
     data["Period"] = data["Date"].dt.to_period("M")
 
     # Plotting Stability Scores
@@ -650,3 +653,132 @@ def plot_growth_predictions(data, filename, column_name):
     plt.legend()
     plt.savefig(filename)
     plt.close()
+
+
+def plot_individual_trajectories(name, data, column, sample_size=None, category_column=None):
+    """
+    Plot the individual trajectories for a sample of patients.
+
+    Parameters:
+    - name (str): The filename to save the plot image.
+
+    This method samples a n number of unique patient IDs from the pre-treatment data,
+    plots their variable trajectories, and saves the plot to the specified filename.
+    """
+    plt.figure(figsize=(10, 6))
+
+    # Error handling for sample size
+    if sample_size:
+        # Sample a subset of patients if sample_size is provided
+        unique_patient_count = data["Patient_ID"].nunique()
+        if sample_size > unique_patient_count:
+            print(
+                f"\t\tSample size {sample_size} is greater than the number of unique patients"
+                f" {unique_patient_count}. Using {unique_patient_count} instead."
+            )
+            sample_size = unique_patient_count
+
+        sample_ids = data["Patient_ID"].drop_duplicates().sample(n=sample_size)
+        plot_data = data[data["Patient_ID"].isin(sample_ids)]
+    else:
+        # Use all data if no sample_size is specified
+        plot_data = data
+
+    # Cutoff the data at 4000 days
+    plot_data = plot_data[plot_data["Time_since_First_Scan"] <= 4000]
+
+    # Get the median every 3 months
+    median_data = (
+        plot_data.groupby(
+            pd.cut(
+                plot_data["Time_since_First_Scan"],
+                pd.interval_range(start=0, end=plot_data["Time_since_First_Scan"].max(), freq=91),
+            )
+        )[column]
+        .median()
+        .reset_index()
+    )
+
+    if category_column:
+        categories = plot_data[category_column].unique()
+        patient_palette = sns.color_palette("hsv", len(categories))
+        median_palette = sns.color_palette("Set2", len(categories))
+        legend_handles = []
+
+        for (category, patient_color), median_color in zip(
+            zip(categories, patient_palette), median_palette
+        ):
+            category_data = plot_data[plot_data[category_column] == category]
+            median_data_category = (
+                category_data.groupby(
+                    pd.cut(
+                        category_data["Time_since_First_Scan"],
+                        pd.interval_range(
+                            start=0, end=category_data["Time_since_First_Scan"].max(), freq=91
+                        ),
+                    )
+                )[column]
+                .median()
+                .reset_index()
+            )
+            legend_handles.append(
+                lines.Line2D([], [], color=patient_color, label=f"{category_column} {category}")
+            )
+            for patient_id in category_data["Patient_ID"].unique():
+                patient_data = category_data[category_data["Patient_ID"] == patient_id]
+                plt.plot(
+                    patient_data["Time_since_First_Scan"],
+                    patient_data[column],
+                    color=patient_color,
+                    alpha=0.5,
+                    linewidth=1,
+                )
+            sns.lineplot(
+                x=median_data_category["Time_since_First_Scan"].apply(lambda x: x.mid),
+                y=column,
+                data=median_data_category,
+                color=median_color,
+                linestyle="--",
+                label=f"{category_column} {category} Median Trajectory",
+            )
+
+        sns.lineplot(
+            x=median_data["Time_since_First_Scan"].apply(lambda x: x.mid),
+            y=column,
+            data=median_data,
+            color="red",
+            linestyle="--",
+            label="Cohort Median Trajectory",
+        )
+        # Retrieve the handles and labels from the current plot
+        handles, _ = plt.gca().get_legend_handles_labels()
+        # Combine custom category handles with the median trajectory handles
+        combined_handles = legend_handles + handles[-(len(categories) + 1) :]
+
+        plt.title(f"Individual Tumor {column} Trajectories by {category_column}")
+        plt.legend(handles=combined_handles)
+
+    else:
+        # Plot each patient's data
+        for patient_id in plot_data["Patient_ID"].unique():
+            patient_data = plot_data[plot_data["Patient_ID"] == patient_id]
+            plt.plot(
+                patient_data["Time_since_First_Scan"], patient_data[column], alpha=0.5, linewidth=1
+            )
+
+        sns.lineplot(
+            x=median_data["Time_since_First_Scan"].apply(lambda x: x.mid),
+            y=column,
+            data=median_data,
+            color="blue",
+            linestyle="--",
+            label="Median Trajectory",
+        )
+        plt.title(f"Individual Tumor {column} Trajectories")
+        plt.legend()
+
+    plt.xlabel("Days Since First Scan")
+    plt.ylabel(f"Tumor {column}")
+    plt.savefig(name)
+    plt.close()
+    print(f"\t\tSaved tumor {column} trajectories plot.")
