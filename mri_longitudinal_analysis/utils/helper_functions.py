@@ -527,7 +527,7 @@ def calculate_group_norms_and_stability(data, output_dir):
     return data
 
 
-def calculate_slope_and_angle(data, patient_id, column_name):
+def calculate_slope_and_angle(data, patient_id, column_name, end_points=False):
     """
     Calculate the slope of the trend line for a patient's data.
     """
@@ -535,9 +535,19 @@ def calculate_slope_and_angle(data, patient_id, column_name):
     if len(patient_data) < 2:
         return None  # Not enough data to calculate a slope
 
-    # Reshape for sklearn
-    x = patient_data["Time_since_First_Scan"].values.reshape(-1, 1)
-    y = patient_data[column_name].values
+    if end_points:
+        # Use only the first and last data points
+        x = np.array(
+            [
+                patient_data["Time_since_First_Scan"].iloc[0],
+                patient_data["Time_since_First_Scan"].iloc[-1],
+            ]
+        ).reshape(-1, 1)
+        y = np.array([patient_data[column_name].iloc[0], patient_data[column_name].iloc[-1]])
+    else:
+        # Reshape for sklearn
+        x = patient_data["Time_since_First_Scan"].values.reshape(-1, 1)
+        y = patient_data[column_name].values
 
     # Fit linear model
     model = LinearRegression()
@@ -555,32 +565,50 @@ def classify_patient(
     progression_threshold,
     stability_threshold,
     high_risk_threshold,
+    end_points=False,
+    angle=False,
 ):
     """
     Classify a patient based on the slope of actual and predicted growth rates.
     """
+    data = data.sort_values(by="Time_since_First_Scan")
     patient_data = data[data["Patient_ID"] == patient_id]
+
     if len(patient_data) < 2:
         return f"Insufficient Data for patient {patient_id}"
 
-    _, actual_angle = calculate_slope_and_angle(data, patient_id, column_name)
-    _, predicted_angle = calculate_slope_and_angle(data, patient_id, "Predicted_" + column_name)
+    if angle:
+        _, actual_angle = calculate_slope_and_angle(data, patient_id, column_name, end_points)
 
-    if actual_angle is None or predicted_angle is None:
-        return f"Failed to calculate slope for patient {patient_id}"
+        if actual_angle is None:
+            return f"Failed to calculate slope for patient {patient_id}"
 
-    if actual_angle > progression_threshold and predicted_angle > progression_threshold:
-        progression_type = "Progressor"
-        risk_level = (
-            "High-risk" if max(actual_angle, predicted_angle) > high_risk_threshold else "Low-risk"
-        )
-        return f"{progression_type}, {risk_level}"
-    elif abs(actual_angle) < stability_threshold and abs(predicted_angle) < stability_threshold:
-        return "Stable"
-    elif actual_angle < -progression_threshold and predicted_angle < -progression_threshold:
-        return "Regressor"
+        if actual_angle > progression_threshold:
+            progression_type = "Progressor"
+            risk_level = "High-risk" if actual_angle > high_risk_threshold else "Low-risk"
+            return f"{progression_type}, {risk_level}"
+        elif abs(actual_angle) < stability_threshold:
+            return "Stable"
+        elif actual_angle < -progression_threshold:
+            return "Regressor"
+        else:
+            return "Erratic"
     else:
-        return "Erratic"
+        first_value = patient_data[column_name].iloc[0]
+        last_value = patient_data[column_name].iloc[-1]
+        progression_threshold = 25
+        # Calculate percentage change
+        if first_value == 0:
+            return "Erratic"  # Avoid division by zero
+
+        percent_change = ((last_value - first_value) / first_value) * 100
+
+        if percent_change >= progression_threshold:
+            return "Progressor"
+        elif percent_change <= -progression_threshold:
+            return "Regressor"
+        else:
+            return "Stable"
 
 
 def plot_trend_trajectories(data, output_filename, column_name):
@@ -593,25 +621,47 @@ def plot_trend_trajectories(data, output_filename, column_name):
     """
     plt.figure(figsize=(15, 8))
 
-    # Unique classifications
+    # Unique classifications & palette
+    data = data[data["Time_since_First_Scan"] <= 4000]
     classifications = data["Classification"].unique()
 
-    # Define a color palette
     palette = sns.color_palette("hsv", len(classifications))
 
     for classification, color in zip(classifications, palette):
-        # Filter data for each classification
         class_data = data[data["Classification"] == classification]
+        # Plot individual trajectories
 
-        # Plot actual growth
+        for patient_id in class_data["Patient_ID"].unique():
+            patient_data = class_data[class_data["Patient_ID"] == patient_id]
+
+            plt.plot(
+                patient_data["Time_since_First_Scan"],
+                patient_data[column_name],
+                color=color,
+                alpha=0.5,
+                linewidth=1,
+            )
+            # Plot median trajectory for each classification
+        median_data = (
+            class_data.groupby(
+                pd.cut(
+                    class_data["Time_since_First_Scan"],
+                    pd.interval_range(
+                        start=0, end=class_data["Time_since_First_Scan"].max(), freq=91
+                    ),
+                )
+            )[column_name]
+            .median()
+            .reset_index()
+        )
         sns.lineplot(
-            x="Time_since_First_Scan",
+            x=median_data["Time_since_First_Scan"].apply(lambda x: x.mid),
             y=column_name,
-            data=class_data,
-            label=f"{classification}",
+            data=median_data,
             color=color,
-            linestyle="-",
-            alpha=0.7,
+            linestyle="--",
+            label=f"{classification} Median",
+            linewidth=2.5,
         )
 
     plt.xlabel("Days Since First Scan")

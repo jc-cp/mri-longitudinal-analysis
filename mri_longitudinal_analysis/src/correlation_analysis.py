@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import numpy as np
-import statsmodels.api as sm
 from cfg import correlation_cfg
 from lifelines import KaplanMeierFitter
 from utils.helper_functions import (
@@ -34,7 +33,6 @@ from utils.helper_functions import (
     calculate_group_norms_and_stability,
     classify_patient,
     plot_trend_trajectories,
-    plot_growth_predictions,
     plot_individual_trajectories,
 )
 
@@ -61,6 +59,7 @@ class TumorAnalysis:
         self.progression_threshold = correlation_cfg.PROGRESSION_THRESHOLD
         self.stability_threshold = correlation_cfg.STABILITY_THRESHOLD
         self.high_risk_threshold = correlation_cfg.HIGH_RISK_THRESHOLD
+        self.end_points = correlation_cfg.END_POINTS
         self.caliper = correlation_cfg.CALIPER
         self.sample_size_plots = correlation_cfg.SAMPLE_SIZE
         print("Step 0: Initializing TumorAnalysis class...")
@@ -791,76 +790,7 @@ class TumorAnalysis:
                 sample_size=self.sample_size_plots,
             )
 
-        # try:
-        #     # Ensure we have enough data points per patient
-        #     sufficient_data_patients = (
-        #         pre_treatment_data.groupby("Patient_ID")
-        #         .filter(lambda x: len(x) >= 3)["Patient_ID"]
-        #         .unique()
-        #     )
-        #     filtered_data = pre_treatment_data[
-        #         pre_treatment_data["Patient_ID"].isin(sufficient_data_patients)
-        #     ]
-
-        #     # Reset index after filtering
-        #     filtered_data.reset_index(drop=True, inplace=True)
-
-        #     # Continue with filtered data
-        #     if filtered_data.empty:
-        #         print("No patients have enough data points for mixed-effects model analysis.")
-        #         return
-
-        #     model = sm.MixedLM.from_formula(
-        #         f"{column_name_rolling_mean} ~ Time_since_First_Scan",
-        #         re_formula="~Time_since_First_Scan",
-        #         groups=filtered_data["Patient_ID"],
-        #         data=filtered_data,
-        #     )
-        #     # pylint: disable=unexpected-keyword-arg
-        #     result = model.fit(reml=False, method="nm", maxiter=200)
-        #     # Using method Nelder-Mead optimization, although not really needed
-        #     # 200 iterations for kernel smoothed data
-        #     # result = model.fit()  # Using default optimization, fails to converge
-
-        #     if not result.converged:
-        #         print("\t\tModel did not converge, try simplifying the model or check the data.")
-        #         return None
-        #     else:
-        #         # print(result.summary())
-        #         print("\t\tModel converged.")
-        #         pre_treatment_data[f"Predicted_{column_name_rolling_mean}"] = result.predict(
-        #             pre_treatment_data
-        #         )
-        #         prediciton_plot = os.path.join(
-        #             output_dir, f"{prefix}_{column_name_rolling_mean}_predictions.png"
-        #         )
-        #         plot_growth_predictions(
-        #             data=pre_treatment_data,
-        #             filename=prediciton_plot,
-        #             column_name=column_name_rolling_mean,
-        #         )
-        #         print("\t\tSaved growth predictions plot.")
-        # except ValueError as err:
-        #     print(f"ValueError: {err}")
-
-        # finally:
-        # print("\tStarting Trend Analysis:")
-        # patient_classifications = {
-        #     patient_id: classify_patient(
-        #         pre_treatment_data,
-        #         patient_id,
-        #         column_name_rolling_mean,
-        #         self.progression_threshold,
-        #         self.stability_threshold,
-        #         self.high_risk_threshold,
-        #     )
-        #     for patient_id in sufficient_data_patients
-        # }
-        # pre_treatment_data["Classification"] = pre_treatment_data["Patient_ID"].map(
-        #     patient_classifications
-        # )
-        # output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
-        # plot_trend_trajectories(pre_treatment_data, output_filename, column_name_rolling_mean)
+        self.trend_analysis(pre_treatment_data, output_dir, prefix)
 
     def time_to_event_analysis(self, prefix, output_dir, stratify_by=None):
         """
@@ -993,6 +923,44 @@ class TumorAnalysis:
         filename_scatter = os.path.join(output_dir, "stability_index_scatter.png")
         plt.savefig(filename_scatter)
         plt.close()
+
+    def trend_analysis(self, data, output_dir, prefix):
+        # Ensure we have enough data points per patient
+        sufficient_data_patients = (
+            data.groupby("Patient_ID").filter(lambda x: len(x) >= 3)["Patient_ID"].unique()
+        )
+        filtered_data = data[data["Patient_ID"].isin(sufficient_data_patients)].copy()
+
+        # Reset index after filtering
+        filtered_data.reset_index(drop=True, inplace=True)
+
+        # Continue with filtered data
+        if filtered_data.empty:
+            print("No patients have enough data points for mixed-effects model analysis.")
+            return
+
+        # Edit this to have other plots
+        # column_name = "Volume Change [%]"
+        column_name = "Normalized Volume"
+
+        print("\tStarting Trend Analysis:")
+        patient_classifications = {
+            patient_id: classify_patient(
+                filtered_data,
+                patient_id,
+                column_name,
+                self.progression_threshold,
+                self.stability_threshold,
+                self.high_risk_threshold,
+                self.end_points,
+                angle=False,
+            )
+            for patient_id in sufficient_data_patients
+        }
+        filtered_data["Classification"] = filtered_data["Patient_ID"].map(patient_classifications)
+        output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
+        plot_trend_trajectories(filtered_data, output_filename, column_name)
+        print("\t\tSaved trend analysis plot.")
 
     def run_analysis(self, output_correlations, output_stats):
         """
@@ -1180,9 +1148,10 @@ class TumorAnalysis:
 
             step_idx += 1
 
-        if correlation_cfg.ANLYSIS:
-            print(f"Step {step_idx}: Starting main analyses...")
+        if correlation_cfg.ANALYSIS_PRE_TREATMENT:
             prefix = "pre-treatment"
+            print(f"Step {step_idx}: Starting main analyses {prefix}...")
+
             # print(self.pre_treatment_data.dtypes)
 
             # self.analyze_pre_treatment(
@@ -1206,8 +1175,11 @@ class TumorAnalysis:
                 data=self.pre_treatment_data,
                 output_dir=output_stats,
             )
+            step_idx += 1
 
-            # prefix = "post-treatment"
+        if correlation_cfg.ANALYSIS_POST_TREATMENT:
+            prefix = "post-treatment"
+            print(f"Step {step_idx}: Starting main analyses {prefix}...")
             # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT, prefix=prefix)
 
             step_idx += 1
