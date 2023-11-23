@@ -456,73 +456,27 @@ def categorize_age_group(data, debug=False):
         return "Young Adult"
 
 
-def calculate_group_norms_and_stability(data, output_dir):
+def calculate_group_norms_and_stability(data, volume_column, volume_change_column, output_dir):
     # Calculate group-wise statistics for each age group
     group_norms = (
         data.groupby("Age Group")
         .agg(
             {
-                "Volume RollStd": "mean",  # Or mean, based on preference
-                "Volume Change [%] RollStd": "mean",  # Or mean
+                f"{volume_column} RollStd": "mean",  # mean to reflect average variability within each group
+                f"{volume_change_column} RollStd": "mean",
             }
         )
         .reset_index()
     )
 
     data = data.merge(group_norms, on="Age Group", suffixes=("", " GroupNorm"))
-    data["Volume Stability Score"] = data["Volume RollStd"] / data["Volume RollStd GroupNorm"]
+    data["Volume Stability Score"] = (
+        data[f"{volume_column} RollStd"] / data[f"{volume_column} RollStd GroupNorm"]
+    )
     data["Growth Stability Score"] = (
-        data["Volume Change [%] RollStd"] / data["Volume Change [%] RollStd GroupNorm"]
+        data[f"{volume_change_column} RollStd"] / data[f"{volume_change_column} RollStd GroupNorm"]
     )
     data["Period"] = data["Date"].dt.to_period("M")
-
-    # Plotting Stability Scores
-    _ = plt.figure(figsize=(18, 12))
-    gs = gridspec.GridSpec(
-        3,
-        2,
-    )
-
-    # Heatmap
-    # heatmap_data = (
-    #     data.groupby(["Age_Group", "Period"])["Volume_Stability_Score"].median().unstack()
-    # )
-    ax0 = plt.subplot(gs[0, 0])
-    heatmap_data = data.pivot_table(
-        index="Age Group", columns="Period", values="Volume Stability Score", aggfunc="median"
-    )
-    sns.heatmap(heatmap_data, cmap="coolwarm", ax=ax0)
-    ax0.set_title("Median Volume Stability Score Across Age Groups Over Time")
-
-    # Violin Plot
-    ax1 = plt.subplot(gs[0, 1])
-    sns.violinplot(x="Age Group", y="Volume Stability Score", data=data, ax=ax1, bw=0.2)
-    sns.swarmplot(
-        x="Age Group", y="Volume Stability Score", data=data, ax=ax1, color="k", alpha=0.6, size=1.5
-    )
-    ax1.set_title("Distribution of Volume Stability Scores Across Age Groups")
-
-    # Scatter Plot with Trend Lines
-    ax2 = plt.subplot(gs[1:, :])
-    for age_group in data["Age Group"].unique():
-        group_data = data[data["Age Group"] == age_group]
-        group_data = group_data.sort_values("Date")
-        moving_average = (
-            group_data["Volume Stability Score"].rolling(window=3, min_periods=1).mean()
-        )
-        ax2.plot(group_data["Date"], moving_average, label=age_group)
-        # sns.scatterplot(
-        #     x="Date", y="Volume_Stability_Score", data=group_data, label=age_group, ax=ax2
-        # )
-        # sns.lineplot(x="Date", y="Volume_Stability_Score", data=group_data, ax=ax2)
-        ax2.scatter(data["Date"], data["Volume Stability Score"], alpha=0.3)
-    ax2.set_title("Scatter Plot of Volume Stability Scores Over Time by Age Group")
-    ax2.legend(title="Age Group")
-
-    plt.tight_layout()
-    filename = os.path.join(output_dir, "stability_scores.png")
-    plt.savefig(filename)
-    plt.close()
 
     return data
 
@@ -672,39 +626,6 @@ def plot_trend_trajectories(data, output_filename, column_name):
     plt.close()
 
 
-def plot_growth_predictions(data, filename, column_name):
-    """
-    Plot the actual versus predicted values over time.
-
-    Parameters:
-    - filename (str): The filename to save the plot image.
-
-    This method plots the actual and predicted growth percentages from the
-    pre-treatment data and saves the plot as an image.
-    """
-    sns.lineplot(
-        x="Time_since_First_Scan",
-        y=f"{column_name}",
-        data=data,
-        alpha=0.5,
-        color="blue",
-        label=f"Actual {column_name}",
-    )
-    sns.lineplot(
-        x="Time_since_First_Scan",
-        y=f"Predicted_{column_name}",
-        data=data,
-        color="red",
-        label=f"Predicted {column_name}",
-    )
-    plt.xlabel("Days Since First Scan")
-    plt.ylabel(f"Tumor {column_name}")
-    plt.title(f"Actual vs Predicted {column_name} Over Time")
-    plt.legend()
-    plt.savefig(filename)
-    plt.close()
-
-
 def plot_individual_trajectories(name, data, column, sample_size=None, category_column=None):
     """
     Plot the individual trajectories for a sample of patients.
@@ -832,3 +753,119 @@ def plot_individual_trajectories(name, data, column, sample_size=None, category_
     plt.savefig(name)
     plt.close()
     print(f"\t\tSaved tumor {column} trajectories plot.")
+
+
+def calculate_percentage_change(data, patient_id, column_name):
+    patient_data = data[data["Patient_ID"] == patient_id].sort_values(by="Time_since_First_Scan")
+    if len(patient_data) < 2:
+        return None  # Not enough data
+
+    start_volume = patient_data[column_name].iloc[0]
+    end_volume = patient_data[column_name].iloc[-1]
+
+    if start_volume == 0:
+        return None  # Avoid division by zero
+
+    percent_change = ((end_volume - start_volume) / start_volume) * 100
+    return percent_change
+
+
+def visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold):
+    classification_distribution = data["Tumor Classification"].value_counts(normalize=True)
+    # Visualization of Tumor Classification
+    plt.figure(figsize=(10, 6))
+    sns.countplot(x="Age Group", hue="Tumor Classification", data=data)
+    plt.title("Count of Stable vs. Unstable Tumors Across Age Groups")
+    plt.xlabel("Age Group")
+    plt.ylabel("Count")
+    plt.legend(title="Tumor Classification")
+    plt.tight_layout()
+    filename = os.path.join(output_dir, "tumor_classification.png")
+    plt.savefig(filename)
+    plt.close()
+
+    plt.figure(figsize=(10, 6))
+    plt.pie(
+        classification_distribution,
+        labels=classification_distribution.index,
+        autopct="%1.1f%%",
+        startangle=140,
+    )
+    plt.title("Proportion of Stable vs. Unstable Tumors")
+    plt.axis("equal")
+    filename_dist = os.path.join(output_dir, "tumor_classification_distribution.png")
+    plt.savefig(filename_dist)
+    plt.close()
+
+    # Enhanced Scatter Plot with Labels for Extremes
+    plt.figure(figsize=(18, 6))
+    ax = sns.scatterplot(
+        x="Overall Volume Change [%]",
+        y="Stability Index",
+        hue="Tumor Classification",
+        data=data,
+        alpha=0.6,
+    )
+    extremes = data.nlargest(5, "Stability Index")  # Adjust the number of points as needed
+    for _, point in extremes.iterrows():
+        ax.text(
+            point["Overall Volume Change [%]"],
+            point["Stability Index"],
+            str(point["Patient_ID"]),
+        )
+    plt.title("Scatter Plot of Stability Index Over Time by Classification")
+    plt.xlabel("Overall Volume Change [%]")
+    plt.ylabel("Stability Index")
+    plt.axhline(y=stability_threshold, color="r", linestyle="--")
+    plt.axvline(x=change_threshold, color="r", linestyle="--")
+    plt.legend(title="Tumor Classification")
+    plt.tight_layout()
+    filename_scatter = os.path.join(output_dir, "stability_index_scatter.png")
+    plt.savefig(filename_scatter)
+    plt.close()
+
+    # Heatmap
+    plt.figure(figsize=(10, 8))
+    heatmap_data = data.pivot_table(
+        index="Age Group", columns="Period", values="Stability Index", aggfunc="median"
+    )
+    sns.heatmap(
+        heatmap_data, cmap="coolwarm", annot=True
+    )  # 'annot=True' adds numerical values in each cell
+    plt.title("Median Stability Index Across Age Groups Over Time")
+    plt.ylabel("Age Group")
+    plt.xlabel("Time Period")
+    plt.tight_layout()
+    filename_heatmap = os.path.join(output_dir, "stability_index_heatmap.png")
+    plt.savefig(filename_heatmap)
+    plt.close()
+
+    # Distribution Plot of the Stability Index
+    plt.figure(figsize=(10, 6))
+    sns.violinplot(x="Age Group", y="Stability Index", data=data, bw=0.2)
+    sns.swarmplot(x="Age Group", y="Stability Index", data=data, color="k", alpha=0.6, size=1.5)
+    plt.title("Distribution of Stability Index Across Age Groups")
+    plt.ylabel("Stability Index")
+    plt.xlabel("Age Group")
+    plt.tight_layout()
+    filename_distribution = os.path.join(output_dir, "stability_index_distribution.png")
+    plt.savefig(filename_distribution)
+    plt.close()
+
+    # Scatter Plot of Stability Index Over Time
+    plt.figure(figsize=(12, 6))
+    sns.scatterplot(
+        x="Date",
+        y="Stability Index",
+        hue="Tumor Classification",
+        style="Tumor Classification",
+        data=data,
+    )
+    plt.title("Stability Index Over Time by Classification")
+    plt.ylabel("Stability Index")
+    plt.xlabel("Date")
+    plt.legend(title="Tumor Classification")
+    plt.tight_layout()
+    filename_scatter = os.path.join(output_dir, "stability_index_over_time.png")
+    plt.savefig(filename_scatter)
+    plt.close()

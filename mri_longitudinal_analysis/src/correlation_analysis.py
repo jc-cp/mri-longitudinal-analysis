@@ -34,6 +34,8 @@ from utils.helper_functions import (
     classify_patient,
     plot_trend_trajectories,
     plot_individual_trajectories,
+    calculate_percentage_change,
+    visualize_tumor_stability,
 )
 
 
@@ -740,6 +742,10 @@ class TumorAnalysis:
         pre_treatment_data["Time_since_First_Scan"] = pre_treatment_data.groupby("Patient_ID")[
             "Date"
         ].transform(lambda x: (x - x.min()).dt.days)
+        self.pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
+        self.pre_treatment_data["Time_since_First_Scan"] = pre_treatment_data[
+            "Time_since_First_Scan"
+        ]
 
         # Plot the overlaying curves plots
         volume_change_trajectories_plot = os.path.join(
@@ -790,6 +796,7 @@ class TumorAnalysis:
                 sample_size=self.sample_size_plots,
             )
 
+        # Trend analysis and classifciation of patients
         self.trend_analysis(pre_treatment_data, output_dir, prefix)
 
     def time_to_event_analysis(self, prefix, output_dir, stratify_by=None):
@@ -848,7 +855,9 @@ class TumorAnalysis:
         plt.close()
         print(f"\t\tSaved survival KaplanMeier curve for {stratify_by}.")
 
-    def analyze_tumor_stability(self, data, output_dir, volume_weight=0.5, growth_weight=0.5):
+    def analyze_tumor_stability(
+        self, data, output_dir, volume_weight=0.5, growth_weight=0.5, change_threshold=20
+    ):
         """
         Analyze the stability of tumors based on their growth rates and volume changes.
 
@@ -863,66 +872,36 @@ class TumorAnalysis:
         """
         print("\tAnalyzing tumor stability:")
         data = data.copy()
-        data = calculate_group_norms_and_stability(data, output_dir)
-
+        volume_column = "Normalized Volume"
+        volume_change_column = "Volume Change [%]"
+        data = calculate_group_norms_and_stability(
+            data, volume_column, volume_change_column, output_dir
+        )
+        # Calculate the overall volume change for each patient
+        data["Overall Volume Change [%]"] = data["Patient_ID"].apply(
+            lambda x: calculate_percentage_change(data, x, volume_column)
+        )
         # Calculate the Stability Index using weighted scores
-        data["Stability Index"] = volume_weight * data["Volume Stability Score"] + growth_weight * (
-            1 / (data["Volume Change [%] RollStd"] + 1)
+        data["Stability Index"] = (
+            volume_weight * data["Volume Stability Score"]
+            + growth_weight * data["Growth Stability Score"]
         )
 
         # Normalize the Stability Index to have a mean of 1
         data["Stability Index"] /= np.mean(data["Stability Index"])
 
         # Define thresholds for classification based on the normalized Stability Index
-        # Use the 50th percentile (median) as the threshold by default, can be adjusted if needed
-        stability_threshold = np.median(data["Stability Index"])
+        stability_threshold = np.mean(data["Stability Index"]) * (1 + change_threshold / 100)
 
-        data["Tumor Classification"] = data["Stability Index"].apply(
-            lambda x: "Stable" if x <= stability_threshold else "Unstable"
+        data["Tumor Classification"] = data.apply(
+            lambda row: "Unstable"
+            if abs(row["Overall Volume Change [%]"]) >= change_threshold
+            or row["Stability Index"] > stability_threshold
+            else "Stable",
+            axis=1,
         )
-        classification_distribution = data["Tumor Classification"].value_counts(normalize=True)
 
-        # Visualization of Tumor Classification
-        plt.figure(figsize=(10, 6))
-        sns.countplot(x="Age Group", hue="Tumor Classification", data=data)
-        plt.title("Count of Stable vs. Unstable Tumors Across Age Groups")
-        plt.xlabel("Age Group")
-        plt.ylabel("Count")
-        plt.legend(title="Tumor Classification")
-        plt.tight_layout()
-        filename = os.path.join(output_dir, "tumor_classification.png")
-        plt.savefig(filename)
-        plt.close()
-
-        plt.figure(figsize=(10, 6))
-        plt.pie(
-            classification_distribution,
-            labels=classification_distribution.index,
-            autopct="%1.1f%%",
-            startangle=140,
-        )
-        plt.title("Proportion of Stable vs. Unstable Tumors")
-        plt.axis("equal")
-        filename_dist = os.path.join(output_dir, "tumor_classification_distribution.png")
-        plt.savefig(filename_dist)
-        plt.close()
-
-        # Enhanced Scatter Plot with Labels for Extremes
-        plt.figure(figsize=(18, 6))
-        ax = sns.scatterplot(
-            x="Date", y="Stability Index", hue="Tumor Classification", data=data, alpha=0.6
-        )
-        extremes = data.nlargest(5, "Stability Index")  # Adjust the number of points as needed
-        for _, point in extremes.iterrows():
-            ax.text(point["Date"], point["Stability Index"], str(point["Patient_ID"]))
-        plt.title("Scatter Plot of Stability Index Over Time by Classification")
-        plt.xlabel("Date")
-        plt.ylabel("Stability Index")
-        plt.legend(title="Tumor Classification")
-        plt.tight_layout()
-        filename_scatter = os.path.join(output_dir, "stability_index_scatter.png")
-        plt.savefig(filename_scatter)
-        plt.close()
+        visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold)
 
     def trend_analysis(self, data, output_dir, prefix):
         # Ensure we have enough data points per patient
