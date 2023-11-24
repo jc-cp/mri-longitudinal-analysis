@@ -10,7 +10,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 import matplotlib.lines as lines
 import seaborn as sns
 
@@ -456,7 +455,7 @@ def categorize_age_group(data, debug=False):
         return "Young Adult"
 
 
-def calculate_group_norms_and_stability(data, volume_column, volume_change_column, output_dir):
+def calculate_group_norms_and_stability(data, volume_column, volume_change_column):
     # Calculate group-wise statistics for each age group
     group_norms = (
         data.groupby("Age Group")
@@ -626,7 +625,7 @@ def plot_trend_trajectories(data, output_filename, column_name):
     plt.close()
 
 
-def plot_individual_trajectories(name, data, column, sample_size=None, category_column=None):
+def plot_individual_trajectories(name, plot_data, column, category_column=None):
     """
     Plot the individual trajectories for a sample of patients.
 
@@ -637,23 +636,6 @@ def plot_individual_trajectories(name, data, column, sample_size=None, category_
     plots their variable trajectories, and saves the plot to the specified filename.
     """
     plt.figure(figsize=(10, 6))
-
-    # Error handling for sample size
-    if sample_size:
-        # Sample a subset of patients if sample_size is provided
-        unique_patient_count = data["Patient_ID"].nunique()
-        if sample_size > unique_patient_count:
-            print(
-                f"\t\tSample size {sample_size} is greater than the number of unique patients"
-                f" {unique_patient_count}. Using {unique_patient_count} instead."
-            )
-            sample_size = unique_patient_count
-
-        sample_ids = data["Patient_ID"].drop_duplicates().sample(n=sample_size)
-        plot_data = data[data["Patient_ID"].isin(sample_ids)]
-    else:
-        # Use all data if no sample_size is specified
-        plot_data = data
 
     # Cutoff the data at 4000 days
     plot_data = plot_data[plot_data["Time_since_First_Scan"] <= 4000]
@@ -752,7 +734,10 @@ def plot_individual_trajectories(name, data, column, sample_size=None, category_
     plt.ylabel(f"Tumor {column}")
     plt.savefig(name)
     plt.close()
-    print(f"\t\tSaved tumor {column} trajectories plot.")
+    if category_column:
+        print(f"\t\tSaved tumor {column} trajectories plot by category: {category_column}.")
+    else:
+        print(f"\t\tSaved tumor {column} trajectories plot for all patients.")
 
 
 def calculate_percentage_change(data, patient_id, column_name):
@@ -816,34 +801,18 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     plt.title("Scatter Plot of Stability Index Over Time by Classification")
     plt.xlabel("Overall Volume Change [%]")
     plt.ylabel("Stability Index")
-    plt.axhline(y=stability_threshold, color="r", linestyle="--")
-    plt.axvline(x=change_threshold, color="r", linestyle="--")
+    plt.axhline(y=stability_threshold, color="g", linestyle="--", label="Stability Threshold")
+    plt.axvline(x=change_threshold, color="b", linestyle="--", label="Volume Change Threshold")
     plt.legend(title="Tumor Classification")
     plt.tight_layout()
     filename_scatter = os.path.join(output_dir, "stability_index_scatter.png")
     plt.savefig(filename_scatter)
     plt.close()
 
-    # Heatmap
-    plt.figure(figsize=(10, 8))
-    heatmap_data = data.pivot_table(
-        index="Age Group", columns="Period", values="Stability Index", aggfunc="median"
-    )
-    sns.heatmap(
-        heatmap_data, cmap="coolwarm", annot=True
-    )  # 'annot=True' adds numerical values in each cell
-    plt.title("Median Stability Index Across Age Groups Over Time")
-    plt.ylabel("Age Group")
-    plt.xlabel("Time Period")
-    plt.tight_layout()
-    filename_heatmap = os.path.join(output_dir, "stability_index_heatmap.png")
-    plt.savefig(filename_heatmap)
-    plt.close()
-
     # Distribution Plot of the Stability Index
     plt.figure(figsize=(10, 6))
     sns.violinplot(x="Age Group", y="Stability Index", data=data, bw=0.2)
-    sns.swarmplot(x="Age Group", y="Stability Index", data=data, color="k", alpha=0.6, size=1.5)
+    sns.stripplot(x="Age Group", y="Stability Index", data=data, color="k")
     plt.title("Distribution of Stability Index Across Age Groups")
     plt.ylabel("Stability Index")
     plt.xlabel("Age Group")
@@ -855,17 +824,17 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     # Scatter Plot of Stability Index Over Time
     plt.figure(figsize=(12, 6))
     sns.scatterplot(
-        x="Date",
+        x="Volume Change [%]",
         y="Stability Index",
         hue="Tumor Classification",
         style="Tumor Classification",
         data=data,
     )
-    plt.title("Stability Index Over Time by Classification")
+    plt.title("Stability Index Over Volume Change")
     plt.ylabel("Stability Index")
-    plt.xlabel("Date")
+    plt.xlabel("Volume Change [%]")
     plt.legend(title="Tumor Classification")
     plt.tight_layout()
-    filename_scatter = os.path.join(output_dir, "stability_index_over_time.png")
+    filename_scatter = os.path.join(output_dir, "stability_index_over_volume_change.png")
     plt.savefig(filename_scatter)
     plt.close()

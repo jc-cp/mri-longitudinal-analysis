@@ -747,24 +747,39 @@ class TumorAnalysis:
             "Time_since_First_Scan"
         ]
 
+        # Error handling for sample size
+        sample_size = self.sample_size_plots
+        if sample_size:
+            # Sample a subset of patients if sample_size is provided
+            unique_patient_count = pre_treatment_data["Patient_ID"].nunique()
+            if sample_size > unique_patient_count:
+                print(
+                    f"\t\tSample size {sample_size} is greater than the number of unique patients"
+                    f" {unique_patient_count}. Using {unique_patient_count} instead."
+                )
+                sample_size = unique_patient_count
+
+            sample_ids = pre_treatment_data["Patient_ID"].drop_duplicates().sample(n=sample_size)
+            pre_treatment_data = pre_treatment_data[
+                pre_treatment_data["Patient_ID"].isin(sample_ids)
+            ]
+
         # Plot the overlaying curves plots
         volume_change_trajectories_plot = os.path.join(
             output_dir, f"{prefix}_volume_change_trajectories_plot.png"
         )
         plot_individual_trajectories(
             volume_change_trajectories_plot,
-            data=pre_treatment_data,
+            plot_data=pre_treatment_data,
             column="Volume Change [%]",
-            sample_size=self.sample_size_plots,
         )
         normalized_volume_trajectories_plot = os.path.join(
             output_dir, f"{prefix}_normalized_volume_trajectories_plot.png"
         )
         plot_individual_trajectories(
             normalized_volume_trajectories_plot,
-            data=pre_treatment_data,
+            plot_data=pre_treatment_data,
             column="Normalized Volume",
-            sample_size=self.sample_size_plots,
         )
 
         category_list = [
@@ -780,20 +795,18 @@ class TumorAnalysis:
             )
             plot_individual_trajectories(
                 cat_volume_change_name,
-                data=pre_treatment_data,
+                plot_data=pre_treatment_data,
                 column="Volume Change [%]",
                 category_column=cat,
-                sample_size=self.sample_size_plots,
             )
             cat_normalized_volume_name = os.path.join(
                 output_dir, f"{prefix}_{cat}_normalized_volume_trajectories_plot.png"
             )
             plot_individual_trajectories(
                 cat_normalized_volume_name,
-                data=pre_treatment_data,
+                plot_data=pre_treatment_data,
                 column="Normalized Volume",
                 category_column=cat,
-                sample_size=self.sample_size_plots,
             )
 
         # Trend analysis and classifciation of patients
@@ -874,9 +887,7 @@ class TumorAnalysis:
         data = data.copy()
         volume_column = "Normalized Volume"
         volume_change_column = "Volume Change [%]"
-        data = calculate_group_norms_and_stability(
-            data, volume_column, volume_change_column, output_dir
-        )
+        data = calculate_group_norms_and_stability(data, volume_column, volume_change_column)
         # Calculate the overall volume change for each patient
         data["Overall Volume Change [%]"] = data["Patient_ID"].apply(
             lambda x: calculate_percentage_change(data, x, volume_column)
@@ -890,8 +901,12 @@ class TumorAnalysis:
         # Normalize the Stability Index to have a mean of 1
         data["Stability Index"] /= np.mean(data["Stability Index"])
 
-        # Define thresholds for classification based on the normalized Stability Index
-        stability_threshold = np.mean(data["Stability Index"]) * (1 + change_threshold / 100)
+        significant_volume_change = abs(data["Overall Volume Change [%]"]) >= change_threshold
+        stable_subset = data.loc[~significant_volume_change, "Stability Index"]
+        mean_stability_index = stable_subset.mean()
+        std_stability_index = stable_subset.std()
+        num_std_dev = 2
+        stability_threshold = mean_stability_index + (num_std_dev * std_stability_index)
 
         data["Tumor Classification"] = data.apply(
             lambda row: "Unstable"
@@ -902,6 +917,7 @@ class TumorAnalysis:
         )
 
         visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold)
+        print("\t\tSaved tumor stability plot.")
 
     def trend_analysis(self, data, output_dir, prefix):
         # Ensure we have enough data points per patient
@@ -1153,7 +1169,11 @@ class TumorAnalysis:
             self.analyze_tumor_stability(
                 data=self.pre_treatment_data,
                 output_dir=output_stats,
+                volume_weight=correlation_cfg.VOLUME_WEIGHT,
+                growth_weight=correlation_cfg.GROWTH_WEIGHT,
+                change_threshold=correlation_cfg.CHANGE_THRESHOLD,
             )
+
             step_idx += 1
 
         if correlation_cfg.ANALYSIS_POST_TREATMENT:

@@ -33,12 +33,18 @@ CALIPER = 0.1  # usually between 0.05 and 0.2
 
 # Step 3
 ANALYSIS_PRE_TREATMENT = True
+
 PROGRESSION_THRESHOLD = 10  # angle value that defines progression
 HIGH_RISK_THRESHOLD = 25  # angle value that defines high increase
 STABILITY_THRESHOLD = 2  # angle value that defines stability
+
 SAMPLE_SIZE = 300  # for plotting growth trajectories
-UNCHANGING_THRESHOLD = 0.1  # for trakcing stable volumes
+
 END_POINTS = False
+
+VOLUME_WEIGHT = 0.25
+GROWTH_WEIGHT = 0.75
+CHANGE_THRESHOLD = 25  # % volume change threshold for stability index
 
 ANALYSIS_POST_TREATMENT = False
 
