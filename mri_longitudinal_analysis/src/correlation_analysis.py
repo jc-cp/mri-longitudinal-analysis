@@ -210,8 +210,8 @@ class TumorAnalysis:
         self.volumes_data["Date"] = pd.to_datetime(self.volumes_data["Date"], format="%Y-%m-%d")
         self.volumes_data = self.volumes_data.rename(
             columns={
-                "Growth[%]": "Volume Change [%]",
-                "Normalized Growth[%]": "Normalized Volume Change [%]",
+                "Growth[%]": "Volume Change",
+                "Normalized Growth[%]": "Normalized Volume Change",
             }
         )
 
@@ -299,8 +299,8 @@ class TumorAnalysis:
         for var in [
             "Volume",
             "Normalized Volume",
-            "Volume Change [%]",
-            "Normalized Volume Change [%]",
+            "Volume Change",
+            "Normalized Volume Change",
         ]:
             self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
                 cumulative_stats, var
@@ -353,6 +353,13 @@ class TumorAnalysis:
         self.post_treatment_data["Treatment Type"] = self.post_treatment_data[
             "Treatment Type"
         ].cat.remove_unused_categories()
+
+        self.pre_treatment_data["Received Treatment"] = self.pre_treatment_data[
+            "Received Treatment"
+        ].astype("category")
+        self.post_treatment_data["Received Treatment"] = self.post_treatment_data[
+            "Received Treatment"
+        ].astype("category")
 
         for patient_id in self.pre_treatment_data["Patient_ID"].unique():
             if (
@@ -488,11 +495,6 @@ class TumorAnalysis:
         """
         print("\tPre-treatment Correlations:")
         # Data preparation for correlations
-        self.pre_treatment_data["Received Treatment"] = (
-            self.pre_treatment_data["Received Treatment"]
-            .map({1: True, 0: False})
-            .astype("category")
-        )
         self.pre_treatment_data["Tumor Progression"] = self.pre_treatment_data[
             "Tumor Progression"
         ].astype("category")
@@ -516,7 +518,7 @@ class TumorAnalysis:
         numerical_vars = [
             "Age",
             "Volume",
-            "Volume Change [%]",
+            "Volume Change",
             "Volume CumMean",
             "Volume CumMedian",
             "Volume CumStd",
@@ -529,18 +531,18 @@ class TumorAnalysis:
             # "Normalized Volume RollMean",
             # "Normalized Volume RollMedian",
             # "Normalized Volume RollStd",
-            "Volume Change [%] CumMean",
-            "Volume Change [%] CumMedian",
-            "Volume Change [%] CumStd",
-            "Volume Change [%] RollMean",
-            "Volume Change [%] RollMedian",
-            "Volume Change [%] RollStd",
-            # "Normalized Volume Change [%] CumMean",
-            # "Normalized Volume Change [%] CumMedian",
-            # "Normalized Volume Change [%] CumStd",
-            # "Normalized Volume Change [%] RollMean",
-            # "Normalized Volume Change [%] RollMedian",
-            # "Normalized Volume Change [%] RollStd",
+            "Volume Change CumMean",
+            "Volume Change CumMedian",
+            "Volume Change CumStd",
+            "Volume Change RollMean",
+            "Volume Change RollMedian",
+            "Volume Change RollStd",
+            # "Normalized Volume Change CumMean",
+            # "Normalized Volume Change CumMedian",
+            # "Normalized Volume Change CumStd",
+            # "Normalized Volume Change RollMean",
+            # "Normalized Volume Change RollMedian",
+            # "Normalized Volume Change RollStd",
             "Time to Treatment",
         ]
 
@@ -575,7 +577,7 @@ class TumorAnalysis:
             filtered_vars = [
                 var
                 for var in numerical_vars
-                if not var.startswith(("Volume Change [%] ", "Volume ", "Normalized"))
+                if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
             ]
             for other_num_var in filtered_vars:
                 if other_num_var != num_var:
@@ -595,13 +597,19 @@ class TumorAnalysis:
                         output_dir,
                         method="pearson",
                     )
+
+        aggregated_data = (
+            self.pre_treatment_data.sort_values("Date").groupby("Patient_ID", as_index=False).last()
+        )
+        print(aggregated_data.head())
+
         for cat_var in categorical_vars:
             for other_cat_var in categorical_vars:
                 if cat_var != other_cat_var:
                     self.analyze_correlation(
                         cat_var,
                         other_cat_var,
-                        self.pre_treatment_data,
+                        aggregated_data,
                         prefix,
                         output_dir,
                         method=correlation_method,
@@ -672,26 +680,33 @@ class TumorAnalysis:
         """
         stat, p_val = test_result
         title = f"{x_val} vs {y_val} ({test_type.capitalize()}) \n"
+        num_patients = data["Patient_ID"].nunique()
 
         # Plot based on test type
         if test_type == "correlation":
             sns.scatterplot(x=x_val, y=y_val, data=data)
             sns.regplot(x=x_val, y=y_val, data=data, scatter=False, color="blue")
-            title += f"{method.title()} correlation coefficient: {stat:.2f}, P-value: {p_val:.3e}"
+            title += (
+                f"{method.title()} correlation coefficient: {stat:.2f}, P-value:"
+                f" {p_val:.3e} (N={num_patients})"
+            )
         elif test_type == "t-test":
             sns.barplot(x=x_val, y=y_val, data=data)
-            title += f"T-statistic: {stat:.2f}, P-value: {p_val:.3e}"
+            title += f"T-statistic: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
         elif test_type == "point-biserial":
             sns.boxplot(x=x_val, y=y_val, data=data)
-            title += f"Point-Biserial Correlation Coefficient: {stat:.2f}, P-value: {p_val:.3e}"
+            title += (
+                f"Point-Biserial Correlation Coefficient: {stat:.2f}, P-value:"
+                f" {p_val:.3e} (N={num_patients})"
+            )
         elif test_type == "ANOVA":
             sns.boxplot(x=x_val, y=y_val, data=data)
             plt.xticks(rotation=90, fontsize="small")
-            title += f"F-statistic: {stat:.2f}, P-value: {p_val:.3e}"
+            title += f"F-statistic: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
         elif test_type == "chi-squared":
             contingency_table = pd.crosstab(data[y_val], data[x_val])
             sns.heatmap(contingency_table, annot=True, cmap="coolwarm", fmt="g")
-            title += f"Chi2: {stat:.2f}, P-value: {p_val:.3e}"
+            title += f"Chi2: {stat:.2f}, P-value: {p_val:.3e}, (N={num_patients})"
 
         plt.title(title)
         plt.xlabel(x_val)
@@ -771,7 +786,8 @@ class TumorAnalysis:
         plot_individual_trajectories(
             volume_change_trajectories_plot,
             plot_data=pre_treatment_data,
-            column="Volume Change [%]",
+            column="Volume Change",
+            unit="%",
         )
         normalized_volume_trajectories_plot = os.path.join(
             output_dir, f"{prefix}_normalized_volume_trajectories_plot.png"
@@ -780,6 +796,7 @@ class TumorAnalysis:
             normalized_volume_trajectories_plot,
             plot_data=pre_treatment_data,
             column="Normalized Volume",
+            unit="mm^3",
         )
 
         category_list = [
@@ -796,8 +813,9 @@ class TumorAnalysis:
             plot_individual_trajectories(
                 cat_volume_change_name,
                 plot_data=pre_treatment_data,
-                column="Volume Change [%]",
+                column="Volume Change",
                 category_column=cat,
+                unit="%",
             )
             cat_normalized_volume_name = os.path.join(
                 output_dir, f"{prefix}_{cat}_normalized_volume_trajectories_plot.png"
@@ -807,6 +825,7 @@ class TumorAnalysis:
                 plot_data=pre_treatment_data,
                 column="Normalized Volume",
                 category_column=cat,
+                unit="mm^3",
             )
 
         # Trend analysis and classifciation of patients
@@ -862,7 +881,7 @@ class TumorAnalysis:
         ax.set_ylabel("Survival Probability")
 
         survival_plot = os.path.join(
-            output_dir, f"{prefix}_survival_plot_stratifyby_{stratify_by}.png"
+            output_dir, f"{prefix}_survival_plot_category_{stratify_by}.png"
         )
         plt.savefig(survival_plot, dpi=300)
         plt.close()
@@ -886,10 +905,10 @@ class TumorAnalysis:
         print("\tAnalyzing tumor stability:")
         data = data.copy()
         volume_column = "Normalized Volume"
-        volume_change_column = "Volume Change [%]"
+        volume_change_column = "Volume Change"
         data = calculate_group_norms_and_stability(data, volume_column, volume_change_column)
         # Calculate the overall volume change for each patient
-        data["Overall Volume Change [%]"] = data["Patient_ID"].apply(
+        data["Overall Volume Change"] = data["Patient_ID"].apply(
             lambda x: calculate_percentage_change(data, x, volume_column)
         )
         # Calculate the Stability Index using weighted scores
@@ -901,7 +920,7 @@ class TumorAnalysis:
         # Normalize the Stability Index to have a mean of 1
         data["Stability Index"] /= np.mean(data["Stability Index"])
 
-        significant_volume_change = abs(data["Overall Volume Change [%]"]) >= change_threshold
+        significant_volume_change = abs(data["Overall Volume Change"]) >= change_threshold
         stable_subset = data.loc[~significant_volume_change, "Stability Index"]
         mean_stability_index = stable_subset.mean()
         std_stability_index = stable_subset.std()
@@ -910,14 +929,14 @@ class TumorAnalysis:
 
         data["Tumor Classification"] = data.apply(
             lambda row: "Unstable"
-            if abs(row["Overall Volume Change [%]"]) >= change_threshold
+            if abs(row["Overall Volume Change"]) >= change_threshold
             or row["Stability Index"] > stability_threshold
             else "Stable",
             axis=1,
         )
 
         visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold)
-        print("\t\tSaved tumor stability plot.")
+        print("\t\tSaved tumor stability plots.")
 
     def trend_analysis(self, data, output_dir, prefix):
         # Ensure we have enough data points per patient
@@ -935,7 +954,7 @@ class TumorAnalysis:
             return
 
         # Edit this to have other plots
-        # column_name = "Volume Change [%]"
+        # column_name = "Volume Change"
         column_name = "Normalized Volume"
 
         print("\tStarting Trend Analysis:")
@@ -954,7 +973,7 @@ class TumorAnalysis:
         }
         filtered_data["Classification"] = filtered_data["Patient_ID"].map(patient_classifications)
         output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
-        plot_trend_trajectories(filtered_data, output_filename, column_name)
+        plot_trend_trajectories(filtered_data, output_filename, column_name, unit="mm^3")
         print("\t\tSaved trend analysis plot.")
 
     def run_analysis(self, output_correlations, output_stats):
@@ -1096,11 +1115,11 @@ class TumorAnalysis:
 
             pre_treatment_vars = [
                 "Volume",
-                "Volume Change [%]",
+                "Volume Change",
             ]
             post_treatment_vars = [
                 "Volume",
-                "Volume Change [%]",
+                "Volume Change",
             ]
 
             for pre_var in pre_treatment_vars:
@@ -1128,7 +1147,7 @@ class TumorAnalysis:
             print(self.pre_treatment_data.dtypes)
             for data in [self.pre_treatment_data]:
                 treatment_column = "Received Treatment"
-                covariate_columns = ["Normalized Volume", "Volume Change [%]"]
+                covariate_columns = ["Normalized Volume", "Volume Change"]
 
                 data[treatment_column] = data[treatment_column].map({True: 1, False: 0})
                 propensity_scores = calculate_propensity_scores(
@@ -1148,7 +1167,6 @@ class TumorAnalysis:
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
             # print(self.pre_treatment_data.dtypes)
-
             # self.analyze_pre_treatment(
             #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
             #     prefix=prefix,

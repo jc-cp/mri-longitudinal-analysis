@@ -10,6 +10,7 @@ import pandas as pd
 import seaborn as sns
 
 from cfg import filter_clinical_data_cfg
+from utils.helper_functions import annotate_plot
 
 
 class ClinicalData:
@@ -218,7 +219,7 @@ class ClinicalData:
             plt.title("Mutation Distribution by Sex")
             plt.xlabel("Sex")
             plt.ylabel("Count")
-            self.annotate_plot(a_x1)
+            annotate_plot(a_x1)
             plt.legend(title="BRAF Mutation Status")
             plt.tight_layout()
             plt.savefig(filter_clinical_data_cfg.OUTPUT_MUTATION)
@@ -242,24 +243,9 @@ class ClinicalData:
                 plt.xlabel("Diagnosis")
                 plt.ylabel("Count")
                 plt.xticks(rotation=90)
-                self.annotate_plot(a_x2)
+                annotate_plot(a_x2)
                 plt.tight_layout()
                 plt.savefig(filter_clinical_data_cfg.OUTPUT_DIAGNOSIS)
-
-    def annotate_plot(self, a_x):
-        """Annotate the bar plot with the respective heights.
-
-        Args:
-            a_x (matplotlib.axis): The axis object to be annotated.
-        """
-        for patch in a_x.patches:
-            height = patch.get_height()
-            a_x.text(
-                x=patch.get_x() + (patch.get_width() / 2),
-                y=height,
-                s=f"{height:.0f}",
-                ha="center",
-            )
 
     def write_dict_to_file(self, data_dict, filename):
         """Write a dictionary to a file.

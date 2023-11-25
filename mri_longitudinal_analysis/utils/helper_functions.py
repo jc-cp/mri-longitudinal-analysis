@@ -564,7 +564,7 @@ def classify_patient(
             return "Stable"
 
 
-def plot_trend_trajectories(data, output_filename, column_name):
+def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     """
     Plot the growth trajectories of patients with classifications.
 
@@ -617,15 +617,17 @@ def plot_trend_trajectories(data, output_filename, column_name):
             linewidth=2.5,
         )
 
+    num_patients = data["Patient_ID"].nunique()
+
     plt.xlabel("Days Since First Scan")
-    plt.ylabel(f"Tumor {column_name}")
-    plt.title("Patient Trend Trajectories")
+    plt.ylabel(f"Tumor {column_name} [{unit}]")
+    plt.title(f"Patient Trend Trajectories (N={num_patients})")
     plt.legend()
     plt.savefig(output_filename)
     plt.close()
 
 
-def plot_individual_trajectories(name, plot_data, column, category_column=None):
+def plot_individual_trajectories(name, plot_data, column, category_column=None, unit=None):
     """
     Plot the individual trajectories for a sample of patients.
 
@@ -639,7 +641,7 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None):
 
     # Cutoff the data at 4000 days
     plot_data = plot_data[plot_data["Time_since_First_Scan"] <= 4000]
-
+    num_patients = plot_data["Patient_ID"].nunique()
     # Get the median every 3 months
     median_data = (
         plot_data.groupby(
@@ -708,7 +710,7 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None):
         # Combine custom category handles with the median trajectory handles
         combined_handles = legend_handles + handles[-(len(categories) + 1) :]
 
-        plt.title(f"Individual Tumor {column} Trajectories by {category_column}")
+        plt.title(f"Individual Tumor {column} Trajectories by {category_column} (N={num_patients})")
         plt.legend(handles=combined_handles)
 
     else:
@@ -727,11 +729,11 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None):
             linestyle="--",
             label="Median Trajectory",
         )
-        plt.title(f"Individual Tumor {column} Trajectories")
+        plt.title(f"Individual Tumor {column} Trajectories (N={num_patients})")
         plt.legend()
 
     plt.xlabel("Days Since First Scan")
-    plt.ylabel(f"Tumor {column}")
+    plt.ylabel(f"Tumor {column} [{unit}]")
     plt.savefig(name)
     plt.close()
     if category_column:
@@ -763,6 +765,7 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     plt.title("Count of Stable vs. Unstable Tumors Across Age Groups")
     plt.xlabel("Age Group")
     plt.ylabel("Count")
+    annotate_plot(plt.gca())
     plt.legend(title="Tumor Classification")
     plt.tight_layout()
     filename = os.path.join(output_dir, "tumor_classification.png")
@@ -785,7 +788,7 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     # Enhanced Scatter Plot with Labels for Extremes
     plt.figure(figsize=(18, 6))
     ax = sns.scatterplot(
-        x="Overall Volume Change [%]",
+        x="Overall Volume Change",
         y="Stability Index",
         hue="Tumor Classification",
         data=data,
@@ -794,7 +797,7 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     extremes = data.nlargest(5, "Stability Index")  # Adjust the number of points as needed
     for _, point in extremes.iterrows():
         ax.text(
-            point["Overall Volume Change [%]"],
+            point["Overall Volume Change"],
             point["Stability Index"],
             str(point["Patient_ID"]),
         )
@@ -824,7 +827,7 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     # Scatter Plot of Stability Index Over Time
     plt.figure(figsize=(12, 6))
     sns.scatterplot(
-        x="Volume Change [%]",
+        x="Volume Change",
         y="Stability Index",
         hue="Tumor Classification",
         style="Tumor Classification",
@@ -838,3 +841,19 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     filename_scatter = os.path.join(output_dir, "stability_index_over_volume_change.png")
     plt.savefig(filename_scatter)
     plt.close()
+
+
+def annotate_plot(a_x):
+    """Annotate the bar plot with the respective heights.
+
+    Args:
+        a_x (matplotlib.axis): The axis object to be annotated.
+    """
+    for patch in a_x.patches:
+        height = patch.get_height()
+        a_x.text(
+            x=patch.get_x() + (patch.get_width() / 2),
+            y=height,
+            s=f"{height:.0f}",
+            ha="center",
+        )
