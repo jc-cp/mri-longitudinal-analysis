@@ -682,6 +682,30 @@ class TumorAnalysis:
         title = f"{x_val} vs {y_val} ({test_type.capitalize()}) \n"
         num_patients = data["Patient_ID"].nunique()
 
+        units = {
+            "Age": "years",
+            "Age Group": "years",
+            "Date": "date",
+            "Time to Treatment": "days",
+            "Volume": "mm³",
+            "Volume RollMean": "mm³",
+            "Volume RollMedian": "mm³",
+            "Volume RollStd": "mm³",
+            "Volume CumMean": "mm³",
+            "Volume CumMedian": "mm³",
+            "Volume CumStd": "mm³",
+            "Volume Change": "%",
+            "Volume Change RollMean": "%",
+            "Volume Change RollMedian": "%",
+            "Volume Change RollStd": "%",
+            "Volume Change CumMean": "%",
+            "Volume Change CumMedian": "%",
+            "Volume Change CumStd": "%",
+        }
+
+        x_unit = units.get(x_val, "")
+        y_unit = units.get(y_val, "")
+
         # Plot based on test type
         if test_type == "correlation":
             sns.scatterplot(x=x_val, y=y_val, data=data)
@@ -691,7 +715,14 @@ class TumorAnalysis:
                 f" {p_val:.3e} (N={num_patients})"
             )
         elif test_type == "t-test":
-            sns.barplot(x=x_val, y=y_val, data=data)
+            # sns.barplot(x=x_val, y=y_val, data=data, ci="sd")
+            # Calculate group means and standard deviations
+            means = data.groupby(x_val)[y_val].mean()
+            stds = data.groupby(x_val)[y_val].std()
+
+            # Plotting
+            _, ax = plt.subplots()
+            means.plot(kind="bar", yerr=stds, capsize=4, ax=ax, color="skyblue", ecolor="black")
             title += f"T-statistic: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
         elif test_type == "point-biserial":
             sns.boxplot(x=x_val, y=y_val, data=data)
@@ -709,8 +740,14 @@ class TumorAnalysis:
             title += f"Chi2: {stat:.2f}, P-value: {p_val:.3e}, (N={num_patients})"
 
         plt.title(title)
-        plt.xlabel(x_val)
-        plt.ylabel(y_val)
+        if x_unit:
+            plt.xlabel(f"{x_val} [{x_unit}]")
+        else:
+            plt.xlabel(x_val)
+        if y_unit:
+            plt.ylabel(f"{y_val} [{y_unit}]")
+        else:
+            plt.ylabel(y_val)
         plt.tight_layout()
 
         save_file = os.path.join(
@@ -1167,11 +1204,11 @@ class TumorAnalysis:
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
             # print(self.pre_treatment_data.dtypes)
-            # self.analyze_pre_treatment(
-            #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
-            #     prefix=prefix,
-            #     output_dir=output_correlations,
-            # )
+            self.analyze_pre_treatment(
+                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
+                prefix=prefix,
+                output_dir=output_correlations,
+            )
             # print(self.pre_treatment_data.dtypes)
 
             # Additionally to all correlations, let's also do:
@@ -1224,7 +1261,7 @@ class TumorAnalysis:
         if correlation_cfg.FEATURE_ENG:
             print(f"Step {step_idx}: Starting Feature Engineering...")
             save_for_deep_learning(self.pre_treatment_data, output_stats, prefix="pre-treatment")
-            save_for_deep_learning(self.post_treatment_data, output_stats, prefix="post-treatment")
+            # save_for_deep_learning(self.post_treatment_data, output_stats, prefix="post-treatment")
             step_idx += 1
 
 
