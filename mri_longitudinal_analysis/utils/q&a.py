@@ -1,10 +1,13 @@
-import os
-import shutil
-from tqdm import tqdm
-from cfg import qa_cfg
-from collections import defaultdict
 import csv
+import os
 import re
+import shutil
+from collections import defaultdict
+
+import nibabel as nib
+import numpy as np
+from cfg import qa_cfg
+from tqdm import tqdm
 
 
 def move_file(src, dest):
@@ -14,7 +17,7 @@ def move_file(src, dest):
 
 
 def rename_image_file(file_path):
-    """Renames the image file by adding _0000 before the .nii.gz extension."""
+    """Renames the image file by adding _0000 before the .nii.gz extension for running the segmentation again."""
     if file_path.endswith(".nii.gz"):
         new_file_path = file_path.replace(".nii.gz", "_0000.nii.gz")
         os.rename(file_path, new_file_path)
@@ -32,20 +35,31 @@ def rename_files_in_directory(directory):
             print(f"Renamed '{full_path}' to '{new_file_path}'")
 
 
-# Function to extract patientID and scanID from a filename
 def extract_ids(file_name, image=True, mask=False):
+    """
+    Extracts and returns the IDs from a given filename.
+
+    This function is designed to extract either the image or mask IDs from a filename,
+    assuming the filename follows a specific format with parts separated by underscores.
+    """
     parts = file_name.split("_")
 
     if image and not mask:
         return parts[0], parts[1]
     if mask and not image:
-        scan_id = parts[1].split(".")[0]
-        return parts[0], scan_id
+        scanid = parts[1].split(".")[0]
+        return parts[0], scanid
 
 
-# Function to check if a new mask exists for a given image
-def new_mask_exists(image_name, directory):
-    base_name = image_name.split(".")[0]  # Extract base name without extension
+def new_mask_exists(img_name, directory):
+    """
+    Checks if a new mask file exists for a given image in the specified directory.
+
+    This function searches for a mask file that matches a specific pattern, indicating
+    it is a new mask for the provided image name. The pattern includes the base name of the
+    image followed by '_mask_' and a datetime hash.
+    """
+    base_name = img_name.split(".")[0]  # Extract base name without extension
     pattern = re.compile(
         re.escape(base_name) + r"_mask_\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}\.nii\.gz"
     )
@@ -53,6 +67,45 @@ def new_mask_exists(image_name, directory):
         if pattern.match(file_name):
             return file_name
     return False
+
+
+def rename_mask_files(directory):
+    """
+    Renames mask files in the specified directory by removing
+    the datetime hash part from the filename.
+
+    :param directory: Directory containing the files.
+    """
+    pattern = re.compile(r"(.+_mask_)\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}(\.nii\.gz)")
+
+    for img_name in os.listdir(directory):
+        old_full_path = os.path.join(directory, img_name)
+        if os.path.isfile(old_full_path) and pattern.search(img_name):
+            # Remove the datetime hash from the filename
+            new_filename = pattern.sub(r"\1\2", img_name)
+            new_full_path = os.path.join(directory, new_filename)
+
+            # Rename the file
+            os.rename(old_full_path, new_full_path)
+            print(f"Renamed '{old_full_path}' to '{new_full_path}'")
+
+
+def analyze_nifti_files(directory):
+    """
+    Analyzes NIfTI files in a directory to determine if they are empty or contain tumors.
+
+    :param directory: Directory containing NIfTI files.
+    """
+    for file_name in os.listdir(directory):
+        if file_name.endswith(".nii.gz"):
+            full_path = os.path.join(directory, file_name)
+            nifti_image = nib.load(full_path)
+            data = nifti_image.get_fdata()
+
+            if np.any(data):  # Check if there is any non-zero voxel in the image
+                print(f"{file_name} - Tumor present")
+            else:
+                print(f"{file_name} - Empty")
 
 
 if qa_cfg.PART_1:
@@ -155,7 +208,8 @@ if qa_cfg.PART_2:
         os.makedirs(qa_cfg.ACCEPTED_FOLDER, exist_ok=True)
         os.makedirs(qa_cfg.REVIEWS_FOLDER, exist_ok=True)
         os.makedirs(qa_cfg.REVIEW_IMAGES_FOLDER, exist_ok=True)
-        os.makedirs(qa_cfg.REVIEW_MASKS_FOLDER, exist_ok=True)
+        os.makedirs(qa_cfg.REVIEW_OLD_MASKS_FOLDER, exist_ok=True)
+        os.makedirs(qa_cfg.REVIEW_NEW_MASKS_FOLDER, exist_ok=True)
         os.makedirs(qa_cfg.REJECTED_MASKS_FOLDER, exist_ok=True)
 
         # Move new mask images to the accepted folder
@@ -202,9 +256,15 @@ if qa_cfg.PART_2:
             )
             move_file(
                 os.path.join(image_directory, mask_name),
-                os.path.join(qa_cfg.REVIEW_MASKS_FOLDER, mask_name),
+                os.path.join(qa_cfg.REVIEW_OLD_MASKS_FOLDER, mask_name),
             )
 
 if qa_cfg.PART_3:
     review_directory = qa_cfg.REVIEW_IMAGES_FOLDER
     rename_files_in_directory(review_directory)
+
+if qa_cfg.PART_4:
+    analyze_nifti_files(qa_cfg.REVIEW_NEW_MASKS_FOLDER)
+
+if qa_cfg.PART_5:
+    rename_mask_files(qa_cfg.ACCEPTED_FOLDER)
