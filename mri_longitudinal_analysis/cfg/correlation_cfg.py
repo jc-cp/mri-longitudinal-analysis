@@ -5,17 +5,18 @@ CLINICAL_CSV = Path(
     "/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_108_cohort.csv"
 )
 
-VOLUMES_CSVs_45 = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/output/time_series_csv_kernel_smoothed"
-)
-VOLUMES_CSVs_63 = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_63_cohort_reviewed/output/time_series_csv_kernel_smoothed"
+VOLUMES_CSV = Path(
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/output/time_series_csv_kernel_smoothed"
 )
 
-OUTPUT_DIR_CORRELATIONS = Path(
-    "/home/jc053/GIT/mri_longitudinal_analysis/data/output/correlation_plots"
+OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output")
+OUTPUT_DIR_CORRELATIONS = OUTPUT_DIR / "correlation_plots"
+OUTPUT_DIR_STATS = OUTPUT_DIR / "correlation_stats"
+
+EXCLUSION_LIST_PATH = Path(
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/output/patients_with_few_scans.txt"
 )
-OUTPUT_DIR_STATS = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output/correlation_stats")
+
 
 CORRELATION_PRE_TREATMENT = "spearman"
 CORRELATION_POST_TREATMENT = "spearman"
@@ -38,7 +39,7 @@ PROGRESSION_THRESHOLD = 10  # angle value that defines progression
 HIGH_RISK_THRESHOLD = 25  # angle value that defines high increase
 STABILITY_THRESHOLD = 2  # angle value that defines stability
 
-SAMPLE_SIZE = 300  # for plotting growth trajectories
+SAMPLE_SIZE = 108  # for plotting growth trajectories
 
 END_POINTS = False
 

@@ -857,3 +857,19 @@ def annotate_plot(a_x):
             s=f"{height:.0f}",
             ha="center",
         )
+
+
+def read_exclusion_list(file_path):
+    """
+    Reads a file containing patient IDs and their scan IDs to be excluded.
+
+    :param file_path: Path to the .txt file.
+    :return: A set of patient IDs to exclude.
+    """
+    exclude_patients = set()
+    with open(file_path, "r", encoding="utf-8") as file:
+        for line in file:
+            if not line.startswith("----"):
+                patient_id = line.strip()
+                exclude_patients.add(patient_id)
+    return exclude_patients

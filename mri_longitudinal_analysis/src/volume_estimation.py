@@ -60,6 +60,8 @@ class VolumeEstimator:
         self.window_smoothing_data = defaultdict(list)
         self.volume_rate_data = defaultdict(list)
 
+        os.makedirs(volume_est_cfg.OUTPUT_DIR, exist_ok=True)
+
         self.data_sources = {
             "raw": {},
             "filtered": {},
@@ -120,6 +122,8 @@ class VolumeEstimator:
         Returns:
             float: Percentage change in volume.
         """
+        if previous is None:
+            previous = 0
         return ((current - previous) / previous) * 100 if previous != 0 else 0
 
     def process_files(self, max_patients=None):
@@ -131,7 +135,7 @@ class VolumeEstimator:
         Args:
             max_patients (int, optional): Maximum number of patients to load. Defaults to None.
         """
-        file_paths = glob.glob(os.path.join(self.path, "*.nii.gz"))
+        file_paths = glob.glob(os.path.join(self.path, "*_mask.nii.gz"))
 
         all_ids = defaultdict(list)
         all_scans = defaultdict(list)
@@ -142,7 +146,9 @@ class VolumeEstimator:
         # Calculate volumes and filter out NaN ones first
         with Pool(cpu_count()) as pool:
             for file_path, volume in zip(file_paths, pool.map(self.estimate_volume, file_paths)):
-                patient_id, scan_id = os.path.basename(file_path).split("_")[:2]
+                basename = os.path.basename(file_path)
+                parts = basename.split("_")
+                patient_id, scan_id = parts[1], parts[2]
                 patient_id = prefix_zeros_to_six_digit_ids(patient_id)
 
                 # take into account the ones for filtering
@@ -153,6 +159,7 @@ class VolumeEstimator:
                 else:
                     zero_volume_scans[patient_id].append(scan_id)
                     zero_volume_counter += 1
+
         # write zero_volume_scans to a file
         with open(volume_est_cfg.ZERO_VOLUME_FILE, "w", encoding="utf-8") as file:
             file.write(f"Total zero volume scans: {zero_volume_counter}\n")
@@ -223,7 +230,7 @@ class VolumeEstimator:
                 normalized_volumes = volumes
 
             for (file_path, _), morm_volume in zip(scans, normalized_volumes):
-                date_str = os.path.basename(file_path).split("_")[1].replace(".nii.gz", "")
+                date_str = os.path.basename(file_path).split("_")[2].replace(".nii.gz", "")
                 date = datetime.strptime(date_str, "%Y%m%d")
 
                 if not volume_est_cfg.TEST_DATA and patient_id in id_list:
@@ -709,7 +716,7 @@ class VolumeEstimator:
             prev_date = None
 
             for file_path, volume in scans:
-                date_str = os.path.basename(file_path).split("_")[1].replace(".nii.gz", "")
+                date_str = os.path.basename(file_path).split("_")[2].replace(".nii.gz", "")
                 date = datetime.strptime(date_str, "%Y%m%d")
 
                 if prev_date is not None:

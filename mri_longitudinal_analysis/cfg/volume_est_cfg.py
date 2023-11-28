@@ -4,10 +4,10 @@ from pathlib import Path
 
 # Directories
 SEG_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/output/seg_predictions"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/accepted"
 )
 OUTPUT_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_no_ops_45_surgery_cohort_reviewed/output"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/output"
 )
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series_csv_kernel_smoothed"
@@ -21,7 +21,7 @@ ZERO_VOLUME_FILE = OUTPUT_DIR / "zero_volume_segmentations.txt"
 NUMBER_TOTAL_PATIENTS = 108
 
 # Options for creating the plots
-LIMIT_LOADING = 63
+LIMIT_LOADING = 108
 
 RAW = True
 FILTERED = True

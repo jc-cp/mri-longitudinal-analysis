@@ -1,6 +1,7 @@
+# pylint: disable=too-many-lines
 """
 This script initializes the TumorAnalysis class with clinical and volumetric data, 
-then performs various analyses including correlations and treatments.
+then performs various analyses including correlations, stability and trend analysis.
 """
 import os
 
@@ -36,6 +37,7 @@ from utils.helper_functions import (
     plot_individual_trajectories,
     calculate_percentage_change,
     visualize_tumor_stability,
+    read_exclusion_list,
 )
 
 
@@ -52,6 +54,10 @@ class TumorAnalysis:
             clinical_data_file (str): Path to the clinical data CSV file.
             volumes_data_file (str): Path to the tumor volumes data CSV file.
         """
+
+        os.makedirs(correlation_cfg.OUTPUT_DIR_CORRELATIONS, exist_ok=True)
+        os.makedirs(correlation_cfg.OUTPUT_DIR_STATS, exist_ok=True)
+
         self.merged_data = pd.DataFrame()
         self.clinical_data_reduced = pd.DataFrame()
         self.post_treatment_data = pd.DataFrame()
@@ -64,6 +70,7 @@ class TumorAnalysis:
         self.end_points = correlation_cfg.END_POINTS
         self.caliper = correlation_cfg.CALIPER
         self.sample_size_plots = correlation_cfg.SAMPLE_SIZE
+        self.exclusion_list_path = correlation_cfg.EXCLUSION_LIST_PATH
         print("Step 0: Initializing TumorAnalysis class...")
 
         self.validate_files(clinical_data_path, volumes_data_paths)
@@ -193,12 +200,18 @@ class TumorAnalysis:
 
         The function updates the `self.volumes_data` attribute with the concatenated DataFrame.
         """
+        exclude_patients = read_exclusion_list(self.exclusion_list_path)
+
         data_frames = []
         for volumes_data_path in volumes_data_paths:
             all_files = [f for f in os.listdir(volumes_data_path) if f.endswith(".csv")]
             for file in all_files:
-                patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
                 patient_id = file.split(".")[0]
+
+                if patient_id in exclude_patients:
+                    continue
+
+                patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
                 patient_df["Patient_ID"] = patient_id
                 patient_df["Patient_ID"] = (
                     patient_df["Patient_ID"].astype(str).str.zfill(7).astype("string")
@@ -1204,11 +1217,11 @@ class TumorAnalysis:
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
             # print(self.pre_treatment_data.dtypes)
-            self.analyze_pre_treatment(
-                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
-                prefix=prefix,
-                output_dir=output_correlations,
-            )
+            # self.analyze_pre_treatment(
+            #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
+            #     prefix=prefix,
+            #     output_dir=output_correlations,
+            # )
             # print(self.pre_treatment_data.dtypes)
 
             # Additionally to all correlations, let's also do:
@@ -1268,6 +1281,6 @@ class TumorAnalysis:
 if __name__ == "__main__":
     analysis = TumorAnalysis(
         correlation_cfg.CLINICAL_CSV,
-        [correlation_cfg.VOLUMES_CSVs_45, correlation_cfg.VOLUMES_CSVs_63],
+        [correlation_cfg.VOLUMES_CSV],
     )
     analysis.run_analysis(correlation_cfg.OUTPUT_DIR_CORRELATIONS, correlation_cfg.OUTPUT_DIR_STATS)
