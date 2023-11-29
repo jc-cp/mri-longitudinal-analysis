@@ -55,6 +55,25 @@ def weighted_median(data, weights):
             return datum
 
 
+def normalize_data(data):
+    """
+    Normalize a list of values using min-max scaling.
+
+    Args:
+        data (list): List of values to normalize.
+
+    Returns:
+        list: Normalized values.
+    """
+    min_val = min(data)
+    max_val = max(data)
+
+    if max_val == min_val:  # prevent division by zero
+        return [1 for _ in data]  # return a list of ones
+
+    return [(x - min_val) / (max_val - min_val) for x in data]
+
+
 ######################################
 # STATISTICAL TESTS and CORRELATIONS #
 ######################################
@@ -118,6 +137,9 @@ def bonferroni_correction(p_values, alpha):
 
 
 def visualize_p_value_bonferroni_corrections(original_p_values, corrected_p_values, alpha, path):
+    """
+    Scatter and bar plots for the p-value corrections performed through the Bonferroni method.
+    """
     plt.scatter(original_p_values, corrected_p_values, alpha=0.7, cmap="viridis")
     plt.axhline(y=alpha, color="r", linestyle="--", label=f"Alpha={alpha}")
     plt.xlabel("Original P-Values")
@@ -163,6 +185,9 @@ def fdr_correction(p_values, alpha=0.05):
 
 
 def visualize_fdr_correction(original_p_values, corrected_p_values, is_rejected, alpha, path):
+    """
+    Scatter and bar plots for the p-value corrections performed through the FDR method.
+    """
     indices = range(len(original_p_values))
     plt.figure(figsize=(10, 5))
     plt.bar(indices, original_p_values, alpha=0.7, label="Original P-Values")
@@ -207,6 +232,9 @@ def sensitivity_analysis(data, variable, z_threshold=2):
 
 
 def calculate_propensity_scores(data, treatment_column, covariate_columns):
+    """
+    Calculate propensity scores using logistic regression to find cofounding variables.
+    """
     if data[treatment_column].nunique() != 2:
         raise ValueError(
             f"Not enough classes present in {treatment_column}. "
@@ -228,6 +256,9 @@ def calculate_propensity_scores(data, treatment_column, covariate_columns):
 def perform_propensity_score_matching(
     data, propensity_scores, treatment_column, match_ratio=1, caliper=None
 ):
+    """
+    Perform the actual matching using propensity scores.
+    """
     # Add propensity scores to the dataframe
     data = data.copy()
     data["propensity_score"] = propensity_scores
@@ -282,6 +313,9 @@ def calculate_smd(groups, covariate, treatment_column):
 
 
 def visualize_smds(balance_df, path):
+    """
+    Bar plot for the squared mean differences (SMDs) of covariates after matching.
+    """
     balance_df.plot(kind="bar")
     plt.axhline(y=0.1, color="r", linestyle="--")
     plt.title("Standardized Mean Differences for Covariates After Matching")
@@ -295,7 +329,8 @@ def visualize_smds(balance_df, path):
 
 def check_balance(matched_data, covariate_columns, treatment_column):
     """
-    Check the balance of covariates in the matched dataset using Standardized Mean Differences (SMD).
+    Check the balance of covariates in the matched dataset using
+    Standardized Mean Differences (SMD).
 
     Parameters:
         matched_data (DataFrame): The matched dataset after performing PSM.
@@ -318,6 +353,9 @@ def check_balance(matched_data, covariate_columns, treatment_column):
 
 
 def ttest(data, x_val, y_val):
+    """
+    T-test between two groups.
+    """
     group1 = data[data[x_val] == data[x_val].unique()[0]][y_val]
     group2 = data[data[x_val] == data[x_val].unique()[1]][y_val]
     t_stat, p_val = ttest_ind(group1.dropna(), group2.dropna())
@@ -325,12 +363,18 @@ def ttest(data, x_val, y_val):
 
 
 def f_one(data, x_val, y_val):
+    """
+    F-1 test between groups.
+    """
     groups = [group[y_val].dropna() for name, group in data.groupby(x_val)]
     f_stat, p_val = f_oneway(*groups)
     return f_stat, p_val
 
 
 def point_bi_serial(data, binary_var, continuous_var):
+    """
+    Point-biserial correlation between a binary and a continuous variable.
+    """
     binary_data = data[binary_var].cat.codes
     continuous_data = data[continuous_var]
     coef, p_val = pointbiserialr(binary_data, continuous_data)
@@ -343,6 +387,9 @@ def point_bi_serial(data, binary_var, continuous_var):
 
 
 def prefix_zeros_to_six_digit_ids(patient_id):
+    """
+    Adds 0 to the beginning of 6-digit patient IDs.
+    """
     str_id = str(patient_id)
     if len(str_id) == 6:
         # print(f"Found a 6-digit ID: {str_id}. Prefixing a '0'.")
@@ -351,25 +398,6 @@ def prefix_zeros_to_six_digit_ids(patient_id):
     else:
         patient_id = str_id
     return patient_id
-
-
-def normalize_data(data):
-    """
-    Normalize a list of values using min-max scaling.
-
-    Args:
-        data (list): List of values to normalize.
-
-    Returns:
-        list: Normalized values.
-    """
-    min_val = min(data)
-    max_val = max(data)
-
-    if max_val == min_val:  # prevent division by zero
-        return [1 for _ in data]  # return a list of ones
-
-    return [(x - min_val) / (max_val - min_val) for x in data]
 
 
 def compute_95_ci(data):
@@ -393,6 +421,9 @@ def compute_95_ci(data):
 
 
 def calculate_stats(row, col_name):
+    """
+    Given a row of data, calculate the mean, median, and standard deviation of a column.
+    """
     values = row[col_name]
     mean_val = np.mean(values)
     median_val = np.median(values)
@@ -404,10 +435,16 @@ def calculate_stats(row, col_name):
 
 
 def zero_fill(series, width):
+    """
+    Given a series of strings, zero-fill the values to a specified width in front.
+    """
     return series.astype(str).str.zfill(width)
 
 
 def save_for_deep_learning(df: pd.DataFrame, output_dir, prefix):
+    """
+    Save data for deep learning in csv format.
+    """
     if df is not None:
         filename = f"{prefix}_dl_features.csv"
         file_path = os.path.join(output_dir, filename)
@@ -417,23 +454,19 @@ def save_for_deep_learning(df: pd.DataFrame, output_dir, prefix):
         print("No data to save.")
 
 
-def calculate_brain_growth(data, younger_age, older_age):
-    # Assuming data contains columns 'Age' and 'Volume'
-    younger_volume = data[data["Age"] == younger_age]["Volume"].mean()
-    older_volume = data[data["Age"] == older_age]["Volume"].mean()
-
-    percentage_growth = ((older_volume - younger_volume) / younger_volume) * 100
-    return percentage_growth
-
-
 def process_race_ethnicity(race):
-    # Removing 'Non-Hispanic' from the string
+    """
+    Removing 'Non-Hispanic' from the string for consistency in data.
+    """
     if "Non-Hispanic" in race:
         race = race.replace("Non-Hispanic ", "")
     return race
 
 
 def categorize_age_group(data, debug=False):
+    """
+    Categorize patients according to an age group for more thorough analysis.
+    """
     if debug:
         print(data["Age"].max())
         print(data["Age"].min())
@@ -456,12 +489,16 @@ def categorize_age_group(data, debug=False):
 
 
 def calculate_group_norms_and_stability(data, volume_column, volume_change_column):
-    # Calculate group-wise statistics for each age group
+    """
+    Calculate group-wise statistics for each age group based on the
+    volume and volume change columns.
+    """
+    # Use mean to reflect average variability within each group
     group_norms = (
         data.groupby("Age Group")
         .agg(
             {
-                f"{volume_column} RollStd": "mean",  # mean to reflect average variability within each group
+                f"{volume_column} RollStd": "mean",
                 f"{volume_change_column} RollStd": "mean",
             }
         )
@@ -732,6 +769,10 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None, 
 
 
 def calculate_percentage_change(data, patient_id, column_name):
+    """
+    Calculate the percentage change in a volume for a patient
+    considering the first and last value.
+    """
     patient_data = data[data["Patient_ID"] == patient_id].sort_values(by="Time_since_First_Scan")
     if len(patient_data) < 2:
         return None  # Not enough data
@@ -747,6 +788,9 @@ def calculate_percentage_change(data, patient_id, column_name):
 
 
 def visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold):
+    """
+    Create a series of plots to visualize the stability index and tumor classification.
+    """
     classification_distribution = data["Tumor Classification"].value_counts(normalize=True)
 
     ############
