@@ -480,7 +480,7 @@ def calculate_group_norms_and_stability(data, volume_column, volume_change_colum
     return data
 
 
-def calculate_slope_and_angle(data, patient_id, column_name, end_points=False):
+def calculate_slope_and_angle(data, patient_id, column_name):
     """
     Calculate the slope of the trend line for a patient's data.
     """
@@ -488,19 +488,9 @@ def calculate_slope_and_angle(data, patient_id, column_name, end_points=False):
     if len(patient_data) < 2:
         return None  # Not enough data to calculate a slope
 
-    if end_points:
-        # Use only the first and last data points
-        x = np.array(
-            [
-                patient_data["Time_since_First_Scan"].iloc[0],
-                patient_data["Time_since_First_Scan"].iloc[-1],
-            ]
-        ).reshape(-1, 1)
-        y = np.array([patient_data[column_name].iloc[0], patient_data[column_name].iloc[-1]])
-    else:
-        # Reshape for sklearn
-        x = patient_data["Time_since_First_Scan"].values.reshape(-1, 1)
-        y = patient_data[column_name].values
+    # Reshape for sklearn
+    x = patient_data["Time_since_First_Scan"].values.reshape(-1, 1)
+    y = patient_data[column_name].values
 
     # Fit linear model
     model = LinearRegression()
@@ -518,7 +508,6 @@ def classify_patient(
     progression_threshold,
     stability_threshold,
     high_risk_threshold,
-    end_points=False,
     angle=False,
 ):
     """
@@ -531,7 +520,7 @@ def classify_patient(
         return f"Insufficient Data for patient {patient_id}"
 
     if angle:
-        _, actual_angle = calculate_slope_and_angle(data, patient_id, column_name, end_points)
+        _, actual_angle = calculate_slope_and_angle(data, patient_id, column_name)
 
         if actual_angle is None:
             return f"Failed to calculate slope for patient {patient_id}"
@@ -759,7 +748,10 @@ def calculate_percentage_change(data, patient_id, column_name):
 
 def visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold):
     classification_distribution = data["Tumor Classification"].value_counts(normalize=True)
-    # Visualization of Tumor Classification
+
+    ############
+    # BAR PLOT #
+    #############
     plt.figure(figsize=(10, 6))
     sns.countplot(x="Age Group", hue="Tumor Classification", data=data)
     plt.title("Count of Stable vs. Unstable Tumors Across Age Groups")
@@ -772,6 +764,9 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     plt.savefig(filename)
     plt.close()
 
+    ############
+    # PIE PLOT #
+    ############
     plt.figure(figsize=(10, 6))
     plt.pie(
         classification_distribution,
@@ -794,7 +789,7 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
         data=data,
         alpha=0.6,
     )
-    extremes = data.nlargest(5, "Stability Index")  # Adjust the number of points as needed
+    extremes = data.nlargest(4, "Stability Index")  # Adjust the number of points as needed
     for _, point in extremes.iterrows():
         ax.text(
             point["Overall Volume Change"],
@@ -806,13 +801,16 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     plt.ylabel("Stability Index")
     plt.axhline(y=stability_threshold, color="g", linestyle="--", label="Stability Threshold")
     plt.axvline(x=change_threshold, color="b", linestyle="--", label="Volume Change Threshold")
+    plt.axvline(x=-change_threshold, color="b", linestyle="--")
     plt.legend(title="Tumor Classification")
     plt.tight_layout()
     filename_scatter = os.path.join(output_dir, "stability_index_scatter.png")
     plt.savefig(filename_scatter)
     plt.close()
 
-    # Distribution Plot of the Stability Index
+    ###############
+    # VIOLIN PLOT #
+    ###############
     plt.figure(figsize=(10, 6))
     sns.violinplot(x="Age Group", y="Stability Index", data=data, bw=0.2)
     sns.stripplot(x="Age Group", y="Stability Index", data=data, color="k")
@@ -824,7 +822,9 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     plt.savefig(filename_distribution)
     plt.close()
 
-    # Scatter Plot of Stability Index Over Time
+    ################
+    # SCATTER PLOT #
+    ################
     plt.figure(figsize=(12, 6))
     sns.scatterplot(
         x="Volume Change",

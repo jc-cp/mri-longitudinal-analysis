@@ -67,7 +67,7 @@ class TumorAnalysis:
         self.progression_threshold = correlation_cfg.PROGRESSION_THRESHOLD
         self.stability_threshold = correlation_cfg.STABILITY_THRESHOLD
         self.high_risk_threshold = correlation_cfg.HIGH_RISK_THRESHOLD
-        self.end_points = correlation_cfg.END_POINTS
+        self.angle = correlation_cfg.ANGLE
         self.caliper = correlation_cfg.CALIPER
         self.sample_size_plots = correlation_cfg.SAMPLE_SIZE
         self.exclusion_list_path = correlation_cfg.EXCLUSION_LIST_PATH
@@ -1016,8 +1016,7 @@ class TumorAnalysis:
                 self.progression_threshold,
                 self.stability_threshold,
                 self.high_risk_threshold,
-                self.end_points,
-                angle=False,
+                angle=self.angle,
             )
             for patient_id in sufficient_data_patients
         }

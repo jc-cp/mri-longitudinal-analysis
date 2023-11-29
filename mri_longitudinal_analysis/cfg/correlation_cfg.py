@@ -41,7 +41,7 @@ STABILITY_THRESHOLD = 2  # angle value that defines stability
 
 SAMPLE_SIZE = 108  # for plotting growth trajectories
 
-END_POINTS = False
+ANGLE = False
 
 VOLUME_WEIGHT = 0.25
 GROWTH_WEIGHT = 0.75
