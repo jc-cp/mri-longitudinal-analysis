@@ -520,7 +520,6 @@ class TumorAnalysis:
         # variable types
         categorical_vars = [
             "Glioma Type",
-            # "Race",
             "Treatment Type",
             "Age Group",
             "Sex",
@@ -538,24 +537,12 @@ class TumorAnalysis:
             "Volume RollMean",
             "Volume RollMedian",
             "Volume RollStd",
-            # "Normalized Volume CumMean",
-            # "Normalized Volume CumMedian",
-            # "Normalized Volume CumStd",
-            # "Normalized Volume RollMean",
-            # "Normalized Volume RollMedian",
-            # "Normalized Volume RollStd",
             "Volume Change CumMean",
             "Volume Change CumMedian",
             "Volume Change CumStd",
             "Volume Change RollMean",
             "Volume Change RollMedian",
             "Volume Change RollStd",
-            # "Normalized Volume Change CumMean",
-            # "Normalized Volume Change CumMedian",
-            # "Normalized Volume Change CumStd",
-            # "Normalized Volume Change RollMean",
-            # "Normalized Volume Change RollMedian",
-            # "Normalized Volume Change RollStd",
             "Time to Treatment",
         ]
 
@@ -614,7 +601,6 @@ class TumorAnalysis:
         aggregated_data = (
             self.pre_treatment_data.sort_values("Date").groupby("Patient_ID", as_index=False).last()
         )
-        print(aggregated_data.head())
 
         for cat_var in categorical_vars:
             for other_cat_var in categorical_vars:
@@ -1215,19 +1201,17 @@ class TumorAnalysis:
             prefix = "pre-treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
-            # print(self.pre_treatment_data.dtypes)
-            # self.analyze_pre_treatment(
-            #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
-            #     prefix=prefix,
-            #     output_dir=output_correlations,
-            # )
-            # print(self.pre_treatment_data.dtypes)
+            self.analyze_pre_treatment(
+                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
+                prefix=prefix,
+                output_dir=output_correlations,
+            )
 
             # Additionally to all correlations, let's also do:
             # Survival analysis
-            # stratify_by_list = ["Glioma Type", "Sex", "Mutations", "Age Group"]
-            # for element in stratify_by_list:
-            #     self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
+            stratify_by_list = ["Glioma Type", "Sex", "Mutations", "Age Group"]
+            for element in stratify_by_list:
+                self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
 
             # Growth trajectories & Trend analysis
             self.model_growth_trajectories(prefix, output_dir=output_stats)

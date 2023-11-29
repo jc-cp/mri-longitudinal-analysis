@@ -412,7 +412,7 @@ def save_for_deep_learning(df: pd.DataFrame, output_dir, prefix):
         filename = f"{prefix}_dl_features.csv"
         file_path = os.path.join(output_dir, filename)
         df.to_csv(file_path, index=False)
-        print(f"Data saved for deep learning in {filename}.csv")
+        print(f"\tData saved for deep learning in {filename}.csv")
     else:
         print("No data to save.")
 
