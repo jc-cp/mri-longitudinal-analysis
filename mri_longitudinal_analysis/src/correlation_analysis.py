@@ -1212,11 +1212,11 @@ class TumorAnalysis:
             prefix = "pre-treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
-            # self.analyze_pre_treatment(
-            #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
-            #     prefix=prefix,
-            #     output_dir=output_correlations,
-            # )
+            self.analyze_pre_treatment(
+                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
+                prefix=prefix,
+                output_dir=output_correlations,
+            )
 
             # Additionally to all correlations, let's also do:
             # Survival analysis
