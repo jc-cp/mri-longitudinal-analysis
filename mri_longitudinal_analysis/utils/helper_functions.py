@@ -381,25 +381,6 @@ def point_bi_serial(data, binary_var, continuous_var):
     return coef, p_val
 
 
-#######################################
-# DATA HANDLING and SIMPLE OPERATIONS #
-#######################################
-
-
-def prefix_zeros_to_six_digit_ids(patient_id):
-    """
-    Adds 0 to the beginning of 6-digit patient IDs.
-    """
-    str_id = str(patient_id)
-    if len(str_id) == 6:
-        # print(f"Found a 6-digit ID: {str_id}. Prefixing a '0'.")
-        patient_id = "0" + str_id
-
-    else:
-        patient_id = str_id
-    return patient_id
-
-
 def compute_95_ci(data):
     """
     Compute the 95% confidence interval for a dataset.
@@ -418,6 +399,25 @@ def compute_95_ci(data):
     upper_bound = mean + 1.96 * se
 
     return lower_bound, upper_bound
+
+
+#######################################
+# DATA HANDLING and SIMPLE OPERATIONS #
+#######################################
+
+
+def prefix_zeros_to_six_digit_ids(patient_id):
+    """
+    Adds 0 to the beginning of 6-digit patient IDs.
+    """
+    str_id = str(patient_id)
+    if len(str_id) == 6:
+        # print(f"Found a 6-digit ID: {str_id}. Prefixing a '0'.")
+        patient_id = "0" + str_id
+
+    else:
+        patient_id = str_id
+    return patient_id
 
 
 def calculate_stats(row, col_name):
@@ -526,7 +526,7 @@ def calculate_slope_and_angle(data, patient_id, column_name):
         return None  # Not enough data to calculate a slope
 
     # Reshape for sklearn
-    x = patient_data["Time_since_First_Scan"].values.reshape(-1, 1)
+    x = patient_data["Time since First Scan"].values.reshape(-1, 1)
     y = patient_data[column_name].values
 
     # Fit linear model
@@ -550,7 +550,7 @@ def classify_patient(
     """
     Classify a patient based on the slope of actual and predicted growth rates.
     """
-    data = data.sort_values(by="Time_since_First_Scan")
+    data = data.sort_values(by="Time since First Scan")
     patient_data = data[data["Patient_ID"] == patient_id]
 
     if len(patient_data) < 2:
@@ -590,190 +590,12 @@ def classify_patient(
             return "Stable"
 
 
-def plot_trend_trajectories(data, output_filename, column_name, unit=None):
-    """
-    Plot the growth trajectories of patients with classifications.
-
-    Parameters:
-    - data: DataFrame containing patient growth data and classifications.
-    - output_filename: Name of the file to save the plot.
-    """
-    plt.figure(figsize=(15, 8))
-
-    # Unique classifications & palette
-    data = data[data["Time_since_First_Scan"] <= 4000]
-    classifications = data["Classification"].unique()
-
-    palette = sns.color_palette("hsv", len(classifications))
-
-    for classification, color in zip(classifications, palette):
-        class_data = data[data["Classification"] == classification]
-        # Plot individual trajectories
-
-        for patient_id in class_data["Patient_ID"].unique():
-            patient_data = class_data[class_data["Patient_ID"] == patient_id]
-
-            plt.plot(
-                patient_data["Time_since_First_Scan"],
-                patient_data[column_name],
-                color=color,
-                alpha=0.5,
-                linewidth=1,
-            )
-            # Plot median trajectory for each classification
-        median_data = (
-            class_data.groupby(
-                pd.cut(
-                    class_data["Time_since_First_Scan"],
-                    pd.interval_range(
-                        start=0, end=class_data["Time_since_First_Scan"].max(), freq=91
-                    ),
-                )
-            )[column_name]
-            .median()
-            .reset_index()
-        )
-        sns.lineplot(
-            x=median_data["Time_since_First_Scan"].apply(lambda x: x.mid),
-            y=column_name,
-            data=median_data,
-            color=color,
-            linestyle="--",
-            label=f"{classification} Median",
-            linewidth=2.5,
-        )
-
-    num_patients = data["Patient_ID"].nunique()
-
-    plt.xlabel("Days Since First Scan")
-    plt.ylabel(f"Tumor {column_name} [{unit}]")
-    plt.title(f"Patient Trend Trajectories (N={num_patients})")
-    plt.legend()
-    plt.savefig(output_filename)
-    plt.close()
-
-
-def plot_individual_trajectories(name, plot_data, column, category_column=None, unit=None):
-    """
-    Plot the individual trajectories for a sample of patients.
-
-    Parameters:
-    - name (str): The filename to save the plot image.
-
-    This method samples a n number of unique patient IDs from the pre-treatment data,
-    plots their variable trajectories, and saves the plot to the specified filename.
-    """
-    plt.figure(figsize=(10, 6))
-
-    # Cutoff the data at 4000 days
-    plot_data = plot_data[plot_data["Time_since_First_Scan"] <= 4000]
-    num_patients = plot_data["Patient_ID"].nunique()
-    # Get the median every 3 months
-    median_data = (
-        plot_data.groupby(
-            pd.cut(
-                plot_data["Time_since_First_Scan"],
-                pd.interval_range(start=0, end=plot_data["Time_since_First_Scan"].max(), freq=91),
-            )
-        )[column]
-        .median()
-        .reset_index()
-    )
-
-    if category_column:
-        categories = plot_data[category_column].unique()
-        patient_palette = sns.color_palette("hsv", len(categories))
-        median_palette = sns.color_palette("Set2", len(categories))
-        legend_handles = []
-
-        for (category, patient_color), median_color in zip(
-            zip(categories, patient_palette), median_palette
-        ):
-            category_data = plot_data[plot_data[category_column] == category]
-            median_data_category = (
-                category_data.groupby(
-                    pd.cut(
-                        category_data["Time_since_First_Scan"],
-                        pd.interval_range(
-                            start=0, end=category_data["Time_since_First_Scan"].max(), freq=91
-                        ),
-                    )
-                )[column]
-                .median()
-                .reset_index()
-            )
-            legend_handles.append(
-                lines.Line2D([], [], color=patient_color, label=f"{category_column} {category}")
-            )
-            for patient_id in category_data["Patient_ID"].unique():
-                patient_data = category_data[category_data["Patient_ID"] == patient_id]
-                plt.plot(
-                    patient_data["Time_since_First_Scan"],
-                    patient_data[column],
-                    color=patient_color,
-                    alpha=0.5,
-                    linewidth=1,
-                )
-            sns.lineplot(
-                x=median_data_category["Time_since_First_Scan"].apply(lambda x: x.mid),
-                y=column,
-                data=median_data_category,
-                color=median_color,
-                linestyle="--",
-                label=f"{category_column} {category} Median Trajectory",
-            )
-
-        sns.lineplot(
-            x=median_data["Time_since_First_Scan"].apply(lambda x: x.mid),
-            y=column,
-            data=median_data,
-            color="red",
-            linestyle="--",
-            label="Cohort Median Trajectory",
-        )
-        # Retrieve the handles and labels from the current plot
-        handles, _ = plt.gca().get_legend_handles_labels()
-        # Combine custom category handles with the median trajectory handles
-        combined_handles = legend_handles + handles[-(len(categories) + 1) :]
-
-        plt.title(f"Individual Tumor {column} Trajectories by {category_column} (N={num_patients})")
-        plt.legend(handles=combined_handles)
-
-    else:
-        # Plot each patient's data
-        for patient_id in plot_data["Patient_ID"].unique():
-            patient_data = plot_data[plot_data["Patient_ID"] == patient_id]
-            plt.plot(
-                patient_data["Time_since_First_Scan"], patient_data[column], alpha=0.5, linewidth=1
-            )
-
-        sns.lineplot(
-            x=median_data["Time_since_First_Scan"].apply(lambda x: x.mid),
-            y=column,
-            data=median_data,
-            color="blue",
-            linestyle="--",
-            label="Median Trajectory",
-        )
-        plt.title(f"Individual Tumor {column} Trajectories (N={num_patients})")
-        plt.legend()
-
-    plt.xlabel("Days Since First Scan")
-    plt.ylabel(f"Tumor {column} [{unit}]")
-    plt.savefig(name)
-    plt.close()
-    if category_column:
-        print(f"\t\tSaved tumor {column} trajectories plot by category: {category_column}.")
-    else:
-        print(f"\t\tSaved tumor {column} trajectories plot for all patients.")
-
-
 def calculate_percentage_change(data, patient_id, column_name):
     """
     Calculate the percentage change in a volume for a patient
     considering the first and last value.
     """
-    patient_data = data[data["Patient_ID"] == patient_id].sort_values(by="Time_since_First_Scan")
+    patient_data = data[data["Patient_ID"] == patient_id].sort_values(by="Time since First Scan")
     if len(patient_data) < 2:
         return None  # Not enough data
 
@@ -785,6 +607,59 @@ def calculate_percentage_change(data, patient_id, column_name):
 
     percent_change = ((end_volume - start_volume) / start_volume) * 100
     return percent_change
+
+
+def read_exclusion_list(file_path):
+    """
+    Reads a file containing patient IDs and their scan IDs to be excluded.
+
+    :param file_path: Path to the .txt file.
+    :return: A set of patient IDs to exclude.
+    """
+    exclude_patients = set()
+    with open(file_path, "r", encoding="utf-8") as file:
+        for line in file:
+            if not line.startswith("----"):
+                patient_id = line.strip()
+                exclude_patients.add(patient_id)
+    return exclude_patients
+
+
+def consistency_check(data):
+    """
+    Check for consistency amongst classification in the data.
+    """
+    mismatched_patients = []
+
+    for patient_id, group in data.groupby("Patient_ID"):
+        first_row = group.iloc[0]
+        last_row = group.iloc[-1]
+
+        patient_classification = first_row["Patient Classification"]
+        initial_tumor_classification = first_row["Tumor Classification"]
+        final_tumor_classification = last_row["Tumor Classification"]
+
+        # Define your matching logic here
+        if patient_classification == "Regressor":
+            if not final_tumor_classification == "Unstable":
+                mismatched_patients.append(patient_id)
+        elif patient_classification == "Progressor":
+            if not final_tumor_classification == "Unstable":
+                mismatched_patients.append(patient_id)
+        elif patient_classification == "Stable":
+            if not initial_tumor_classification == "Stable":
+                mismatched_patients.append(patient_id)
+
+    # Output or handle mismatched_patients
+    if len(mismatched_patients) != 0:
+        print(f"\tMismatched Patients: {mismatched_patients}")
+    else:
+        print("\tAll patients were rightly classified.")
+
+
+######################################
+# VISUALIZATION and PLOTTING METHODS #
+######################################
 
 
 def visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold):
@@ -903,17 +778,179 @@ def annotate_plot(a_x):
         )
 
 
-def read_exclusion_list(file_path):
+def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     """
-    Reads a file containing patient IDs and their scan IDs to be excluded.
+    Plot the growth trajectories of patients with classifications.
 
-    :param file_path: Path to the .txt file.
-    :return: A set of patient IDs to exclude.
+    Parameters:
+    - data: DataFrame containing patient growth data and classifications.
+    - output_filename: Name of the file to save the plot.
     """
-    exclude_patients = set()
-    with open(file_path, "r", encoding="utf-8") as file:
-        for line in file:
-            if not line.startswith("----"):
-                patient_id = line.strip()
-                exclude_patients.add(patient_id)
-    return exclude_patients
+    plt.figure(figsize=(15, 8))
+
+    # Unique classifications & palette
+    data = data[data["Time since First Scan"] <= 4000]
+    classifications = data["Classification"].unique()
+
+    palette = sns.color_palette("hsv", len(classifications))
+
+    for classification, color in zip(classifications, palette):
+        class_data = data[data["Classification"] == classification]
+        # Plot individual trajectories
+
+        for patient_id in class_data["Patient_ID"].unique():
+            patient_data = class_data[class_data["Patient_ID"] == patient_id]
+
+            plt.plot(
+                patient_data["Time since First Scan"],
+                patient_data[column_name],
+                color=color,
+                alpha=0.5,
+                linewidth=1,
+            )
+            # Plot median trajectory for each classification
+        median_data = (
+            class_data.groupby(
+                pd.cut(
+                    class_data["Time since First Scan"],
+                    pd.interval_range(
+                        start=0, end=class_data["Time since First Scan"].max(), freq=91
+                    ),
+                )
+            )[column_name]
+            .median()
+            .reset_index()
+        )
+        sns.lineplot(
+            x=median_data["Time since First Scan"].apply(lambda x: x.mid),
+            y=column_name,
+            data=median_data,
+            color=color,
+            linestyle="--",
+            label=f"{classification} Median",
+            linewidth=2.5,
+        )
+
+    num_patients = data["Patient_ID"].nunique()
+
+    plt.xlabel("Days Since First Scan")
+    plt.ylabel(f"Tumor {column_name} [{unit}]")
+    plt.title(f"Patient Trend Trajectories (N={num_patients})")
+    plt.legend()
+    plt.savefig(output_filename)
+    plt.close()
+
+
+def plot_individual_trajectories(name, plot_data, column, category_column=None, unit=None):
+    """
+    Plot the individual trajectories for a sample of patients.
+
+    Parameters:
+    - name (str): The filename to save the plot image.
+
+    This method samples a n number of unique patient IDs from the pre-treatment data,
+    plots their variable trajectories, and saves the plot to the specified filename.
+    """
+    plt.figure(figsize=(10, 6))
+
+    # Cutoff the data at 4000 days
+    plot_data = plot_data[plot_data["Time since First Scan"] <= 4000]
+    num_patients = plot_data["Patient_ID"].nunique()
+    # Get the median every 3 months
+    median_data = (
+        plot_data.groupby(
+            pd.cut(
+                plot_data["Time since First Scan"],
+                pd.interval_range(start=0, end=plot_data["Time since First Scan"].max(), freq=91),
+            )
+        )[column]
+        .median()
+        .reset_index()
+    )
+
+    if category_column:
+        categories = plot_data[category_column].unique()
+        patient_palette = sns.color_palette("hsv", len(categories))
+        median_palette = sns.color_palette("Set2", len(categories))
+        legend_handles = []
+
+        for (category, patient_color), median_color in zip(
+            zip(categories, patient_palette), median_palette
+        ):
+            category_data = plot_data[plot_data[category_column] == category]
+            median_data_category = (
+                category_data.groupby(
+                    pd.cut(
+                        category_data["Time since First Scan"],
+                        pd.interval_range(
+                            start=0, end=category_data["Time since First Scan"].max(), freq=91
+                        ),
+                    )
+                )[column]
+                .median()
+                .reset_index()
+            )
+            legend_handles.append(
+                lines.Line2D([], [], color=patient_color, label=f"{category_column} {category}")
+            )
+            for patient_id in category_data["Patient_ID"].unique():
+                patient_data = category_data[category_data["Patient_ID"] == patient_id]
+                plt.plot(
+                    patient_data["Time since First Scan"],
+                    patient_data[column],
+                    color=patient_color,
+                    alpha=0.5,
+                    linewidth=1,
+                )
+            sns.lineplot(
+                x=median_data_category["Time since First Scan"].apply(lambda x: x.mid),
+                y=column,
+                data=median_data_category,
+                color=median_color,
+                linestyle="--",
+                label=f"{category_column} {category} Median Trajectory",
+            )
+
+        sns.lineplot(
+            x=median_data["Time since First Scan"].apply(lambda x: x.mid),
+            y=column,
+            data=median_data,
+            color="red",
+            linestyle="--",
+            label="Cohort Median Trajectory",
+        )
+        # Retrieve the handles and labels from the current plot
+        handles, _ = plt.gca().get_legend_handles_labels()
+        # Combine custom category handles with the median trajectory handles
+        combined_handles = legend_handles + handles[-(len(categories) + 1) :]
+
+        plt.title(f"Individual Tumor {column} Trajectories by {category_column} (N={num_patients})")
+        plt.legend(handles=combined_handles)
+
+    else:
+        # Plot each patient's data
+        for patient_id in plot_data["Patient_ID"].unique():
+            patient_data = plot_data[plot_data["Patient_ID"] == patient_id]
+            plt.plot(
+                patient_data["Time since First Scan"], patient_data[column], alpha=0.5, linewidth=1
+            )
+
+        sns.lineplot(
+            x=median_data["Time since First Scan"].apply(lambda x: x.mid),
+            y=column,
+            data=median_data,
+            color="blue",
+            linestyle="--",
+            label="Median Trajectory",
+        )
+        plt.title(f"Individual Tumor {column} Trajectories (N={num_patients})")
+        plt.legend()
+
+    plt.xlabel("Days Since First Scan")
+    plt.ylabel(f"Tumor {column} [{unit}]")
+    plt.savefig(name)
+    plt.close()
+    if category_column:
+        print(f"\t\tSaved tumor {column} trajectories plot by category: {category_column}.")
+    else:
+        print(f"\t\tSaved tumor {column} trajectories plot for all patients.")

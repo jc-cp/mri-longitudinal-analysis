@@ -1,3 +1,6 @@
+"""
+Q&A script for the MRI Longitudinal Analysis pipeline.
+"""
 import csv
 import os
 import re
@@ -17,13 +20,17 @@ def move_file(src, dest):
 
 
 def rename_image_file(file_path):
-    """Renames the image file by adding _0000 before the .nii.gz extension for running the segmentation again."""
-    if file_path.endswith(".nii.gz"):
+    """Renames the image file by toggling _0000 before the
+    .nii.gz extension."""
+    if file_path.endswith("_0000.nii.gz"):
+        new_file_path = file_path.replace("_0000.nii.gz", ".nii.gz")
+    elif file_path.endswith(".nii.gz"):
         new_file_path = file_path.replace(".nii.gz", "_0000.nii.gz")
-        os.rename(file_path, new_file_path)
-        return new_file_path
     else:
         return file_path
+
+    os.rename(file_path, new_file_path)
+    return new_file_path
 
 
 def rename_files_in_directory(directory):
@@ -71,18 +78,26 @@ def new_mask_exists(img_name, directory):
 
 def rename_mask_files(directory):
     """
-    Renames mask files in the specified directory by removing
-    the datetime hash part from the filename.
+    Renames mask files in the specified directory.
+    Removes the datetime hash part from the filename if present and
+    adds '_mask' before .nii.gz if it's not present.
 
     :param directory: Directory containing the files.
     """
-    pattern = re.compile(r"(.+_mask_)\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}(\.nii\.gz)")
+    pattern_hash = re.compile(r"(.+_mask_)\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}(\.nii\.gz)")
+    pattern_mask = re.compile(r"(.+)(\.nii\.gz)")
 
     for img_name in os.listdir(directory):
         old_full_path = os.path.join(directory, img_name)
-        if os.path.isfile(old_full_path) and pattern.search(img_name):
-            # Remove the datetime hash from the filename
-            new_filename = pattern.sub(r"\1\2", img_name)
+
+        if os.path.isfile(old_full_path):
+            # Remove the datetime hash from the filename if it's present
+            new_filename = pattern_hash.sub(r"\1\2", img_name)
+
+            # Add '_mask' before '.nii.gz' if it's not present
+            if "_mask" not in new_filename:
+                new_filename = pattern_mask.sub(r"\1_mask\2", new_filename)
+
             new_full_path = os.path.join(directory, new_filename)
 
             # Rename the file
@@ -90,22 +105,69 @@ def rename_mask_files(directory):
             print(f"Renamed '{old_full_path}' to '{new_full_path}'")
 
 
-def analyze_nifti_files(directory):
+def analyze_nifti_files(directory, csv_file):
     """
     Analyzes NIfTI files in a directory to determine if they are empty or contain tumors.
+    Saves the analysis in a CSV file, including the volume of the tumor.
 
     :param directory: Directory containing NIfTI files.
+    :param csv_file: Path to the CSV file to save the results.
     """
-    for file_name in os.listdir(directory):
-        if file_name.endswith(".nii.gz"):
-            full_path = os.path.join(directory, file_name)
-            nifti_image = nib.load(full_path)
-            data = nifti_image.get_fdata()
+    with open(csv_file, mode="w", newline="", encoding="utf-8") as archive:
+        writer = csv.writer(archive)
+        writer.writerow(["Filename", "Status", "Volume"])  # Writing the header
 
-            if np.any(data):  # Check if there is any non-zero voxel in the image
-                print(f"{file_name} - Tumor present")
-            else:
-                print(f"{file_name} - Empty")
+        for file_name in os.listdir(directory):
+            if file_name.endswith(".nii.gz"):
+                full_path = os.path.join(directory, file_name)
+                nifti_image = nib.load(full_path)
+                data = nifti_image.get_fdata()
+
+                if np.any(data):  # Check if there is any non-zero voxel in the image
+                    stats = "Tumor present"
+                    volume = np.count_nonzero(data)  # Count non-zero voxels for volume
+                else:
+                    stats = "Empty"
+                    volume = 0
+
+                # Write the filename, status, and volume to the CSV file
+                writer.writerow([file_name, stats, volume])
+
+                print(f"{file_name} - {stats} - {volume}")
+
+
+def move_tumor_files(annotations_csv, masks_folder, images_folder, accepted_folder, voxel_count=10):
+    """
+    Reads annotations.csv and moves corresponding .nii.gz files from masks and images folders
+    to the accepted folder if the 'Status' column is 'Tumor Present'.
+
+    :param annotations_csv: Path to the annotations.csv file.
+    :param masks_folder: Directory containing mask files.
+    :param images_folder: Directory containing image files.
+    :param accepted_folder: Directory where files should be moved if accepted.
+    """
+    with open(annotations_csv, mode="r", encoding="utf-8") as archive:
+        read = csv.DictReader(archive)
+        for row_line in read:
+            if row_line["Status"] == "Tumor present" and float(row_line["Volume"]) > voxel_count:
+                mask_name = row_line["Filename"]
+                image_name = mask_name.replace("_mask", "")
+
+                try:
+                    # Move the corresponding mask file
+                    mask_file = os.path.join(masks_folder, mask_name)
+                    new_mask_file = os.path.join(accepted_folder, mask_name)
+                    move_file(mask_file, new_mask_file)
+
+                    # Move the corresponding image file
+                    image_file = os.path.join(images_folder, image_name)
+                    new_image_file = os.path.join(accepted_folder, image_name)
+                    move_file(image_file, new_image_file)
+
+                    # print(f"Moved '{mask_file}' to '{accepted_folder}'")
+                    # print(f"Moved '{image_file}' to '{accepted_folder}'")
+                except Exception as e:
+                    print(f"Error moving files: {e}")
 
 
 if qa_cfg.PART_1:
@@ -264,7 +326,16 @@ if qa_cfg.PART_3:
     rename_files_in_directory(review_directory)
 
 if qa_cfg.PART_4:
-    analyze_nifti_files(qa_cfg.REVIEW_NEW_MASKS_FOLDER)
+    analyze_nifti_files(qa_cfg.REVIEW_NEW_MASKS_FOLDER, qa_cfg.ANNOTATIONS_CSV_MASKS)
 
 if qa_cfg.PART_5:
-    rename_mask_files(qa_cfg.ACCEPTED_FOLDER)
+    rename_mask_files(qa_cfg.REVIEW_NEW_MASKS_FOLDER)
+
+if qa_cfg.PART_6:
+    move_tumor_files(
+        qa_cfg.ANNOTATIONS_CSV_MASKS,
+        qa_cfg.REVIEW_NEW_MASKS_FOLDER,
+        qa_cfg.REVIEW_IMAGES_EDITED_FOLDER,
+        qa_cfg.ACCEPTED_FOLDER,
+        qa_cfg.VOXEL_COUNT,
+    )

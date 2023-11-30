@@ -38,6 +38,7 @@ from utils.helper_functions import (
     calculate_percentage_change,
     visualize_tumor_stability,
     read_exclusion_list,
+    consistency_check,
 )
 
 
@@ -790,12 +791,12 @@ class TumorAnalysis:
         # Data preparation for modeling
         pre_treatment_data = self.pre_treatment_data.copy()
         pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
-        pre_treatment_data["Time_since_First_Scan"] = pre_treatment_data.groupby("Patient_ID")[
+        pre_treatment_data["Time since First Scan"] = pre_treatment_data.groupby("Patient_ID")[
             "Date"
         ].transform(lambda x: (x - x.min()).dt.days)
         self.pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
-        self.pre_treatment_data["Time_since_First_Scan"] = pre_treatment_data[
-            "Time_since_First_Scan"
+        self.pre_treatment_data["Time since First Scan"] = pre_treatment_data[
+            "Time since First Scan"
         ]
 
         # Error handling for sample size
@@ -971,23 +972,25 @@ class TumorAnalysis:
             axis=1,
         )
 
+        # Map the 'Stability Index' and 'Tumor Classification' to the
+        # self.pre_treatment_data using the maps
+        merged_data = pd.merge(
+            self.pre_treatment_data,
+            data[["Patient_ID", "Date", "Stability Index", "Tumor Classification"]],
+            on=["Patient_ID", "Date"],
+            how="left",
+        )
+
+        self.pre_treatment_data = merged_data
         visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold)
         print("\t\tSaved tumor stability plots.")
 
     def trend_analysis(self, data, output_dir, prefix):
-        # Ensure we have enough data points per patient
-        sufficient_data_patients = (
-            data.groupby("Patient_ID").filter(lambda x: len(x) >= 3)["Patient_ID"].unique()
-        )
-        filtered_data = data[data["Patient_ID"].isin(sufficient_data_patients)].copy()
-
-        # Reset index after filtering
-        filtered_data.reset_index(drop=True, inplace=True)
-
-        # Continue with filtered data
-        if filtered_data.empty:
-            print("No patients have enough data points for mixed-effects model analysis.")
-            return
+        """
+        Classify patients based on their tumor growth trajectories
+        into progressors, stable or regressors.
+        """
+        patients_ids = data["Patient_ID"].unique()
 
         # Edit this to have other plots
         # column_name = "Volume Change"
@@ -996,7 +999,7 @@ class TumorAnalysis:
         print("\tStarting Trend Analysis:")
         patient_classifications = {
             patient_id: classify_patient(
-                filtered_data,
+                data,
                 patient_id,
                 column_name,
                 self.progression_threshold,
@@ -1004,11 +1007,19 @@ class TumorAnalysis:
                 self.high_risk_threshold,
                 angle=self.angle,
             )
-            for patient_id in sufficient_data_patients
+            for patient_id in patients_ids
         }
-        filtered_data["Classification"] = filtered_data["Patient_ID"].map(patient_classifications)
+        data["Classification"] = data["Patient_ID"].map(patient_classifications)
+
+        # Save to original dataframe
+        classifications_series = pd.Series(patient_classifications)
+        self.pre_treatment_data["Patient Classification"] = self.pre_treatment_data[
+            "Patient_ID"
+        ].map(classifications_series)
+
+        # Plots
         output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
-        plot_trend_trajectories(filtered_data, output_filename, column_name, unit="mm^3")
+        plot_trend_trajectories(data, output_filename, column_name, unit="mm^3")
         print("\t\tSaved trend analysis plot.")
 
     def run_analysis(self, output_correlations, output_stats):
@@ -1201,11 +1212,11 @@ class TumorAnalysis:
             prefix = "pre-treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
-            self.analyze_pre_treatment(
-                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
-                prefix=prefix,
-                output_dir=output_correlations,
-            )
+            # self.analyze_pre_treatment(
+            #     correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
+            #     prefix=prefix,
+            #     output_dir=output_correlations,
+            # )
 
             # Additionally to all correlations, let's also do:
             # Survival analysis
@@ -1224,6 +1235,9 @@ class TumorAnalysis:
                 growth_weight=correlation_cfg.GROWTH_WEIGHT,
                 change_threshold=correlation_cfg.CHANGE_THRESHOLD,
             )
+
+            # Last consistency check
+            consistency_check(self.pre_treatment_data)
 
             step_idx += 1
 
