@@ -39,7 +39,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import torch as torch
+import torch
 import torch.nn as nn
 import umap
 from matplotlib import colormaps
@@ -51,7 +51,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
 from tslearn.clustering import TimeSeriesKMeans
-from tslearn.metrics import dtw
 from tslearn.preprocessing import TimeSeriesScalerMeanVariance
 
 from cfg import clustering_cfg
@@ -83,30 +82,33 @@ class ClusterAnalysis:
         Dictionary to store silhouette scores for different clustering methods.
     """
 
-    def __init__(self, dataframe, patient_id_column, output_plots, output_metrics):
-        self.data = dataframe
+    def __init__(self, df, patient_id_column):
+        # Initialize main attributes
         self.patient_id_column = patient_id_column
-        self.unique_patients = self.data[self.patient_id_column].unique()
+        self.unique_patients = df[self.patient_id_column].unique()
         self.time_series = []
 
-        for patient in self.unique_patients:
-            patient_data = self.data[self.data["Patient_ID"] == patient]
-            series = patient_data[["Normalized Volume", "Volume Change"]].to_numpy()
-            self.time_series.append(series)
-        self.time_series = np.array(self.time_series)
-        if self.time_series.isnan():
-            print(
-                "Warning: NaN values found in the data. Changing them to 0. Please remove them"
-                " before proceeding."
-            )
-            self.time_series = np.nan_to_num(self.time_series)
+        features = ["Normalized Volume", "Volume Change"]
 
+        self.time_series_arr, self.time_series_df = self.align_and_interpolate_time_series(
+            df, self.patient_id_column, features
+        )
+
+        if self.time_series_arr.size == 0 or len(self.time_series_arr.shape) != 3:
+            raise ValueError("Time series data is empty or not in the expected format.")
+
+        self.time_series_scaled = self.standardize_data()
+
+        # Define and initialize secondary attributes
         self.umap_embedding = None
         self.tsne_embedding = None
         self.cluster_labels = None
-
-        self.output_path = output_plots
-        self.metrics_output_path = output_metrics
+        self.n_clusters = clustering_cfg.N_CLUSTERS
+        self.kmeans_metric = clustering_cfg.KMEANS_METRIC
+        self.kmeans_verbose = clustering_cfg.KMEANS_VERBOSE
+        self.output_path = clustering_cfg.PLOTS_OUTPUT_PATH
+        os.makedirs(self.output_path, exist_ok=True)
+        self.metrics_output_path = clustering_cfg.METRICS_OUTPUT_PATH
 
         self.silhouette_scores = {}
 
@@ -118,23 +120,77 @@ class ClusterAnalysis:
 
     def standardize_data(self):
         """
-        Standardizes and scales the numerical data.
+        Standardizes (mean = 0, std dev=1) and scales the numerical data.
         """
         scaler = TimeSeriesScalerMeanVariance()
+        if self.time_series_arr.ndim != 3:
+            raise ValueError("Time series array is not in the expected 3D shape.")
         time_series_scaled = scaler.fit_transform(self.time_series)
         return time_series_scaled
 
-    def align_time_series(self):
+    def align_and_interpolate_time_series(self, df, patient_id_column, features):
         """
-        Aligns the time series by interpolating shorter series to match the length of the longest series.
+        Aligns and interpolates the time series data for each patient.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The original DataFrame containing patient data.
+        patient_id_column : str
+            The column name for patient IDs.
+        features : list
+            List of feature columns to be interpolated.
+
+        Returns
+        -------
+        np.ndarray
+            Interpolated and aligned time series as a numpy array.
+        pd.DataFrame
+            Interpolated and aligned time series as a DataFrame.
         """
-        # TODO: Implement this function
+        max_length = max(df.groupby(patient_id_column).size())
+        aligned_data = []
+        interpolated_df = pd.DataFrame()
+
+        for patient_id in df[patient_id_column].unique():
+            patient_data = df[df[patient_id_column] == patient_id]
+
+            # Skip patients with entirely missing data series
+            if patient_data[features].isnull().all().all():
+                continue
+
+            patient_data = patient_data.set_index("Date").asfreq("D").reset_index()
+            patient_data[features] = patient_data[features].interpolate(method="linear")
+
+            # Padding the series to match the max_length
+            padding_length = max_length - len(patient_data)
+            padding_df = pd.DataFrame(
+                {patient_id_column: [patient_id] * padding_length, "Date": pd.NaT},
+                index=range(padding_length),
+            )
+            for feature in features:
+                padding_df[feature] = np.nan
+            patient_data = pd.concat([patient_data, padding_df], ignore_index=True)
+
+            # Retain Patient_ID for each series and ensure each series has the same length
+            patient_data[patient_id_column] = patient_id
+            patient_data = patient_data.reindex(
+                range(max_length)
+            )  # Ensuring the DataFrame has max_length rows
+
+            aligned_data.append(patient_data[features].to_numpy())
+            interpolated_df = pd.concat([interpolated_df, patient_data], ignore_index=True)
+
+        # Ensure all series have the same shape for stacking
+        aligned_data_arr = np.array([np.array(series) for series in aligned_data])
+
+        return aligned_data_arr, interpolated_df
 
     #############################
     # DIMENSIONALITY REDUCTION  #
     #############################
 
-    def apply_umap(self, n_neighbors=15, min_dist=0.1, n_components=2):
+    def apply_umap(self, data, n_neighbors=15, min_dist=0.1, n_components=2):
         """
         Applies UMAP (Uniform Manifold Approximation and Projection) to the data.
 
@@ -150,9 +206,9 @@ class ClusterAnalysis:
         print("Applying UMAP...")
         self.umap_embedding = umap.UMAP(
             n_neighbors=n_neighbors, min_dist=min_dist, n_components=n_components
-        ).fit_transform(self.data)
+        ).fit_transform(data)
 
-    def apply_tsne(self, n_components=2):
+    def apply_tsne(self, data, n_components=2):
         """
         Applies t-SNE (t-Distributed Stochastic Neighbor Embedding) to the data.
 
@@ -162,39 +218,22 @@ class ClusterAnalysis:
             Number of dimensions to reduce to, by default 2.
         """
         print("Applying t-SNE...")
-        self.tsne_embedding = TSNE(n_components=n_components).fit_transform(self.data)
+        self.tsne_embedding = TSNE(n_components=n_components).fit_transform(data)
 
     ######################
     # CLUSTERING METHODS #
     ######################
 
-    def perform_time_series_kmeans(self, n_clusters, metric, verbose):
+    def perform_time_series_kmeans(self):
         """
         Performs K-means clustering on the data.
-
-        Parameters
-        ----------
-        n_clusters : int, optional
-            The number of clusters to form, by default 3.
         """
-        ts_kmeans = TimeSeriesKMeans(n_clusters=n_clusters, metric=metric, verbose=verbose)
+        ts_kmeans = TimeSeriesKMeans(
+            n_clusters=self.n_clusters, metric=self.kmeans_metric, verbose=self.kmeans_verbose
+        )
         cluster_labels = ts_kmeans.fit_predict(self.time_series_scaled)
 
-    def perform_faiss_clustering(self, n_clusters=3):
-        """
-        Performs clustering using the Faiss library on the data.
-
-        Parameters
-        ----------
-        n_clusters : int, optional
-            The number of clusters to form, by default 3.
-        """
-        index = faiss.IndexFlatL2(self.data.shape[1])
-        index.add(self.data)
-        _, self.cluster_labels = index.search(self.data, n_clusters)
-        self.cluster_labels = np.argmin(self.cluster_labels, axis=1)
-
-    def deep_clustering(self, n_clusters=3, epochs=100):
+    def deep_clustering(self, data, n_clusters=3, epochs=100):
         """
         Performs deep clustering using a simple neural network model on the data.
 
@@ -206,7 +245,7 @@ class ClusterAnalysis:
             The number of training epochs, by default 100.
         """
         model = nn.Sequential(
-            nn.Linear(self.data.shape[1], 128),
+            nn.Linear(data.shape[1], 128),
             nn.ReLU(),
             nn.Linear(128, 64),
             nn.ReLU(),
@@ -216,7 +255,7 @@ class ClusterAnalysis:
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         criterion = nn.CrossEntropyLoss()
 
-        tensor_data = torch.Tensor(self.data)
+        tensor_data = torch.Tensor(data)
         tensor_labels = torch.Tensor(self.cluster_labels)
         dataset = TensorDataset(tensor_data, tensor_labels)
         loader = DataLoader(dataset, batch_size=64, shuffle=True)
@@ -232,7 +271,7 @@ class ClusterAnalysis:
 
         self.cluster_labels = predicted_labels.detach().numpy()
 
-    def perform_dbscan_clustering(self, eps=0.5, min_samples=5):
+    def perform_dbscan_clustering(self, data, eps=0.5, min_samples=5):
         """
         Performs DBSCAN clustering on the data.
 
@@ -246,7 +285,7 @@ class ClusterAnalysis:
             be considered as a core point, by default 5.
         """
         dbscan = DBSCAN(eps=eps, min_samples=min_samples)
-        self.cluster_labels = dbscan.fit_predict(self.data)
+        self.cluster_labels = dbscan.fit_predict(data)
 
     ######################
     # ANALYSIS FUNCTIONS #
@@ -263,8 +302,9 @@ class ClusterAnalysis:
         # - Average 'Normalized Volume' and 'Volume Change' for each cluster
         # - Plotting representative time series from each cluster
         # - Examining other clinical variables in relation to the clusters
+        # - Temporal patterns in the clusters
 
-    def evaluate_silhouette_score(self, method_name):
+    def evaluate_silhouette_score(self, data, method_name):
         """
         Evaluates the silhouette score for the current cluster labels
         and saves it in the silhouette_scores dictionary.
@@ -279,7 +319,7 @@ class ClusterAnalysis:
         float
             The calculated silhouette score.
         """
-        method_score = silhouette_score(self.data, self.cluster_labels)
+        method_score = silhouette_score(data, self.cluster_labels)
         self.silhouette_scores[method_name] = method_score  # Save the score in the dictionary
         return method_score
 
@@ -317,46 +357,6 @@ class ClusterAnalysis:
     ######################
     # PLOTTING FUNCTIONS #
     ######################
-
-    def plot_dimensionality_reduction(self, suffix_name):
-        """
-        Plots the UMAP and t-SNE embeddings of the data, colored by cluster labels.
-
-        Parameters
-        ----------
-        suffix_name : str
-            A string to be appended to the output file name.
-        """
-        plt.figure(figsize=(12, 6))
-
-        plt.subplot(1, 2, 1)
-        plt.scatter(
-            self.umap_embedding[:, 0],
-            self.umap_embedding[:, 1],
-            c=self.cluster_labels,
-            cmap="tab10",
-            s=5,
-        )
-        plt.colorbar(
-            boundaries=np.arange(min(self.cluster_labels) - 0.5, max(self.cluster_labels) + 1.5)
-        ).set_ticks(np.unique(self.cluster_labels))
-        plt.title("UMAP Projection")
-
-        plt.subplot(1, 2, 2)
-        plt.scatter(
-            self.tsne_embedding[:, 0],
-            self.tsne_embedding[:, 1],
-            c=self.cluster_labels,
-            cmap="tab10",
-            s=5,
-        )
-        plt.colorbar(
-            boundaries=np.arange(min(self.cluster_labels) - 0.5, max(self.cluster_labels) + 1.5)
-        ).set_ticks(np.unique(self.cluster_labels))
-        plt.title("t-SNE Projection")
-
-        path = os.path.join(self.output_path, suffix_name)
-        plt.savefig(path)
 
     def add_cluster_ellipses(self, a_x, embedding, labels, cmap):
         """
@@ -401,7 +401,7 @@ class ClusterAnalysis:
 
             a_x.add_patch(ellip)
 
-    def plot_clusters_with_boundaries(self, suffix_name):
+    def plot_dr_clusters_with_boundaries(self, suffix_name):
         """
         Plots the UMAP and t-SNE embeddings of the data with ellipses around the clusters.
 
@@ -444,7 +444,7 @@ class ClusterAnalysis:
         path = os.path.join(self.output_path, suffix_name)
         plt.savefig(path)
 
-    def plot_heatmap(self, suffix_name):
+    def plot_heatmap(self, data, suffix_name):
         """
         Plots a heatmap of the data, sorted by cluster labels.
 
@@ -453,9 +453,11 @@ class ClusterAnalysis:
         suffix_name : str
             A string to be appended to the output file name.
         """
+        if data.ndim == 3:
+            data = data.reshape(data.shape[0], -1)
         # Sort data according to cluster labels if applicable
         sorted_indices = np.argsort(self.cluster_labels)
-        sorted_data = self.data[sorted_indices]
+        sorted_data = data[sorted_indices]
 
         plt.figure(figsize=(10, 8))
 
@@ -481,39 +483,120 @@ class ClusterAnalysis:
         path = os.path.join(self.output_path, f"heatmap_{suffix_name}")
         plt.savefig(path)
 
+    def plot_patient_data(self, data, n_sample):
+        """
+        Plots curves of sampled patients.
+        """
+        sample_patients = data["Patient_ID"].unique()[:n_sample]
+
+        for patient in sample_patients:
+            patient_data = data[data["Patient_ID"] == patient]
+            plt.figure(figsize=(12, 6))
+            plt.subplot(2, 1, 1)
+            plt.plot(
+                patient_data["Date"], patient_data["Normalized Volume"], marker="o", linestyle="-"
+            )
+            plt.title(f"Patient ID: {patient} - Normalized Volume")
+            plt.xlabel("Date")
+            plt.ylabel("Normalized Volume")
+
+            plt.subplot(2, 1, 2)
+            plt.plot(patient_data["Date"], patient_data["Volume Change"], marker="o", linestyle="-")
+            plt.title(f"Patient ID: {patient} - Volume Change")
+            plt.xlabel("Date")
+            plt.ylabel("Volume Change")
+
+            plt.tight_layout()
+            file_name = os.path.join(self.output_path, f"{patient}.png")
+            plt.savefig(file_name)
+
+    def plot_embeddings(self, dr_method):
+        """
+        Plots the 2D embeddings from UMAP or t-SNE.
+
+        Parameters
+        ----------
+        dr_method : str
+            The dimensionality reduction method used ('umap' or 'tsne').
+        """
+        if dr_method.lower() == "umap" and self.umap_embedding is not None:
+            embedding = self.umap_embedding
+            title = "UMAP Embedding"
+        elif dr_method.lower() == "tsne" and self.tsne_embedding is not None:
+            embedding = self.tsne_embedding
+            title = "t-SNE Embedding"
+        else:
+            print(f"No embedding found for {dr_method}.")
+            return
+
+        plt.figure(figsize=(10, 8))
+        plt.scatter(embedding[:, 0], embedding[:, 1], c=self.cluster_labels, cmap="Spectral", s=5)
+        plt.colorbar(label="Cluster Label")
+        plt.title(title)
+        plt.xlabel("Component 1")
+        plt.ylabel("Component 2")
+
+        plt.tight_layout()
+        file_name = os.path.join(self.output_path, f"{dr_method}_embedding.png")
+        plt.savefig(file_name)
+        plt.close()
+
 
 if __name__ == "__main__":
-    print("Running clustering script, reading data...")
+    step = 0
+    print(f"Step {step}: Initializing clustering script, reading data...")
     pre_treatment_data = pd.read_csv(clustering_cfg.INPUT_PATH)
     pre_treatment_data["Date"] = pd.to_datetime(pre_treatment_data["Date"])
     pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
 
-    output_path = clustering_cfg.PLOT_OUTPUT_PATH
-    metrics_output_path = clustering_cfg.METRICS_OUTPUT_PATH
+    sns.pairplot(pre_treatment_data[["Normalized Volume", "Volume Change"]])
+    filename = os.path.join(clustering_cfg.PLOTS_OUTPUT_PATH, "pairplot.png")
+    plt.savefig(filename)
 
-    cluster_analysis = ClusterAnalysis(
-        pre_treatment_data, "Patient_ID", output_path, metrics_output_path
-    )
-    print("Cluster analysis class initialized.")
+    cluster_analysis = ClusterAnalysis(pre_treatment_data, "Patient_ID")
+    print("\tCluster analysis class initialized.")
+    step += 1
 
-    # cluster_analysis.apply_umap()
-    # cluster_analysis.apply_tsne()
+    if clustering_cfg.PLOT_PATIENT_DATA:
+        print(f"Step {step}: Plotting patient data for insights...")
+        cluster_analysis.plot_patient_data(pre_treatment_data, 5)
+        cluster_analysis.plot_patient_data(cluster_analysis.time_series_scaled, 5)
+        if clustering_cfg.USE_UMAP:
+            cluster_analysis.apply_umap(cluster_analysis.time_series_scaled)
+            cluster_analysis.plot_embeddings("umap")
+        if clustering_cfg.USE_TSNE:
+            cluster_analysis.apply_tsne(cluster_analysis.time_series_scaled)
+            cluster_analysis.plot_embeddings("tsne")
+        print("\tPatient data plotted.")
+        step += 1
 
+    # Define and select methods to be used in the clustering, multiple possible
     methods_and_suffixes = {
         # "DBSCAN": ("perform_dbscan_clustering", "clustering_dbscan.png"),
         "K-means": ("perform_time_series_kmeans", "clustering_ts_kmeans.png"),
-        # "Faiss": ("perform_faiss_clustering", "clustering_faiss.png"),
         # "DeepClustering": ("deep_clustering", "clustering_deepcl.png"),
+        # "Hierarchical": ("perform_hierarchical_clustering, "clustering_hierarchical.png"),
     }
 
     for method, (func, suffix) in tqdm(methods_and_suffixes.items(), desc="Clustering methods"):
-        print(f"Performing clustering method: {method}.")
+        print(f"Step {step}: Performing clustering method: {method}.")
         getattr(cluster_analysis, func)()
         if len(np.unique(cluster_analysis.cluster_labels)) > 1:
-            score = cluster_analysis.evaluate_silhouette_score(method)
+            score = cluster_analysis.evaluate_silhouette_score(
+                cluster_analysis.time_series_scaled, method
+            )
             print(f"Silhouette score for {method}: {score}")
             cluster_analysis.save_metrics(method, score)
         else:
             print(f"{method} found only one cluster. Silhouette score is not applicable.")
-        cluster_analysis.plot_clusters_with_boundaries(suffix)
-        cluster_analysis.plot_heatmap(suffix)
+
+        print(f"\tClustering method {method} performed.")
+
+        # Plotting
+        if clustering_cfg.USE_UMAP and clustering_cfg.USE_TSNE:
+            print(f"Step {step}: Plotting dimensionality reduction with boundaries...")
+            cluster_analysis.plot_dr_clusters_with_boundaries(suffix)
+        if clustering_cfg.PLOT_HEATMAP:
+            cluster_analysis.plot_heatmap(cluster_analysis.time_series_scaled, suffix)
+
+        step += 1
