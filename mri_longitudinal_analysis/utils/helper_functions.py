@@ -796,19 +796,24 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
 
     for classification, color in zip(classifications, palette):
         class_data = data[data["Classification"] == classification]
-        # Plot individual trajectories
+        first_patient_plotted = False
 
+        # Plot individual trajectories
         for patient_id in class_data["Patient_ID"].unique():
             patient_data = class_data[class_data["Patient_ID"] == patient_id]
 
-            plt.plot(
-                patient_data["Time since First Scan"],
-                patient_data[column_name],
-                color=color,
-                alpha=0.5,
-                linewidth=1,
-            )
-            # Plot median trajectory for each classification
+            if "Insufficient Data" not in classification:
+                plt.plot(
+                    patient_data["Time since First Scan"],
+                    patient_data[column_name],
+                    color=color,
+                    alpha=0.5,
+                    linewidth=1,
+                    label=classification if not first_patient_plotted else "",
+                )
+            first_patient_plotted = True
+
+        # Plot median trajectory for each classification
         median_data = (
             class_data.groupby(
                 pd.cut(

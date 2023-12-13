@@ -164,9 +164,16 @@ class TumorAnalysis:
         self.clinical_data["Date First Diagnosis"] = pd.to_datetime(
             self.clinical_data["Date of MRI diagnosis"], dayfirst=True
         )
+        self.clinical_data["Date of last clinical follow-up"] = pd.to_datetime(
+            self.clinical_data["Date of last clinical follow-up"], dayfirst=True
+        )
         self.clinical_data["Date First Progression"] = pd.to_datetime(
             self.clinical_data["Date of First Progression"], dayfirst=True
         )
+        self.clinical_data["Follow-up Time"] = (
+            self.clinical_data["Date of last clinical follow-up"]
+            - self.clinical_data["Date First Diagnosis"]
+        ).dt.days
         self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"].map(
             {"Yes": True, "No": False, None: False}
         )
@@ -185,7 +192,12 @@ class TumorAnalysis:
         for column, dtype in dtype_mapping.items():
             self.clinical_data[column] = self.clinical_data[column].astype(dtype)
 
-        datetime_columns = ["Date First Diagnosis", "Date First Progression"]
+        datetime_columns = [
+            "Date First Diagnosis",
+            "Date First Progression",
+            "Date of last clinical follow-up",
+            "Follow-up Time",
+        ]
         all_relevant_columns = list(dtype_mapping.keys()) + datetime_columns
         self.clinical_data_reduced = self.clinical_data[all_relevant_columns]
 
@@ -1226,6 +1238,14 @@ class TumorAnalysis:
 
             # Growth trajectories & Trend analysis
             self.model_growth_trajectories(prefix, output_dir=output_stats)
+
+            median_follow_up = self.pre_treatment_data["Follow-up Time"].median()
+            max_follow_up = self.pre_treatment_data["Follow-up Time"].max()
+            min_follow_up = self.pre_treatment_data["Follow-up Time"].min()
+
+            print(f"\tMedian Follow-Up Time: {median_follow_up} days")
+            print(f"\tMaximum Follow-Up Time: {max_follow_up} days")
+            print(f"\tMinimum Follow-Up Time: {min_follow_up} days")
 
             # Tumor stability
             self.analyze_tumor_stability(
