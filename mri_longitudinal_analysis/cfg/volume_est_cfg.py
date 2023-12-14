@@ -16,6 +16,11 @@ CSV_DIR = OUTPUT_DIR / "time_series_csv_kernel_smoothed"
 REDCAP_FILE = Path(
     "/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_108_cohort.csv"
 )
+
+CLINICAL_DATA_FILE = Path(
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/output/correlation_stats/pre-treatment_dl_features.csv"
+)
+
 FEW_SCANS_FILE = OUTPUT_DIR / "patients_with_few_scans.txt"
 ZERO_VOLUME_FILE = OUTPUT_DIR / "zero_volume_segmentations.txt"
 NUMBER_TOTAL_PATIENTS = 108
