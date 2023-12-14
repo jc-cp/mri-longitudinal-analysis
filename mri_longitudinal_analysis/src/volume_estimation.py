@@ -70,6 +70,9 @@ class VolumeEstimator:
             "window_smoothing": {},
         }
 
+        self.clinical_data = pd.read_csv(
+            volume_est_cfg.CLINICAL_DATA_FILE, sep=",", encoding="UTF-8"
+        )
         if not volume_est_cfg.TEST_DATA:
             try:
                 # Process the redacap .csv with clinical data
@@ -243,16 +246,21 @@ class VolumeEstimator:
                     scan_dict[patient_id].append((date, morm_volume))
         return scan_dict
 
-    def setup_plot_base(self):
+    def setup_plot_base(self, normalize=False):
         """
         Setup the base of a plot with the necessary properties.
 
         Returns:
             tuple: A tuple containing the figure and axis objects of the plot.
         """
+        plt.close("all")
         fig, a_x1 = plt.subplots(figsize=(12, 8))
         a_x1.set_xlabel("Scan Date")
-        a_x1.set_ylabel("Volume (mm³)", color="tab:blue")
+        if normalize:
+            a_x1.set_ylabel("Normalized Volume (mm³)", color="tab:blue")
+        else:
+            a_x1.set_ylabel("Volume (mm³)", color="tab:blue")
+
         a_x1.tick_params(axis="y", labelcolor="tab:blue")
         a_x1.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d/%Y"))
         a_x1.xaxis.set_tick_params(pad=5)
@@ -340,6 +348,14 @@ class VolumeEstimator:
                 volumes,
                 ages if not volume_est_cfg.TEST_DATA else None,
             )
+            self.plot_normalized_data(
+                data_type,
+                output_path,
+                patient_id,
+                dates,
+                volumes,
+                ages if not volume_est_cfg.TEST_DATA else None,
+            )
 
     def plot_data(self, data_type, output_path, patient_id, dates, volumes, ages=None):
         """
@@ -354,8 +370,7 @@ class VolumeEstimator:
             ages (list, optional): List of ages. Defaults to None.
         """
         os.makedirs(output_path, exist_ok=True)
-
-        fig, a_x1 = self.setup_plot_base()
+        fig, a_x1 = self.setup_plot_base(normalize=False)
 
         a_x1.plot(dates, volumes, color="tab:blue", marker="o")
         self.add_volume_change_to_plot(a_x1, dates, volumes)
@@ -368,7 +383,87 @@ class VolumeEstimator:
 
         date_range = f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
         plt.savefig(os.path.join(output_path, f"volume_{data_type}_{patient_id}_{date_range}.png"))
-        plt.close()
+        plt.close(fig)
+
+    def plot_normalized_data(self, data_type, output_path, patient_id, dates, volumes, ages=None):
+        """
+        Plots and saves the normalized volume data for a single patient.
+        Args:
+            data_type (str): The type of data ('raw', 'filtered', etc.)
+            output_path (str): The directory where plots should be saved.
+            patient_id (str): The ID of the patient.
+            dates (list): List of dates.
+            volumes (list): List of normalized volumes.
+            ages (list, optional): List of ages. Defaults to None.
+        """
+        fig, ax1 = self.setup_plot_base(normalize=True)
+
+        patient_data = self.clinical_data[self.clinical_data["Patient_ID"] == int(patient_id)]
+        if not patient_data.empty:
+            dates = [d.replace(tzinfo=None) for d in dates]
+
+            treatment_date = patient_data["Date First Treatment"].iloc[0]
+            treatment_date = pd.to_datetime(treatment_date, format="%Y-%m-%d").replace(tzinfo=None)
+
+            initial_volume = volumes[0] if volumes[0] not in [0, np.nan] else 1
+            normalized_volumes = [v / initial_volume for v in volumes]
+
+            if treatment_date:
+                first_post_treatment_index = next(
+                    (i for i, date in enumerate(dates) if date >= treatment_date), len(dates)
+                )
+
+                # Split the data into pre-treatment and post-treatment
+                pre_treatment_dates = dates[
+                    : first_post_treatment_index + 1
+                ]  # Includes the last point before treatment
+                pre_treatment_volumes = normalized_volumes[: first_post_treatment_index + 1]
+
+                post_treatment_dates = dates[
+                    first_post_treatment_index:
+                ]  # Starts from the overlapping point
+                post_treatment_volumes = normalized_volumes[first_post_treatment_index:]
+
+                # Plot pre-treatment data in blue
+                ax1.plot(
+                    pre_treatment_dates,
+                    pre_treatment_volumes,
+                    color="tab:blue",
+                    marker="o",
+                    linestyle="-",
+                )
+
+                # Plot post-treatment data in grey, starting with the overlapping point
+                ax1.plot(
+                    post_treatment_dates,
+                    post_treatment_volumes,
+                    color="grey",
+                    marker="o",
+                    linestyle="-",
+                )
+                ax1.axvline(x=treatment_date, color="red", linestyle="--", label="Treatment Date")
+            else:
+                # Plot all data in blue if no treatment date
+                print("here")
+                ax1.plot(dates, normalized_volumes, color="tab:blue", marker="o", linestyle="-")
+
+            self.add_volume_change_to_plot(ax1, dates, normalized_volumes)
+
+            if ages:
+                self.add_age_to_plot(ax1, dates, ages)
+
+            ax1.legend(loc="best")
+            plt.title(f"Patient ID: {patient_id} - Normalized Volume {data_type}")
+            fig.tight_layout()
+            date_range = f"{min(dates).strftime('%Y%m%d')}_{max(dates).strftime('%Y%m%d')}"
+            plt.savefig(
+                os.path.join(
+                    output_path, f"normalized_volume_{data_type}_{patient_id}_{date_range}.png"
+                )
+            )
+            plt.close(fig)
+        else:
+            return
 
     def generate_csv(self, output_folder):
         """
