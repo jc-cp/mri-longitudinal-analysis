@@ -1199,7 +1199,7 @@ class TumorAnalysis:
             step_idx += 1
 
         if correlation_cfg.ANALYSIS_PRE_TREATMENT:
-            prefix = "pre-treatment"
+            prefix = "pre-treatment_BCH"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
             # Survival analysis

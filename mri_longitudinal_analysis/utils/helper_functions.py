@@ -692,6 +692,7 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
         labels=classification_distribution.index,
         autopct="%1.1f%%",
         startangle=140,
+        colors=sns.color_palette(helper_functions_cfg.PIE_PALETTE),
     )
     plt.title("Proportion of Stable vs. Unstable Tumors")
     plt.axis("equal")
@@ -834,8 +835,20 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
                 color=color,
                 linestyle="--",
                 label=f"{classification} Median",
-                linewidth=2.5,
+                linewidth=1.5,
             )
+            # Calculate and plot rolling median trajectory
+            # class_data = class_data.sort_values(by=["Time since First Scan"])
+            # class_data.set_index("Time since First Scan", inplace=True)
+            # rolling_median_data = class_data[column_name].expanding().median()
+            # sns.lineplot(
+            #     x=class_data.index,
+            #     y=rolling_median_data,
+            #     color=color,
+            #     linestyle="--",
+            #     label=f"{classification} Weighted Rolling Median",
+            #     linewidth=1.5,
+            # )
 
     num_patients = data["Patient_ID"].nunique()
 
@@ -867,7 +880,7 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None, 
         plot_data.groupby(
             pd.cut(
                 plot_data["Time since First Scan"],
-                pd.interval_range(start=0, end=plot_data["Time since First Scan"].max(), freq=91),
+                pd.interval_range(start=0, end=plot_data["Time since First Scan"].max(), freq=273),
             )
         )[column]
         .median()
@@ -889,7 +902,7 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None, 
                     pd.cut(
                         category_data["Time since First Scan"],
                         pd.interval_range(
-                            start=0, end=category_data["Time since First Scan"].max(), freq=91
+                            start=0, end=category_data["Time since First Scan"].max(), freq=273
                         ),
                     )
                 )[column]
@@ -921,7 +934,7 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None, 
             x=median_data["Time since First Scan"].apply(lambda x: x.mid),
             y=column,
             data=median_data,
-            color="red",
+            color="blue",
             linestyle="--",
             label="Cohort Median Trajectory",
         )
