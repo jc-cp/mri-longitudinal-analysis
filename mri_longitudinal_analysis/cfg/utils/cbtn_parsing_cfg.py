@@ -15,3 +15,12 @@ NEW_PATH_IMAGES = Path(
 
 ASSERTATIONS = True
 LENGTH_DATA = 536  # do not count header
+
+
+OUTPUT_CSV_PRE_EVENT = Path(
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/output/clinical_data/cbtn_pre_event.csv"
+)
+
+OUTPUT_CSV_POST_EVENT = Path(
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/output/clinical_data/cbtn_post_event.csv"
+)

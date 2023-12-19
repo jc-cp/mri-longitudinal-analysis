@@ -289,6 +289,8 @@ def main():
     print(df_pre_event.dtypes)
 
     meta_path = cbtn_parsing_cfg.PATH_METADATA
+    df_pre_event_matched = get_t2_sequences(df_pre_event, meta_path)
+    df_pre_event_matched.to_csv(cbtn_parsing_cfg.OUTPUT_CSV_PRE_EVENT)
 
     new_path_cbtn = cbtn_parsing_cfg.NEW_PATH_IMAGES
 
