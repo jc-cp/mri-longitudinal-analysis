@@ -7,6 +7,7 @@ import shutil
 from collections import Counter
 import pandas as pd
 import nibabel as nib
+from time import sleep
 from cfg.utils import cbtn_parsing_cfg
 
 
@@ -90,7 +91,7 @@ def read_csv(path_cbtn_csv, path_cbtn_img) -> (list, list):
             if patient_id == patient_item:
                 path_mr_cbtn.append(os.path.join(path_cbtn_img, patient_item))
 
-    # assert len(path_mr_cbtn) == len(ids), "Path and IDs length assertion failed"
+    assert len(path_mr_cbtn) == len(ids), "Path and IDs length assertion failed"
 
     return ages, path_mr_cbtn
 
@@ -129,17 +130,16 @@ def get_sessions_and_patients(path_mr_cbtn, ages) -> (list, list):
             continue
 
         for folder in os.listdir(path):
-            if "brain" in folder:
-                session_age = extract_session(folder)
-                if session_age is not None:
-                    if session_age <= int(age):
-                        pre_event_sessions.append(
-                            [patient_id, session_age, os.path.join(path, folder), age]
-                        )
-                    else:
-                        post_event_sessions.append(
-                            [patient_id, session_age, os.path.join(path, folder), age]
-                        )
+            session_age = extract_session(folder)
+            if session_age is not None:
+                if session_age <= int(age):
+                    pre_event_sessions.append(
+                        [patient_id, session_age, os.path.join(path, folder), age]
+                    )
+                else:
+                    post_event_sessions.append(
+                        [patient_id, session_age, os.path.join(path, folder), age]
+                    )
 
     dtype_mapping = {
         "Patient_ID": "string",
@@ -171,7 +171,15 @@ def get_t2_sequences(df_event, meta_data):
     """
     Function to get the T2 sequences from the metadata file.
     """
-    metadata_df = pd.read_csv(meta_data)
+
+    metadata_df = pd.read_csv(meta_data).sort_values(by=["subject_label", "session_label"])
+    df_event = df_event.sort_values(by=["Patient_ID", "Session Age"])
+
+    metadata_ids = metadata_df["subject_label"].unique()
+    print(len(metadata_ids))
+    df_event_ids = df_event["Patient_ID"].unique()
+    print(len(df_event_ids))
+
     matched_files = []
 
     for _, row in df_event.iterrows():
@@ -187,49 +195,67 @@ def get_t2_sequences(df_event, meta_data):
             )
         )
 
-        filtered_df = metadata_df[condition]
-
+        filtered_df = metadata_df[condition].sort_values(
+            by=["subject_label", "session_label", "acquisition_label"]
+        )
+        print(filtered_df.head())
         three_d_entries = filtered_df[filtered_df["fw_class"].str.contains("3D")]
         if not three_d_entries.empty:
-            three_d_entries["Resolution"] = three_d_entries.apply(
+            three_d_entries["Resolution_Product"] = three_d_entries.apply(
                 lambda x: get_resolution(os.path.join(row["Session Path"], x["acquisition_label"])),
                 axis=1,
             )
             three_d_entries_sorted = three_d_entries.sort_values(
-                by=["Resolution", "acquisition_label"], ascending=[False, True]
+                by=["Resolution_Product", "acquisition_label"], ascending=[False, True]
             )
             selected_entry = (
                 three_d_entries_sorted.iloc[0]
                 if three_d_entries_sorted.shape[0] == 1
-                else three_d_entries_sorted.iloc[1]
+                else three_d_entries_sorted.iloc[-1]
             )
 
         else:
+            temp_df = filtered_df.copy()
+
             # Fallback criteria for non-3D entries
-            filtered_df["Resolution"] = filtered_df.apply(
+            temp_df["Resolution_Product"] = temp_df.apply(
                 lambda x: get_resolution(os.path.join(row["Session Path"], x["acquisition_label"])),
                 axis=1,
             )
-            sorted_df = filtered_df.sort_values(
-                by=["Resolution", "acquisition_label"], ascending=[False, True]
-            )
-            selected_entry = (
-                sorted_df.iloc[0]
-                if "axial" in sorted_df.iloc[0]["acquisition_label"].lower()
-                else sorted_df.iloc[1]
-            )
+
+            if len(temp_df) == 1:
+                selected_entry = temp_df.iloc[0]
+            else:
+                axial_entries = temp_df[
+                    temp_df["acquisition_label"].str.contains("axial", case=False)
+                ]
+                if not axial_entries.empty:
+                    selected_entry = axial_entries.sort_values(
+                        by="Resolution_Product", ascending=True
+                    ).iloc[0]
+                else:
+                    print("""""" "HEREEEEEEEE")
+                    selected_entry = temp_df.sort_values(
+                        by="Resolution_Product", ascending=True
+                    ).iloc[0]
+                    print(selected_entry)
 
         acquisition_label = selected_entry["acquisition_label"]
         acq_path = os.path.join(row["Session Path"], acquisition_label)
         matched_files.append((patient_id, session_age, acquisition_label, acq_path))
 
+        print(
+            f"Patient {patient_id} at session age {session_age} has an in image"
+            f" {acquisition_label}."
+        )
+        sleep(1)
     return pd.DataFrame(
         matched_files,
         columns=["Patient_ID", "Session Age", "Acquisition Label", "Acquisition Path"],
     )
 
 
-def get_resolution(file_path):
+def get_resolution(folder_path):
     """
     Get the resolution of an MRI image using nibabel.
 
@@ -239,14 +265,28 @@ def get_resolution(file_path):
     Returns:
     tuple: Resolution of the image.
     """
-    try:
-        img = nib.load(file_path)
-        header = img.header
-        # The voxel dimensions are usually in the header under 'pixdim'
-        resolution = header.get_zooms()[:3]  # Get the first three dimensions (for 3D images)
-        return resolution
-    except FileNotFoundError as e:
-        print(f"Error loading file {file_path}: {e}")
+
+    if os.path.isdir(folder_path):
+        file_path = os.path.join(folder_path, os.listdir(folder_path)[0])
+        if os.path.isfile(file_path):
+            try:
+                img = nib.load(file_path)
+                header = img.header
+                # The voxel dimensions are usually in the header under 'pixdim'
+                resolution = header.get_zooms()[
+                    :3
+                ]  # Get the first three dimensions (for 3D images)
+
+                if resolution:
+                    return resolution
+            except FileNotFoundError as e:
+                print(f"Error loading file {file_path}: {e}")
+                return None
+        else:
+            print(f"Error loading file {file_path}: Not a file.")
+            return None
+    else:
+        print(f"Error loading folder {folder_path}: Not a directory.")
         return None
 
 
@@ -280,19 +320,23 @@ def main():
     """
     Main function for parsing the cbtn dataset.
     """
-    path_cbtn_csv = cbtn_parsing_cfg.PATH_CSV
+    path_cbtn_csv = cbtn_parsing_cfg.PATH_CLINICAL_CSV
+    metadata_path = cbtn_parsing_cfg.PATH_METADATA_CSV
     path_cbtn_img = cbtn_parsing_cfg.PATH_IMAGES
-    ages, path_mr_cbtn = read_csv(path_cbtn_csv, path_cbtn_img)
-    print(len(ages), len(path_mr_cbtn))
-
-    df_pre_event, df_post_event = get_sessions_and_patients(path_mr_cbtn, ages)
-    print(df_pre_event.dtypes)
-
-    meta_path = cbtn_parsing_cfg.PATH_METADATA
-    df_pre_event_matched = get_t2_sequences(df_pre_event, meta_path)
-    df_pre_event_matched.to_csv(cbtn_parsing_cfg.OUTPUT_CSV_PRE_EVENT)
-
     new_path_cbtn = cbtn_parsing_cfg.NEW_PATH_IMAGES
+
+    ages, path_mr_cbtn = read_csv(path_cbtn_csv, path_cbtn_img)
+    df_pre_event, df_post_event = get_sessions_and_patients(path_mr_cbtn, ages)
+
+    # print(df_pre_event.dtypes)
+    # Patient_ID           string[python]
+    # Session Age                   int64
+    # Session Path         string[python]
+    # Age at Event Days             int64
+
+    df_pre_event_matched = get_t2_sequences(df_pre_event, metadata_path)
+    print(df_pre_event_matched.dtypes)
+    # df_pre_event_matched.to_csv(cbtn_parsing_cfg.OUTPUT_CSV_PRE_EVENT)
 
 
 if __name__ == "__main__":
