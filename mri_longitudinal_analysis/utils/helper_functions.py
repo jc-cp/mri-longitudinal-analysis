@@ -12,7 +12,7 @@ from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
 import matplotlib.lines as lines
 import seaborn as sns
-
+from cfg.utils import helper_functions_cfg
 
 #####################################
 # SMOOTHIN and FILTERING OPERATIONS #
@@ -554,7 +554,7 @@ def classify_patient(
     patient_data = data[data["Patient_ID"] == patient_id]
 
     if len(patient_data) < 2:
-        return f"Insufficient Data for patient {patient_id}"
+        return None
 
     if angle:
         _, actual_angle = calculate_slope_and_angle(data, patient_id, column_name)
@@ -667,7 +667,7 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     Create a series of plots to visualize the stability index and tumor classification.
     """
     classification_distribution = data["Tumor Classification"].value_counts(normalize=True)
-
+    sns.set_palette(helper_functions_cfg.NORD_PALETTE)
     ############
     # BAR PLOT #
     #############
@@ -792,7 +792,7 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     data = data[data["Time since First Scan"] <= 4000]
     classifications = data["Classification"].unique()
 
-    palette = sns.color_palette("hsv", len(classifications))
+    palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
 
     for classification, color in zip(classifications, palette):
         class_data = data[data["Classification"] == classification]
@@ -802,7 +802,7 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
         for patient_id in class_data["Patient_ID"].unique():
             patient_data = class_data[class_data["Patient_ID"] == patient_id]
 
-            if "Insufficient Data" not in classification:
+            if classification is not None:
                 plt.plot(
                     patient_data["Time since First Scan"],
                     patient_data[column_name],
@@ -813,28 +813,29 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
                 )
             first_patient_plotted = True
 
-        # Plot median trajectory for each classification
-        median_data = (
-            class_data.groupby(
-                pd.cut(
-                    class_data["Time since First Scan"],
-                    pd.interval_range(
-                        start=0, end=class_data["Time since First Scan"].max(), freq=91
-                    ),
-                )
-            )[column_name]
-            .median()
-            .reset_index()
-        )
-        sns.lineplot(
-            x=median_data["Time since First Scan"].apply(lambda x: x.mid),
-            y=column_name,
-            data=median_data,
-            color=color,
-            linestyle="--",
-            label=f"{classification} Median",
-            linewidth=2.5,
-        )
+        if classification is not None:
+            # Plot median trajectory for each classification
+            median_data = (
+                class_data.groupby(
+                    pd.cut(
+                        class_data["Time since First Scan"],
+                        pd.interval_range(
+                            start=0, end=class_data["Time since First Scan"].max(), freq=273
+                        ),
+                    )
+                )[column_name]
+                .median()
+                .reset_index()
+            )
+            sns.lineplot(
+                x=median_data["Time since First Scan"].apply(lambda x: x.mid),
+                y=column_name,
+                data=median_data,
+                color=color,
+                linestyle="--",
+                label=f"{classification} Median",
+                linewidth=2.5,
+            )
 
     num_patients = data["Patient_ID"].nunique()
 
@@ -875,8 +876,8 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None, 
 
     if category_column:
         categories = plot_data[category_column].unique()
-        patient_palette = sns.color_palette("hsv", len(categories))
-        median_palette = sns.color_palette("Set2", len(categories))
+        patient_palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(categories))
+        median_palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(categories))
         legend_handles = []
 
         for (category, patient_color), median_color in zip(
@@ -936,8 +937,12 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None, 
         # Plot each patient's data
         for patient_id in plot_data["Patient_ID"].unique():
             patient_data = plot_data[plot_data["Patient_ID"] == patient_id]
+            sns.set_palette(helper_functions_cfg.NORD_PALETTE)
             plt.plot(
-                patient_data["Time since First Scan"], patient_data[column], alpha=0.5, linewidth=1
+                patient_data["Time since First Scan"],
+                patient_data[column],
+                alpha=0.5,
+                linewidth=1,
             )
 
         sns.lineplot(

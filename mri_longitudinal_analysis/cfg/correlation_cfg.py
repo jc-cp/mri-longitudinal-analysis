@@ -35,13 +35,12 @@ CALIPER = 0.1  # usually between 0.05 and 0.2
 # Step 3
 ANALYSIS_PRE_TREATMENT = True
 
+ANGLE = False
 PROGRESSION_THRESHOLD = 10  # angle value that defines progression
 HIGH_RISK_THRESHOLD = 25  # angle value that defines high increase
 STABILITY_THRESHOLD = 2  # angle value that defines stability
 
-SAMPLE_SIZE = 108  # for plotting growth trajectories
-
-ANGLE = False
+SAMPLE_SIZE = 108  # for plotting growth trajectories, usually number of patients in cohort
 
 VOLUME_WEIGHT = 0.25
 GROWTH_WEIGHT = 0.75

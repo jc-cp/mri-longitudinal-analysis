@@ -174,9 +174,8 @@ class TumorAnalysis:
             self.clinical_data["Date of last clinical follow-up"]
             - self.clinical_data["Date First Diagnosis"]
         ).dt.days
-        self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"].map(
-            {"Yes": True, "No": False, None: False}
-        )
+
+        self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"]
 
         dtype_mapping = {
             "BCH MRN": "string",
@@ -185,7 +184,7 @@ class TumorAnalysis:
             "Race": "category",
             "Mutations": "category",
             "Treatment Type": "category",
-            "Tumor Progression": "bool",
+            "Tumor Progression": "category",
         }
 
         # Apply the type conversions according to the dictionary
@@ -225,10 +224,15 @@ class TumorAnalysis:
                     continue
 
                 patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
+                # Get the first volume value
+                baseline_volume = patient_df["Volume"].iloc[0]
+                patient_df["Baseline Volume"] = baseline_volume
+                # Adjust patient id
                 patient_df["Patient_ID"] = patient_id
                 patient_df["Patient_ID"] = (
                     patient_df["Patient_ID"].astype(str).str.zfill(7).astype("string")
                 )
+
                 data_frames.append(patient_df)
 
             print(f"\tLoaded volume data {volumes_data_path}.")
@@ -326,7 +330,7 @@ class TumorAnalysis:
             "Volume",
             "Normalized Volume",
             "Volume Change",
-            "Normalized Volume Change",
+            # "Normalized Volume Change",
         ]:
             self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
                 cumulative_stats, var
@@ -401,6 +405,16 @@ class TumorAnalysis:
                 self.pre_treatment_data.loc[
                     self.pre_treatment_data["Patient_ID"] == patient_id, "Date First Treatment"
                 ] = last_scan_date
+
+        self.pre_treatment_data["Time to Treatment"] = (
+            self.pre_treatment_data["Date First Treatment"]
+            - self.pre_treatment_data["Date First Diagnosis"]
+        ).dt.days
+
+        self.post_treatment_data["Time to Treatment"] = (
+            self.post_treatment_data["Date First Treatment"]
+            - self.post_treatment_data["Date First Diagnosis"]
+        ).dt.days
 
     def extract_treatment_dates(self, patient_id):
         """
@@ -520,15 +534,6 @@ class TumorAnalysis:
         between variables such as initial tumor volume, age, sex, mutations, and race.
         """
         print("\tPre-treatment Correlations:")
-        # Data preparation for correlations
-        self.pre_treatment_data["Tumor Progression"] = self.pre_treatment_data[
-            "Tumor Progression"
-        ].astype("category")
-
-        self.pre_treatment_data["Time to Treatment"] = (
-            self.pre_treatment_data["Date First Treatment"]
-            - self.pre_treatment_data["Date First Diagnosis"]
-        ).dt.days
 
         # variable types
         categorical_vars = [
@@ -539,17 +544,20 @@ class TumorAnalysis:
             "Mutations",
             "Received Treatment",
             "Tumor Progression",
+            "Tumor Classification",
+            "Patient Classification",
         ]
         numerical_vars = [
             "Age",
             "Volume",
+            "Normalized Volume",
             "Volume Change",
-            "Volume CumMean",
-            "Volume CumMedian",
-            "Volume CumStd",
-            "Volume RollMean",
-            "Volume RollMedian",
-            "Volume RollStd",
+            "Normalized Volume CumMean",
+            "Normalized Volume CumMedian",
+            "Normalized Volume CumStd",
+            "Normalized Volume RollMean",
+            "Normalized Volume RollMedian",
+            "Normalized Volume RollStd",
             "Volume Change CumMean",
             "Volume Change CumMedian",
             "Volume Change CumStd",
@@ -557,6 +565,7 @@ class TumorAnalysis:
             "Volume Change RollMedian",
             "Volume Change RollStd",
             "Time to Treatment",
+            "Baseline Volume",
         ]
 
         for num_var in numerical_vars:
@@ -633,39 +642,7 @@ class TumorAnalysis:
         variables such as treatment types, tumor volume changes, and specific mutations.
         """
         print("Post-treatment Correlations:")
-        self.analyze_correlation(
-            "Treatment Type",
-            "Tumor_Volume_Change",
-            self.post_treatment_data,
-            prefix,
-            output_dir,
-            method=correlation_method,
-        )
-        self.analyze_correlation(
-            "Mutations",
-            "Tumor_Volume_Change",
-            self.post_treatment_data,
-            prefix,
-            output_dir,
-            method=correlation_method,
-        )
-        self.analyze_correlation(
-            "Mutation_Type",
-            "Treatment_Response",
-            self.post_treatment_data,
-            prefix,
-            output_dir,
-            method=correlation_method,
-        )
-
-        # Chi-Squared test
-        # chi2, p_val = chi_squared_test(
-        #     self.post_treatment_data["Mutation_Type"], self.post_treatment_data["Treatment Type"]
-        # )
-        # print(
-        #     f"Chi-Squared test between Mutation_Type and Treatment Type: Chi2: {chi2}, P-value:"
-        #     f" {p_val}"
-        # )
+        # TODO: treatment type to volume change, mutations to volume change, treatment type to XYZ
 
     def visualize_statistical_test(
         self,
@@ -713,6 +690,7 @@ class TumorAnalysis:
             "Volume Change CumMean": "%",
             "Volume Change CumMedian": "%",
             "Volume Change CumStd": "%",
+            "Baseline Volume": "mm³",
         }
 
         x_unit = units.get(x_val, "")
@@ -982,7 +960,7 @@ class TumorAnalysis:
             or row["Stability Index"] > stability_threshold
             else "Stable",
             axis=1,
-        )
+        ).astype("category")
 
         # Map the 'Stability Index' and 'Tumor Classification' to the
         # self.pre_treatment_data using the maps
@@ -1025,9 +1003,9 @@ class TumorAnalysis:
 
         # Save to original dataframe
         classifications_series = pd.Series(patient_classifications)
-        self.pre_treatment_data["Patient Classification"] = self.pre_treatment_data[
-            "Patient_ID"
-        ].map(classifications_series)
+        self.pre_treatment_data["Patient Classification"] = (
+            self.pre_treatment_data["Patient_ID"].map(classifications_series).astype("category")
+        )
 
         # Plots
         output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
@@ -1224,13 +1202,6 @@ class TumorAnalysis:
             prefix = "pre-treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
-            self.analyze_pre_treatment(
-                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
-                prefix=prefix,
-                output_dir=output_correlations,
-            )
-
-            # Additionally to all correlations, let's also do:
             # Survival analysis
             stratify_by_list = ["Glioma Type", "Sex", "Mutations", "Age Group"]
             for element in stratify_by_list:
@@ -1243,9 +1214,9 @@ class TumorAnalysis:
             max_follow_up = self.pre_treatment_data["Follow-up Time"].max()
             min_follow_up = self.pre_treatment_data["Follow-up Time"].min()
 
-            print(f"\tMedian Follow-Up Time: {median_follow_up} days")
-            print(f"\tMaximum Follow-Up Time: {max_follow_up} days")
-            print(f"\tMinimum Follow-Up Time: {min_follow_up} days")
+            print(f"\t\tMedian Follow-Up Time: {median_follow_up} days")
+            print(f"\t\tMaximum Follow-Up Time: {max_follow_up} days")
+            print(f"\t\tMinimum Follow-Up Time: {min_follow_up} days")
 
             # Tumor stability
             self.analyze_tumor_stability(
@@ -1254,6 +1225,13 @@ class TumorAnalysis:
                 volume_weight=correlation_cfg.VOLUME_WEIGHT,
                 growth_weight=correlation_cfg.GROWTH_WEIGHT,
                 change_threshold=correlation_cfg.CHANGE_THRESHOLD,
+            )
+
+            # Correlations between variables
+            self.analyze_pre_treatment(
+                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
+                prefix=prefix,
+                output_dir=output_correlations,
             )
 
             # Last consistency check
