@@ -5,9 +5,10 @@ import os
 import re
 import shutil
 from collections import Counter
-import pandas as pd
-import nibabel as nib
 from time import sleep
+
+import nibabel as nib
+import pandas as pd
 from cfg.utils import cbtn_parsing_cfg
 
 

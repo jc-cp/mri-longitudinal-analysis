@@ -353,5 +353,6 @@ class ClinicalData:
 
 
 if __name__ == "__main__":
-    cd = ClinicalData(file_path=filter_clinical_data_cfg.CSV_FILE)
-    cd.main()
+    for file in [filter_clinical_data_cfg.CSV_FILE_BCH]:
+        cd = ClinicalData(file_path=file)
+        cd.main()
