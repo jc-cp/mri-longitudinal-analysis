@@ -13,6 +13,8 @@ PATH_IMAGES = Path("/mnt/an225b/Anna/fw/fw/data")
 NEW_PATH_IMAGES = Path(
     "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset"
 )
+NEW_PATH_IMAGES_PRE = NEW_PATH_IMAGES / "pre_event"
+NEW_PATH_IMAGES_POST = NEW_PATH_IMAGES / "post_event"
 
 ASSERTATIONS = True
 LENGTH_DATA = 513  # do not count header
@@ -21,3 +23,6 @@ LENGTH_DATA = 513  # do not count header
 OUTPUT_PATH = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output/clinical_data")
 OUTPUT_CSV_PRE_EVENT = OUTPUT_PATH / "cbtn_pre_event.csv"
 OUTPUT_CSV_POST_EVENT = OUTPUT_PATH / "cbtn_post_event.csv"
+
+PARSING = False
+MOVING = True
