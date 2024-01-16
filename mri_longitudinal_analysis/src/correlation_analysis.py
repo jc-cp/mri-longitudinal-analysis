@@ -117,29 +117,8 @@ class TumorAnalysis:
         self.clinical_data["Treatment Type"] = self.extract_treatment_types()
         self.clinical_data["BCH MRN"] = zero_fill(self.clinical_data["BCH MRN"], 7)
 
-        diagnosis_to_glioma_type = {
-            "astrocytoma": "Astrocytoma",
-            "JPA": "Astrocytoma",
-            "xanthoastrocytoma": "Astrocytoma",
-            "tectal": "Tectal Glioma",
-            "glioneuronal neoplasm": "Glioneuronal Neoplasm",
-            "glioneuroma": "Glioneuronal Neoplasm",
-            "DNET": "Glioneuronal Neoplasm",
-            "pseudotumor cerebri": "Glioneuronal Neoplasm",
-            "neuroepithelial": "Glioneuronal Neoplasm",
-            "ganglioglioma": "Ganglioglioma",
-            "optic": "Optic Glioma",
-            "NF1": "Optic Glioma",
-            "low grade glioma": "Low Grade Glioma",
-            "low-grade glioma": "Low Grade Glioma",
-            "low grade neoplasm": "Low Grade Glioma",
-            "IDH": "Low Grade Glioma",
-            "oligodendroglioma ": "Low Grade Glioma",
-            "infiltrating glioma": "Low Grade Glioma",
-        }
-
         def map_diagnosis(diagnosis):
-            for keyword, glioma_type in diagnosis_to_glioma_type.items():
+            for keyword, glioma_type in correlation_cfg.BCH_DIAGNOSIS_2_GLIOMA_TYPE.items():
                 if keyword.lower() in diagnosis.lower():
                     return glioma_type
             return "Other"
