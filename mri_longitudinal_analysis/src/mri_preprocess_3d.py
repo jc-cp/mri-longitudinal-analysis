@@ -53,7 +53,7 @@ def brain_extraction(input_dir, output_dir):
     """
     print("Input directory:", input_dir)
     print("Output directory:", output_dir)
-    hd_bet(input_dir, output_dir, device="0", mode="fast", tta=0)
+    hd_bet(input_dir, output_dir, device="0,1", mode="fast", tta=0)
     print("Brain Extraction with HD-BET complete!")
 
 
@@ -243,7 +243,7 @@ def get_image_files(base_dir):
 
 
 if __name__ == "__main__":
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 
     # conditions
     REGISTRATION = preprocess_cfg.REGISTRATION

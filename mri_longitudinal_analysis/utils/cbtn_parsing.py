@@ -148,6 +148,10 @@ def get_sessions_and_patients(path_mr_cbtn, ages, surgery_status) -> (list, list
                         [patient_id, session_age, os.path.join(path, folder), age, "post"]
                     )
 
+    if not sessions:
+        print("ERROR: No sessions found!")
+        return pd.DataFrame(), pd.DataFrame()
+
     dtype_mapping = {
         "Patient_ID": "string",
         "Session Age": "int",
@@ -155,20 +159,26 @@ def get_sessions_and_patients(path_mr_cbtn, ages, surgery_status) -> (list, list
         "Age at Event Days": "int",
         "Event Type": "string",
     }
-
     df_sessions = pd.DataFrame(
         sessions,
         columns=["Patient_ID", "Session Age", "Session Path", "Age at Event Days", "Event Type"],
     )
 
     for column, dtype in dtype_mapping.items():
-        df_sessions[column] = df_sessions[column].astype(dtype)
+        if column in df_sessions.columns:
+            df_sessions[column] = df_sessions[column].astype(dtype)
+        else:
+            print(f"ERROR: Column {column} not found in df_sessions!")
 
-    df_sessions = df_sessions.sort_values(by="Patient_ID")
+    df_sessions = df_sessions.sort_values(by=["Patient_ID", "Session Age"])
 
+    if "Event Type" not in df_sessions.columns:
+        print("ERROR: Column 'Event Type' not found in df_sessions!")
+        return pd.DataFrame(), pd.DataFrame()
+
+    # pylint: disable=unsubscriptable-object
     df_pre_event = df_sessions[df_sessions["Event Type"] == "pre"]
     df_post_event = df_sessions[df_sessions["Event Type"] == "post"]
-
     return df_pre_event, df_post_event
 
 
@@ -219,54 +229,62 @@ def get_t2_sequences(df_event_aligned, df_metadata_aligned):
     print("Starting T2 sequence extraction...")
     matched_files = []
 
-    for _, row in df_event_aligned.iterrows():
-        patient_id = row["Patient_ID"]
-        session_age = row["Session Age"]
-        session_path = row["Session Path"]
-        last_part_session_path = os.path.basename(session_path)
+    # Group by patient and session age
+    grouped_df = df_event_aligned.groupby(["Patient_ID", "Session Age"])
 
-        condition = (
-            (df_metadata_aligned["subject_label"] == patient_id)
-            & (df_metadata_aligned["age_at_imaging_in_days"] == session_age)
-            & (
-                df_metadata_aligned["fw_class"].str.contains("Structural")
-                & df_metadata_aligned["fw_class"].str.contains("T2")
+    for (patient_id, session_age), group in tqdm(grouped_df, total=len(grouped_df)):
+        session_paths = group["Session Path"].unique()
+        highest_resolution = 0
+        best_image_path = None
+        is_3d_selected = False
+        is_axial_selected = False
+
+        for session_path in session_paths:
+            last_part_session_path = os.path.basename(session_path)
+
+            condition = (
+                (df_metadata_aligned["subject_label"] == patient_id)
+                & (df_metadata_aligned["age_at_imaging_in_days"] == session_age)
+                & (
+                    df_metadata_aligned["fw_class"].str.contains("Structural")
+                    & df_metadata_aligned["fw_class"].str.contains("T2")
+                )
+                & (df_metadata_aligned["session_label"] == last_part_session_path)
             )
-            & (df_metadata_aligned["session_label"] == last_part_session_path)
-        )
 
-        filtered_df = df_metadata_aligned[condition].sort_values(
-            by=["subject_label", "session_label", "acquisition_label"]
-        )
-
-        selected_entry = {}
-        for _, x in filtered_df.iterrows():
-            acquisition_label = x["acquisition_label"]
-            full_path = os.path.join(session_path, acquisition_label)
-
-            if os.path.exists(full_path) and (
-                os.path.isdir(full_path) or os.path.isfile(full_path)
-            ):
-                if "3D" in x["fw_class"]:
-                    resolution_product = get_resolution(full_path)
-                    if (
-                        selected_entry is None
-                        or resolution_product > selected_entry["Resolution_Product"]
-                    ):
-                        selected_entry = x
-                        selected_entry["Resolution_Product"] = resolution_product
-                elif selected_entry is None:
-                    selected_entry = x
-                    selected_entry["Resolution_Product"] = get_resolution(full_path)
-
-        if selected_entry is not None:
-            acquisition_label = selected_entry["acquisition_label"]
-            acq_path = os.path.join(session_path, acquisition_label)
-            matched_files.append((patient_id, session_age, acquisition_label, acq_path))
-            print(
-                f"Patient {patient_id} at session age {session_age} has an image"
-                f" {acquisition_label}."
+            filtered_df = df_metadata_aligned[condition].sort_values(
+                by=["subject_label", "session_label", "acquisition_label"]
             )
+
+            for _, x in filtered_df.iterrows():
+                acquisition_label = x["acquisition_label"]
+                sequence_folder_path = os.path.join(session_path, acquisition_label)
+
+                if os.path.isdir(sequence_folder_path):
+                    for image_file in os.listdir(sequence_folder_path):
+                        image_path = os.path.join(sequence_folder_path, image_file)
+                        if os.path.isfile(image_path):
+                            resolution = get_resolution(image_path)
+                            is_3d = "3D" in x["fw_class"]
+                            is_axial = ("ax" or "tra") in x["acquisition_label"].casefold()
+
+                            # Logic for selecting the best image based on the criteria
+                            if (
+                                best_image_path is None
+                                or (is_3d and not is_3d_selected)
+                                or (is_3d == is_3d_selected and is_axial and not is_axial_selected)
+                                or (
+                                    is_3d == is_3d_selected
+                                    and is_axial == is_axial_selected
+                                    and resolution > highest_resolution
+                                )
+                            ):
+                                highest_resolution = resolution
+                                best_image_path = image_path
+                                is_3d_selected = is_3d
+                                is_axial_selected = is_axial
+        if best_image_path:
+            matched_files.append((patient_id, session_age, best_image_path))
         else:
             print(
                 f"No valid T2 entries found for patient {patient_id} at session age {session_age}"
@@ -274,11 +292,11 @@ def get_t2_sequences(df_event_aligned, df_metadata_aligned):
 
     return pd.DataFrame(
         matched_files,
-        columns=["Patient_ID", "Session Age", "Acquisition Label", "Acquisition Path"],
+        columns=["Patient_ID", "Session Age", "Best Image Path"],
     )
 
 
-def get_resolution(folder_path):
+def get_resolution(file_path):
     """
     Get the resolution of an MRI image using nibabel.
 
@@ -289,28 +307,41 @@ def get_resolution(folder_path):
     tuple: Resolution of the image.
     """
 
-    if os.path.isdir(folder_path):
-        file_path = os.path.join(folder_path, os.listdir(folder_path)[0])
-        if os.path.isfile(file_path):
-            try:
-                img = nib.load(file_path)
-                header = img.header
-                # The voxel dimensions are usually in the header under 'pixdim'
-                resolution = header.get_zooms()[
-                    :3
-                ]  # Get the first three dimensions (for 3D images)
+    if os.path.isfile(file_path):
+        try:
+            img = nib.load(file_path)
+            header = img.header
+            # The voxel dimensions are usually in the header under 'pixdim'
+            resolution = header.get_zooms()[:3]  # Get the first three dimensions (for 3D images)
 
-                if resolution:
-                    return resolution
-            except FileNotFoundError as e:
-                print(f"Error loading file {file_path}: {e}")
-                return None
-        else:
-            print(f"Error loading file {file_path}: Not a file.")
+            if resolution:
+                return resolution
+        except FileNotFoundError as e:
+            print(f"Error loading file {file_path}: {e}")
             return None
     else:
-        print(f"Error loading folder {folder_path}: Not a directory.")
+        print(f"Error loading file {file_path}: Not a file.")
         return None
+
+
+def check_uniqueness(csv_file_path, suffix):
+    """
+    Checks that for each unique Patient_ID there is a unique Session Age and
+    a unique Best Image Path in the provided CSV file.
+
+    Args:
+    - csv_file_path: Path to the CSV file to be checked.
+    """
+    df = pd.read_csv(csv_file_path)
+
+    # Group by 'Patient_ID' and check uniqueness of 'Session Age' and 'Best Image Path'
+    for patient_id, group in df.groupby("Patient_ID"):
+        if group["Session Age"].duplicated().any():
+            print(f"Duplicate Session Ages found for Patient ID {patient_id}")
+
+        if group["Best Image Path"].duplicated().any():
+            print(f"Duplicate Best Image Paths found for Patient ID {patient_id}")
+    print(f"Uniqueness check complete for {suffix}-event images.")
 
 
 def copy_images(csv_file_path, new_path_cbtn):
@@ -320,29 +351,18 @@ def copy_images(csv_file_path, new_path_cbtn):
     df = pd.read_csv(csv_file_path)
 
     for _, row in tqdm(df.iterrows(), total=len(df), desc="Copying images"):
-        acquisition_folder = row["Acquisition Path"]
-
-        if os.path.isdir(acquisition_folder):
-            files_in_folder = os.listdir(acquisition_folder)
-
-            # Check if there is exactly one file in the folder
-            if len(files_in_folder) == 1:
-                file_to_copy = files_in_folder[0]
-                source_path = os.path.join(acquisition_folder, file_to_copy)
+        try:
+            best_image_path = row["Best Image Path"]
+            if os.path.isfile(best_image_path):
                 dest_file_name = f"{row['Patient_ID']}_{row['Session Age']}.nii.gz"
                 dest_path = os.path.join(new_path_cbtn, dest_file_name)
 
                 # Copy the file
-                shutil.copyfile(source_path, dest_path)
-            elif len(files_in_folder) == 0:
-                print(f"\tWarning: No files found in folder: {acquisition_folder}")
+                shutil.copyfile(best_image_path, dest_path)
             else:
-                print(
-                    f"\tWarning: Multiple files found in folder {acquisition_folder}, skipping"
-                    " copy."
-                )
-        else:
-            print(f"\t Warning: Folder not found: {acquisition_folder}")
+                print(f"\tWarning: File not found: {best_image_path}")
+        except Exception as error:
+            print(f"\tError: {error}")
 
 
 def main():
@@ -377,11 +397,15 @@ def main():
         df_post_event_matched = get_t2_sequences(df_event_aligned_post, df_metadata_aligned_post)
         df_post_event_matched.to_csv(cbtn_parsing_cfg.OUTPUT_CSV_POST_EVENT)
 
+    csv_path_pre = cbtn_parsing_cfg.OUTPUT_CSV_PRE_EVENT
+    csv_path_post = cbtn_parsing_cfg.OUTPUT_CSV_POST_EVENT
+    check_uniqueness(csv_path_pre, suffix="pre")
+    check_uniqueness(csv_path_post, suffix="post")
+
     if cbtn_parsing_cfg.MOVING:
-        csv_path_pre = cbtn_parsing_cfg.OUTPUT_CSV_PRE_EVENT
-        csv_path_post = cbtn_parsing_cfg.OUTPUT_CSV_POST_EVENT
         new_path_cbtn_pre = cbtn_parsing_cfg.NEW_PATH_IMAGES_PRE
         new_path_cbtn_post = cbtn_parsing_cfg.NEW_PATH_IMAGES_POST
+
         os.makedirs(new_path_cbtn_pre, exist_ok=True)
         os.makedirs(new_path_cbtn_post, exist_ok=True)
 

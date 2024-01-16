@@ -13,8 +13,8 @@ PATH_IMAGES = Path("/mnt/an225b/Anna/fw/fw/data")
 NEW_PATH_IMAGES = Path(
     "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset"
 )
-NEW_PATH_IMAGES_PRE = NEW_PATH_IMAGES / "pre_event"
-NEW_PATH_IMAGES_POST = NEW_PATH_IMAGES / "post_event"
+NEW_PATH_IMAGES_PRE = NEW_PATH_IMAGES / "pre_event" / "1_no_comments"
+NEW_PATH_IMAGES_POST = NEW_PATH_IMAGES / "post_event" / "1_no_comments"
 
 ASSERTATIONS = True
 LENGTH_DATA = 513  # do not count header
