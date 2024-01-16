@@ -4,6 +4,7 @@ Parser script to extract data from the CBTN dataset.
 import os
 import shutil
 from collections import Counter
+import re
 
 import nibabel as nib
 import pandas as pd
@@ -11,7 +12,7 @@ from cfg.utils import cbtn_parsing_cfg
 from tqdm import tqdm
 
 
-def read_csv(path_cbtn_csv, path_cbtn_img) -> (list, list):
+def read_csv(path_cbtn_csv, path_cbtn_img) -> (list, list, list):
     """
     Read the csv file and return the ages and the path to the MR images.
     It includes assertations to make sure that the csv is already preprocessed.
@@ -78,12 +79,15 @@ def read_csv(path_cbtn_csv, path_cbtn_img) -> (list, list):
     print("Total number of patients in clinical data:", len(ids))
 
     ages = []
+    surgery_status = []
     for patient_id in ids:
         for i, patient_item in enumerate(df_cbtn["CBTN Subject ID"]):
             if patient_id == patient_item:
                 ages.append(df_cbtn.loc[i, "Age at Event Days"])
+                surgery = df_cbtn.loc[i, "Surgery"]
+                surgery_status.append("Yes" if surgery == "Yes" else "No")
 
-    assert len(ages) == len(ids), "Ages and IDs length assertion failed"
+    assert len(ages) == len(ids) and len(surgery_status) == len(ids), "Length assertion failed"
 
     path_mr_cbtn = []
     for patient_id in ids:
@@ -93,7 +97,7 @@ def read_csv(path_cbtn_csv, path_cbtn_img) -> (list, list):
 
     assert len(path_mr_cbtn) == len(ids), "Path and IDs length assertion failed"
 
-    return ages, path_mr_cbtn
+    return ages, surgery_status, path_mr_cbtn
 
 
 def extract_session(s):
@@ -112,7 +116,7 @@ def extract_patient_id(path):
     return match.group() if match else None
 
 
-def get_sessions_and_patients(path_mr_cbtn, ages) -> (list, list):
+def get_sessions_and_patients(path_mr_cbtn, ages, surgery_status) -> (list, list):
     """
     Create DataFrames with session path, age at session, and patient ID.
 
@@ -120,10 +124,9 @@ def get_sessions_and_patients(path_mr_cbtn, ages) -> (list, list):
     - df_pre_event: dataframe of pre-event session / patients
     - df_post_event: dataframe of post-event session / patients
     """
-    pre_event_sessions = []
-    post_event_sessions = []
+    sessions = []
 
-    for path, age in zip(path_mr_cbtn, ages):
+    for path, age, surgery in zip(path_mr_cbtn, ages, surgery_status):
         patient_id = extract_patient_id(path)
         if patient_id is None:
             print("Patient ID not found!")
@@ -132,13 +135,17 @@ def get_sessions_and_patients(path_mr_cbtn, ages) -> (list, list):
         for folder in os.listdir(path):
             session_age = extract_session(folder)
             if session_age is not None:
-                if session_age <= int(age):
-                    pre_event_sessions.append(
-                        [patient_id, session_age, os.path.join(path, folder), age]
+                if surgery == "Yes" and session_age <= int(age):
+                    sessions.append(
+                        [patient_id, session_age, os.path.join(path, folder), age, "pre"]
+                    )
+                elif surgery == "No":
+                    sessions.append(
+                        [patient_id, session_age, os.path.join(path, folder), age, "pre"]
                     )
                 else:
-                    post_event_sessions.append(
-                        [patient_id, session_age, os.path.join(path, folder), age]
+                    sessions.append(
+                        [patient_id, session_age, os.path.join(path, folder), age, "post"]
                     )
 
     dtype_mapping = {
@@ -146,23 +153,21 @@ def get_sessions_and_patients(path_mr_cbtn, ages) -> (list, list):
         "Session Age": "int",
         "Session Path": "string",
         "Age at Event Days": "int",
+        "Event Type": "string",
     }
 
-    df_pre_event = pd.DataFrame(
-        pre_event_sessions,
-        columns=["Patient_ID", "Session Age", "Session Path", "Age at Event Days"],
-    )
-    df_post_event = pd.DataFrame(
-        post_event_sessions,
-        columns=["Patient_ID", "Session Age", "Session Path", "Age at Event Days"],
+    df_sessions = pd.DataFrame(
+        sessions,
+        columns=["Patient_ID", "Session Age", "Session Path", "Age at Event Days", "Event Type"],
     )
 
     for column, dtype in dtype_mapping.items():
-        df_pre_event[column] = df_pre_event[column].astype(dtype)
-        df_post_event[column] = df_post_event[column].astype(dtype)
+        df_sessions[column] = df_sessions[column].astype(dtype)
 
-    df_pre_event = df_pre_event.sort_values(by="Patient_ID")
-    df_post_event = df_post_event.sort_values(by="Patient_ID")
+    df_sessions = df_sessions.sort_values(by="Patient_ID")
+
+    df_pre_event = df_sessions[df_sessions["Event Type"] == "pre"]
+    df_post_event = df_sessions[df_sessions["Event Type"] == "post"]
 
     return df_pre_event, df_post_event
 
@@ -207,6 +212,10 @@ def align_dataframes(df_event, meta_data, suffix):
 
 
 def get_t2_sequences(df_event_aligned, df_metadata_aligned):
+    """
+    Gets the T2 sequences from the dataframes and creates
+    the correct paths upon inspection of quality.
+    """
     print("Starting T2 sequence extraction...")
     matched_files = []
 
@@ -230,7 +239,7 @@ def get_t2_sequences(df_event_aligned, df_metadata_aligned):
             by=["subject_label", "session_label", "acquisition_label"]
         )
 
-        selected_entry = None
+        selected_entry = {}
         for _, x in filtered_df.iterrows():
             acquisition_label = x["acquisition_label"]
             full_path = os.path.join(session_path, acquisition_label)
@@ -348,10 +357,10 @@ def main():
     if cbtn_parsing_cfg.PARSING:
         # get list of ages from patients and a list of all paths
         # corresponding to the relevant patients throught the ids
-        ages, path_mr_cbtn = read_csv(path_cbtn_csv, path_cbtn_img)
+        ages, surgery_status, path_mr_cbtn = read_csv(path_cbtn_csv, path_cbtn_img)
 
         # get the individual sessions of patients based on event age
-        df_pre_event, df_post_event = get_sessions_and_patients(path_mr_cbtn, ages)
+        df_pre_event, df_post_event = get_sessions_and_patients(path_mr_cbtn, ages, surgery_status)
 
         # remove the missing patients from the metadata and clinical data
         df_event_aligned_pre, df_metadata_aligned_pre = align_dataframes(
