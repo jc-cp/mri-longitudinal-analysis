@@ -47,7 +47,7 @@ class TumorAnalysis:
     A class to perform tumor analysis using clinical and volumetric data.
     """
 
-    def __init__(self, clinical_data_path, volumes_data_paths):
+    def __init__(self, clinical_data_path, volumes_data_paths, cohort):
         """
         Initialize the TumorAnalysis class.
 
@@ -55,9 +55,6 @@ class TumorAnalysis:
             clinical_data_file (str): Path to the clinical data CSV file.
             volumes_data_file (str): Path to the tumor volumes data CSV file.
         """
-
-        os.makedirs(correlation_cfg.OUTPUT_DIR_CORRELATIONS, exist_ok=True)
-        os.makedirs(correlation_cfg.OUTPUT_DIR_STATS, exist_ok=True)
 
         self.merged_data = pd.DataFrame()
         self.clinical_data_reduced = pd.DataFrame()
@@ -72,6 +69,7 @@ class TumorAnalysis:
         self.caliper = correlation_cfg.CALIPER
         self.sample_size_plots = correlation_cfg.SAMPLE_SIZE
         self.exclusion_list_path = correlation_cfg.EXCLUSION_LIST_PATH
+        self.cohort = cohort
         print("Step 0: Initializing TumorAnalysis class...")
 
         self.validate_files(clinical_data_path, volumes_data_paths)
@@ -100,11 +98,26 @@ class TumorAnalysis:
             raise FileNotFoundError(f"The following files could not be found: {missing_files}")
         print("\tValidated files.")
 
+    def map_dictionary(self, dictionary, column, type):
+        """
+        Maps given instance according to predefined dictionary.
+        """
+
+        def map_value(cell):
+            for keyword, value in dictionary.items():
+                if keyword.lower() in str(cell).casefold():
+                    return value
+            if type == "location":
+                return "Other"
+            if type == "symptoms":
+                return "No symptoms (incident finding)"
+
+        return column.apply(map_value)
+
     def load_clinical_data(self, clinical_data_path):
         """
         Load clinical data from a CSV file, parse the clinical data to
-        categorize diagnosis into glioma types, and categorize other
-        relevant fields, and reduce the data to relevant columns for analysis.
+        categorize diagnosesand other relevant fields to reduce the data for analysis.
         Updates the `self.clinical_data_reduced` attribute.
 
         Parameters:
@@ -117,14 +130,14 @@ class TumorAnalysis:
         self.clinical_data["Treatment Type"] = self.extract_treatment_types()
         self.clinical_data["BCH MRN"] = zero_fill(self.clinical_data["BCH MRN"], 7)
 
-        def map_diagnosis(diagnosis):
-            for keyword, glioma_type in correlation_cfg.BCH_DIAGNOSIS_2_GLIOMA_TYPE.items():
-                if keyword.lower() in diagnosis.lower():
-                    return glioma_type
-            return "Other"
+        self.clinical_data["Location"] = self.map_dictionary(
+            correlation_cfg.BCH_LOCATION, self.clinical_data["Location of Tumor"], type="location"
+        )
 
-        self.clinical_data["Glioma Type"] = self.clinical_data["Pathologic diagnosis"].apply(
-            map_diagnosis
+        self.clinical_data["Symptoms"] = self.map_dictionary(
+            correlation_cfg.BCH_SYMPTOMS,
+            self.clinical_data["Symptoms at diagnosis"],
+            type="symptoms",
         )
 
         self.clinical_data["Sex"] = self.clinical_data["Sex"].apply(
@@ -156,27 +169,13 @@ class TumorAnalysis:
 
         self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"]
 
-        dtype_mapping = {
-            "BCH MRN": "string",
-            "Glioma Type": "category",
-            "Sex": "category",
-            "Race": "category",
-            "Mutations": "category",
-            "Treatment Type": "category",
-            "Tumor Progression": "category",
-        }
-
         # Apply the type conversions according to the dictionary
-        for column, dtype in dtype_mapping.items():
+        for column, dtype in correlation_cfg.BCH_DTYPE_MAPPING.items():
             self.clinical_data[column] = self.clinical_data[column].astype(dtype)
 
-        datetime_columns = [
-            "Date First Diagnosis",
-            "Date First Progression",
-            "Date of last clinical follow-up",
-            "Follow-up Time",
-        ]
-        all_relevant_columns = list(dtype_mapping.keys()) + datetime_columns
+        all_relevant_columns = (
+            list(correlation_cfg.BCH_DTYPE_MAPPING.keys()) + correlation_cfg.BCH_DATETIME_COLUMNS
+        )
         self.clinical_data_reduced = self.clinical_data[all_relevant_columns]
 
         print("\tParsed clinical data.")
@@ -507,7 +506,7 @@ class TumorAnalysis:
                 " types."
             )
 
-    def analyze_pre_treatment(self, prefix, output_dir, correlation_method="spearman"):
+    def analyze_pre_treatment(self, prefix, output_dir):
         """
         Analyze data for pre-treatment cases. This involves finding correlations
         between variables such as initial tumor volume, age, sex, mutations, and race.
@@ -516,7 +515,8 @@ class TumorAnalysis:
 
         # variable types
         categorical_vars = [
-            "Glioma Type",
+            "Location",
+            "Symptoms",
             "Treatment Type",
             "Age Group",
             "Sex",
@@ -612,10 +612,9 @@ class TumorAnalysis:
                         aggregated_data,
                         prefix,
                         output_dir,
-                        method=correlation_method,
                     )
 
-    def analyze_post_treatment(self, prefix, output_dir, correlation_method="spearman"):
+    def analyze_post_treatment(self, prefix, output_dir):
         """
         Analyze data for post-treatment cases. This involves finding correlations between
         variables such as treatment types, tumor volume changes, and specific mutations.
@@ -810,7 +809,7 @@ class TumorAnalysis:
             "Mutations",
             "Tumor Progression",
             "Received Treatment",
-            "Glioma Type",
+            "Location",
         ]
         for cat in category_list:
             cat_volume_change_name = os.path.join(
@@ -990,6 +989,69 @@ class TumorAnalysis:
         output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
         plot_trend_trajectories(data, output_filename, column_name, unit="mm^3")
         print("\t\tSaved trend analysis plot.")
+
+    def printout_stats(self):
+        """
+        Descriptive statistics.
+        """
+        # Baseline volume
+        median_baseline_volume = self.pre_treatment_data["Baseline Volume"].median()
+        max_baseline_volume = self.pre_treatment_data["Baseline Volume"].max()
+        min_baseline_volume = self.pre_treatment_data["Baseline Volume"].min()
+        print(f"\t\tMedian Baseline Volume: {median_baseline_volume} mm^3")
+        print(f"\t\tMaximum Baseline Volume: {max_baseline_volume} mm^3")
+        print(f"\t\tMinimum Baseline Volume: {min_baseline_volume} mm^3")
+
+        # Age
+        median_age = self.pre_treatment_data["Age"].median()
+        max_age = self.pre_treatment_data["Age"].max()
+        min_age = self.pre_treatment_data["Age"].min()
+        print(f"\t\tMedian Age: {median_age} years")
+        print(f"\t\tMaximum Age: {max_age} years")
+        print(f"\t\tMinimum Age: {min_age} years")
+
+        # Sex, Received Treatment, Progression, Symptoms,
+        # Location, Patient Classification, Treatment Type
+        copy_df = self.pre_treatment_data.copy()
+        unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
+        counts_sex = unique_pat["Sex"].value_counts()
+        counts_progression = unique_pat["Tumor Progression"].value_counts()
+        counts_received_treatment = unique_pat["Received Treatment"].value_counts()
+        counts_symptoms = unique_pat["Symptoms"].value_counts()
+        counts_location = unique_pat["Location"].value_counts()
+        counts_patient_classification = unique_pat["Patient Classification"].value_counts()
+        counts_treatment_type = unique_pat["Treatment Type"].value_counts()
+        print(f"\t\tReceived Treatment: {counts_received_treatment}")
+        print(f"\t\tSymptoms: {counts_symptoms}")
+        print(f"\t\tLocation: {counts_location}")
+        print(f"\t\tSex: {counts_sex}")
+        print(f"\t\tProgression: {counts_progression}")
+        print(f"\t\tPatient Classification: {counts_patient_classification}")
+        print(f"\t\tTreatment Type: {counts_treatment_type}")
+
+        # Volume Change
+        median_volume_change = self.pre_treatment_data["Volume Change"].median()
+        max_volume_change = self.pre_treatment_data["Volume Change"].max()
+        min_volume_change = self.pre_treatment_data["Volume Change"].min()
+        print(f"\t\tMedian Volume Change: {median_volume_change} %")
+        print(f"\t\tMaximum Volume Change: {max_volume_change} %")
+        print(f"\t\tMinimum Volume Change: {min_volume_change} %")
+
+        # Nomralized Volume
+        median_normalized_volume = self.pre_treatment_data["Normalized Volume"].median()
+        max_normalized_volume = self.pre_treatment_data["Normalized Volume"].max()
+        min_normalized_volume = self.pre_treatment_data["Normalized Volume"].min()
+        print(f"\t\tMedian Normalized Volume: {median_normalized_volume} mm^3")
+        print(f"\t\tMaximum Normalized Volume: {max_normalized_volume} mm^3")
+        print(f"\t\tMinimum Normalized Volume: {min_normalized_volume} mm^3")
+
+        # Follow-up time
+        median_follow_up = self.pre_treatment_data["Follow-up Time"].median()
+        max_follow_up = self.pre_treatment_data["Follow-up Time"].max()
+        min_follow_up = self.pre_treatment_data["Follow-up Time"].min()
+        print(f"\t\tMedian Follow-Up Time: {median_follow_up} days")
+        print(f"\t\tMaximum Follow-Up Time: {max_follow_up} days")
+        print(f"\t\tMinimum Follow-Up Time: {min_follow_up} days")
 
     def run_analysis(self, output_correlations, output_stats):
         """
@@ -1178,24 +1240,18 @@ class TumorAnalysis:
             step_idx += 1
 
         if correlation_cfg.ANALYSIS_PRE_TREATMENT:
-            prefix = "pre-treatment_BCH"
+            prefix = f"{self.cohort}_pre_treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
             # Survival analysis
-            stratify_by_list = ["Glioma Type", "Sex", "Mutations", "Age Group"]
+            stratify_by_list = ["Location", "Sex", "Mutations", "Age Group", "Symptoms"]
             for element in stratify_by_list:
                 self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
 
             # Growth trajectories & Trend analysis
             self.model_growth_trajectories(prefix, output_dir=output_stats)
 
-            median_follow_up = self.pre_treatment_data["Follow-up Time"].median()
-            max_follow_up = self.pre_treatment_data["Follow-up Time"].max()
-            min_follow_up = self.pre_treatment_data["Follow-up Time"].min()
-
-            print(f"\t\tMedian Follow-Up Time: {median_follow_up} days")
-            print(f"\t\tMaximum Follow-Up Time: {max_follow_up} days")
-            print(f"\t\tMinimum Follow-Up Time: {min_follow_up} days")
+            self.printout_stats()
 
             # Tumor stability
             self.analyze_tumor_stability(
@@ -1208,7 +1264,6 @@ class TumorAnalysis:
 
             # Correlations between variables
             self.analyze_pre_treatment(
-                correlation_method=correlation_cfg.CORRELATION_PRE_TREATMENT,
                 prefix=prefix,
                 output_dir=output_correlations,
             )
@@ -1221,7 +1276,7 @@ class TumorAnalysis:
         if correlation_cfg.ANALYSIS_POST_TREATMENT:
             prefix = "post-treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
-            # self.analyze_post_treatment(correlation_method=correlation_cfg.CORRELATION_POST_TREATMENT, prefix=prefix)
+            # self.analyze_post_treatment(prefix=prefix)
 
             step_idx += 1
 
@@ -1253,8 +1308,15 @@ class TumorAnalysis:
 
 
 if __name__ == "__main__":
-    analysis = TumorAnalysis(
-        correlation_cfg.CLINICAL_CSV,
-        [correlation_cfg.VOLUMES_CSV],
+    analysis_bch = TumorAnalysis(
+        correlation_cfg.CLINICAL_CSV_BCH,
+        [correlation_cfg.VOLUMES_CSV_BCH],
+        cohort="BCH",
     )
-    analysis.run_analysis(correlation_cfg.OUTPUT_DIR_CORRELATIONS, correlation_cfg.OUTPUT_DIR_STATS)
+
+    os.makedirs(correlation_cfg.OUTPUT_DIR_CORRELATIONS_BCH, exist_ok=True)
+    os.makedirs(correlation_cfg.OUTPUT_DIR_STATS_BCH, exist_ok=True)
+
+    analysis_bch.run_analysis(
+        correlation_cfg.OUTPUT_DIR_CORRELATIONS_BCH, correlation_cfg.OUTPUT_DIR_STATS_BCH
+    )

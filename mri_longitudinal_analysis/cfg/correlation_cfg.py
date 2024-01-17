@@ -1,17 +1,17 @@
 """Config file for the correlation analysis script."""
 from pathlib import Path
 
-CLINICAL_CSV = Path(
+CLINICAL_CSV_BCH = Path(
     "/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_108_cohort.csv"
 )
 
-VOLUMES_CSV = Path(
+VOLUMES_CSV_BCH = Path(
     "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/output/time_series_csv_kernel_smoothed"
 )
 
 OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output")
-OUTPUT_DIR_CORRELATIONS = OUTPUT_DIR / "correlation_plots"
-OUTPUT_DIR_STATS = OUTPUT_DIR / "correlation_stats"
+OUTPUT_DIR_CORRELATIONS_BCH = OUTPUT_DIR / "correlation_plots_bch"
+OUTPUT_DIR_STATS_BCH = OUTPUT_DIR / "correlation_stats_bch"
 
 EXCLUSION_LIST_PATH = Path(
     "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/output/patients_with_few_scans.txt"
@@ -58,36 +58,9 @@ FEATURE_ENG = True
 
 
 #### DICTIONARIES
-BCH_DIAGNOSIS_2_GLIOMA_TYPE = {
-    "astrocytoma": "Astrocytoma",
-    "JPA": "Astrocytoma",
-    "xanthoastrocytoma": "Astrocytoma",
-    "tectal": "Tectal Glioma",
-    "glioneuronal neoplasm": "Glioneuronal Neoplasm",
-    "glioneuroma": "Glioneuronal Neoplasm",
-    "DNET": "Glioneuronal Neoplasm",
-    "pseudotumor cerebri": "Glioneuronal Neoplasm",
-    "neuroepithelial": "Glioneuronal Neoplasm",
-    "ganglioglioma": "Ganglioglioma",
-    "optic": "Optic Glioma",
-    "NF1": "Neurofibromatosis",
-    "NF2": "Neurofibromatosis",
-    "NF-1": "Neurofibromatosis",
-    "NF-2": "Neurofibromatosis",
-    "low grade glioma": "Low Grade Glioma",
-    "low-grade glioma": "Low Grade Glioma",
-    "low grade neoplasm": "Low Grade Glioma",
-    "IDH": "Low Grade Glioma",
-    "oligodendroglioma ": "Low Grade Glioma",
-    "infiltrating glioma": "Low Grade Glioma",
-}
-
-CBTN_DIAGNOSIS = 
-    {
-        
-    }
 
 BCH_SYMPTOMS = {
+    "incidental": "No symptoms (incident finding)",
     "headache": "Headaches",
     "migraine": "Headaches",
     "seizure": "Seizures",
@@ -96,7 +69,7 @@ BCH_SYMPTOMS = {
     "vertigo": "Neurological deficits",
     "scoliosis": "Neurological deficits",
     "curve": "Neurological deficits",
-    "foot" : "Neurological deficits",
+    "foot": "Neurological deficits",
     "developmental": "Developmental delay",
     "macrocephaly": "Developmental delay",
     "hydrocephalus": "Developmental delay",
@@ -117,9 +90,6 @@ BCH_SYMPTOMS = {
     "obesity": "Other",
     "sinusitis": "Other",
     "numbness": "Other",
-    "incidental": "No symptoms (incident finding)",
-    # or non of the above -> indicental
-
 }
 
 CBTN_SYMPTOMS = {
@@ -137,15 +107,6 @@ CBTN_SYMPTOMS = {
 }
 
 BCH_LOCATION = {
-    "thalamic": "Basal Ganglia / Thalamus",
-    "thalamus": "Basal Ganglia / Thalamus",
-    "basal": "Basal Ganglia / Thalamus",
-    "midbrain": "Brainstem",
-    "centrum" : "Brainstem",
-    "tectum": "Brainstem",
-    "tectal": "Brainstem",
-    "cervicomedullary": "Brainstem",
-    "stem" : "Brainstem",
     "posterior fossa": "Cerebellum",
     "cerebel": "Cerebellum",
     "vermis": "Cerebellum",
@@ -154,8 +115,17 @@ BCH_LOCATION = {
     "parietal": "Cortical",
     "sylvian": "Cortical",
     "suprasellar": "Meninges / Suprasellar",
+    "thalamic": "Basal Ganglia / Thalamus",
+    "thalamus": "Basal Ganglia / Thalamus",
+    "basal": "Basal Ganglia / Thalamus",
+    "midbrain": "Brainstem",
+    "centrum": "Brainstem",
+    "tectum": "Brainstem",
+    "tectal": "Brainstem",
+    "cervicomedullary": "Brainstem",
+    "stem": "Brainstem",
     "optic": "Optic Pathway",
-    "spinal": "Spinal Cord",
+    "spinal": "Other",
     "ventricle": "Ventricles",
     "ventricular": "Ventricles",
     "midline": "Other",
@@ -165,16 +135,34 @@ BCH_LOCATION = {
 CBTN_LOCATION = {
     "Basal": "Basal Ganglia / Thalamus",
     "Thalamus": "Basal Ganglia / Thalamus",
-    "Stem" : "Brainstem",
+    "Stem": "Brainstem",
     "Cerebellum": "Cerebellum",
     "Parietal Lobe": "Cortical",
     "Frontal Lobe": "Cortical",
     "Temporal Lobe": "Cortical",
-    "Occipital Lobe":"Cortical",
+    "Occipital Lobe": "Cortical",
     "Meninges": "Meninges / Suprasellar",
     "Suprasellar": "Meninges / Suprasellar",
     "Optic": "Optic Pathway",
-    "Spinal": "Spinal Cord",
+    "Spinal": "Other",
     "Ventricles": "Ventricles",
-    "Other": "Other"
+    "Other": "Other",
 }
+
+BCH_DTYPE_MAPPING = {
+    "BCH MRN": "string",
+    "Location": "category",
+    "Symptoms": "category",
+    "Sex": "category",
+    "Race": "category",
+    "Mutations": "category",
+    "Treatment Type": "category",
+    "Tumor Progression": "category",
+}
+
+BCH_DATETIME_COLUMNS = [
+    "Date First Diagnosis",
+    "Date First Progression",
+    "Date of last clinical follow-up",
+    "Follow-up Time",
+]
