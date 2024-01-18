@@ -994,13 +994,7 @@ class TumorAnalysis:
         """
         Descriptive statistics.
         """
-        # Baseline volume
-        median_baseline_volume = self.pre_treatment_data["Baseline Volume"].median()
-        max_baseline_volume = self.pre_treatment_data["Baseline Volume"].max()
-        min_baseline_volume = self.pre_treatment_data["Baseline Volume"].min()
-        print(f"\t\tMedian Baseline Volume: {median_baseline_volume} mm^3")
-        print(f"\t\tMaximum Baseline Volume: {max_baseline_volume} mm^3")
-        print(f"\t\tMinimum Baseline Volume: {min_baseline_volume} mm^3")
+        print(self.pre_treatment_data.dtypes)
 
         # Age
         median_age = self.pre_treatment_data["Age"].median()
@@ -1030,9 +1024,12 @@ class TumorAnalysis:
         print(f"\t\tTreatment Type: {counts_treatment_type}")
 
         # Volume Change
-        median_volume_change = self.pre_treatment_data["Volume Change"].median()
-        max_volume_change = self.pre_treatment_data["Volume Change"].max()
-        min_volume_change = self.pre_treatment_data["Volume Change"].min()
+        filtered_data = self.pre_treatment_data[self.pre_treatment_data["Volume Change"] != 0]
+        print(filtered_data["Volume Change"].describe())
+
+        median_volume_change = filtered_data["Volume Change"].median()
+        max_volume_change = filtered_data["Volume Change"].max()
+        min_volume_change = filtered_data["Volume Change"].min()
         print(f"\t\tMedian Volume Change: {median_volume_change} %")
         print(f"\t\tMaximum Volume Change: {max_volume_change} %")
         print(f"\t\tMinimum Volume Change: {min_volume_change} %")
@@ -1045,13 +1042,35 @@ class TumorAnalysis:
         print(f"\t\tMaximum Normalized Volume: {max_normalized_volume} mm^3")
         print(f"\t\tMinimum Normalized Volume: {min_normalized_volume} mm^3")
 
+        # Volume
+        mm3_to_cm3 = 1000
+        median_volume = self.pre_treatment_data["Volume"].median()
+        max_volume = self.pre_treatment_data["Volume"].max()
+        min_volume = self.pre_treatment_data["Volume"].min()
+        print(f"\t\tMedian Volume: {median_volume / mm3_to_cm3} cm^3")
+        print(f"\t\tMaximum Volume: {max_volume / mm3_to_cm3} cm^3")
+        print(f"\t\tMinimum Volume: {min_volume / mm3_to_cm3} cm^3")
+
+        # Baseline volume
+        median_baseline_volume = self.pre_treatment_data["Baseline Volume"].median()
+        max_baseline_volume = self.pre_treatment_data["Baseline Volume"].max()
+        min_baseline_volume = self.pre_treatment_data["Baseline Volume"].min()
+        print(f"\t\tMedian Baseline Volume: {median_baseline_volume / mm3_to_cm3} cm^3")
+        print(f"\t\tMaximum Baseline Volume: {max_baseline_volume / mm3_to_cm3} cm^3")
+        print(f"\t\tMinimum Baseline Volume: {min_baseline_volume / mm3_to_cm3} cm^3")
+
         # Follow-up time
+        average_days_per_month = 30.44
         median_follow_up = self.pre_treatment_data["Follow-up Time"].median()
         max_follow_up = self.pre_treatment_data["Follow-up Time"].max()
         min_follow_up = self.pre_treatment_data["Follow-up Time"].min()
-        print(f"\t\tMedian Follow-Up Time: {median_follow_up} days")
-        print(f"\t\tMaximum Follow-Up Time: {max_follow_up} days")
-        print(f"\t\tMinimum Follow-Up Time: {min_follow_up} days")
+        median_follow_up_months = median_follow_up / average_days_per_month
+        max_follow_up_months = max_follow_up / average_days_per_month
+        min_follow_up_months = min_follow_up / average_days_per_month
+
+        print(f"\t\tMedian Follow-Up Time: {median_follow_up_months:.2f} months")
+        print(f"\t\tMaximum Follow-Up Time: {max_follow_up_months:.2f} months")
+        print(f"\t\tMinimum Follow-Up Time: {min_follow_up_months:.2f} months")
 
     def run_analysis(self, output_correlations, output_stats):
         """
@@ -1243,15 +1262,13 @@ class TumorAnalysis:
             prefix = f"{self.cohort}_pre_treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
-            # Survival analysis
-            stratify_by_list = ["Location", "Sex", "Mutations", "Age Group", "Symptoms"]
-            for element in stratify_by_list:
-                self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
+            # # Survival analysis
+            # stratify_by_list = ["Location", "Sex", "Mutations", "Age Group", "Symptoms"]
+            # for element in stratify_by_list:
+            #     self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
 
             # Growth trajectories & Trend analysis
             self.model_growth_trajectories(prefix, output_dir=output_stats)
-
-            self.printout_stats()
 
             # Tumor stability
             self.analyze_tumor_stability(
@@ -1262,11 +1279,13 @@ class TumorAnalysis:
                 change_threshold=correlation_cfg.CHANGE_THRESHOLD,
             )
 
-            # Correlations between variables
-            self.analyze_pre_treatment(
-                prefix=prefix,
-                output_dir=output_correlations,
-            )
+            self.printout_stats()
+
+            # # Correlations between variables
+            # self.analyze_pre_treatment(
+            #     prefix=prefix,
+            #     output_dir=output_correlations,
+            # )
 
             # Last consistency check
             consistency_check(self.pre_treatment_data)
