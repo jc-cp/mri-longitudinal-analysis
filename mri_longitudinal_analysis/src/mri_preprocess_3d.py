@@ -53,7 +53,7 @@ def brain_extraction(input_dir, output_dir):
     """
     print("Input directory:", input_dir)
     print("Output directory:", output_dir)
-    hd_bet(input_dir, output_dir, device="0,1", mode="fast", tta=0)
+    hd_bet(input_dir, output_dir, device="0", mode="fast", tta=0)
     print("Brain Extraction with HD-BET complete!")
 
 
@@ -83,29 +83,16 @@ def registration(
 
     fixed_img = sitk.ReadImage(temp_img, sitk.sitkFloat32)
     problematic_ids = []
-
-    print("Preloading step...")
-
-    for index, img_path in enumerate(tqdm(input_data)):
-        try:
-            _ = sitk.ReadImage(img_path, sitk.sitkFloat32)
-        except IOError as error:
-            problematic_id_ = os.path.splitext(img_path)[0]
-            problematic_ids.append(problematic_id_)
-            print(f"Could not preload image {problematic_id_}. Error: {error}")
-
-    print("Problematic IDs: ", problematic_ids)
+    processed_files = get_processed_files(output_dir)  # Get list of already processed files
 
     random.shuffle(input_data)
 
     for index, img_path in enumerate(tqdm(input_data)):
         id_ = os.path.splitext(img_path)[0]
-        if id_ in problematic_ids:
-            print("problematic data!")
+        if is_already_processed(img_path, processed_files):
+            print(f"Skipping already processed file: {img_path}")
             continue
 
-        print(index)
-        print(id_)
         try:
             moving_img = sitk.ReadImage(img_path, sitk.sitkFloat32)
             # print('moving image:', moving_image.shape)
@@ -215,10 +202,19 @@ def registration(
 
             if save_tfm:
                 sitk.WriteTransform(final_transform, os.path.join(output_dir, f"{id_}" + "_T2.tfm"))
-        except IOError as error:
-            print(f"Error with image {id_}: {error}")
+        except IOError as io_error:
+            print(f"Error with image {id_}: {io_error}")
+            with open("log_file.txt", "a", encoding="utf-8") as file:
+                file.write(f"Image is causing trouble: {img_path}\n Error: {io_error}\n")
+            continue
+        except RuntimeError as run_error:
+            with open("log_file.txt", "a", encoding="utf-8") as file:
+                file.write(f"Image is causing trouble: {img_path}\n Error: {run_error}\n")
+            continue
+
     count = index + 1
     print("Registered", count, "scans.")
+    print("Problematic IDs:", problematic_ids)
 
 
 def get_image_files(base_dir):
@@ -242,8 +238,48 @@ def get_image_files(base_dir):
     return image_files_
 
 
+def get_processed_files(output_dir):
+    """
+    Get a list of already processed files in the output directory.
+
+    Args:
+        output_dir (str): Directory where processed files are saved.
+
+    Returns:
+        set: A set of base names of processed files.
+    """
+    processed_files = set()
+    for filename in os.listdir(output_dir):
+        if filename.endswith("_0000.nii.gz"):
+            # Extract the base name without the suffix and file extension
+            base_name = filename.replace("_0000.nii.gz", "")
+            processed_files.add(base_name)
+
+    return processed_files
+
+
+def is_already_processed(img_path, processed_files):
+    """
+    Check if the input image file has already been processed.
+
+    Args:
+        img_path (str): Path to the input image file.
+        processed_files (set): Set of base names of already processed files.
+
+    Returns:
+        bool: True if the file has already been processed, False otherwise.
+    """
+    # Extract the base name of the file from the path
+    base_name = os.path.basename(img_path)
+    # Remove the extension from the base name
+    base_name = os.path.splitext(base_name)[0]
+
+    # Check if the base name is in the set of processed files
+    return base_name in processed_files
+
+
 if __name__ == "__main__":
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     # conditions
     REGISTRATION = preprocess_cfg.REGISTRATION

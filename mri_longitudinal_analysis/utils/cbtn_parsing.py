@@ -314,7 +314,7 @@ def get_resolution(file_path):
             # The voxel dimensions are usually in the header under 'pixdim'
             resolution = header.get_zooms()[:3]  # Get the first three dimensions (for 3D images)
 
-            if resolution:
+            if resolution and all(dim > 0 for dim in resolution):
                 return resolution
         except FileNotFoundError as e:
             print(f"Error loading file {file_path}: {e}")

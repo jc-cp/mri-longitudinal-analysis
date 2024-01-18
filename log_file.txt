@@ -1,0 +1,7 @@
+Image is causing trouble: /mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/1_no_comments/C883263_5813.nii.gz
+ Error: Exception thrown in SimpleITK ImageRegistrationMethod_Execute: /tmp/SimpleITK-build/ITK-prefix/include/ITK-5.3/itkSmoothingRecursiveGaussianImageFilter.hxx:214:
+ITK ERROR: SmoothingRecursiveGaussianImageFilter(0x9641b40): The number of pixels along dimension 2 is less than 4. This filter requires a minimum of four pixels along the dimension to be processed.
+Image is causing trouble: /mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/1_no_comments/C3557160_2096.nii.gz
+ Error: Exception thrown in SimpleITK N4BiasFieldCorrection: /tmp/SimpleITK-build/ITK-prefix/include/ITK-5.3/itkImageBase.hxx:77:
+ITK ERROR: Image(0x95fc5f0): Zero-valued spacing is not supported and may result in undefined behavior.
+Refusing to change spacing from [1, 1, 1] to [245.31, 245.31, 0]
