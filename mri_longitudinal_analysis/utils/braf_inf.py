@@ -8,7 +8,7 @@ import csv
 DIR = "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/accepted"
 
 # Prepare the CSV file
-CSV_NAME = "/home/jc053/GIT/mri_longitudinal_analysis/data/output/patients_scans.csv"
+CSV_NAME = "/home/jc053/GIT/mri_longitudinal_analysis/data/output/cbtn_patients_scans.csv"
 header = ["pat_id", "scandate", "label"]
 
 # Open the CSV file for writing

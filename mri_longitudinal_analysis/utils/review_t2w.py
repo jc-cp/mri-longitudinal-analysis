@@ -10,7 +10,7 @@ import shutil
 
 import nibabel as nib
 import pandas as pd
-from cfg import review_cfg
+from cfg.utils import review_t2w_cfg
 from tqdm import tqdm
 
 
@@ -19,7 +19,7 @@ class Review:
 
     def __init__(self):
         """Initialize the Review object by setting up the configuration."""
-        self.csv_file = review_cfg.CSV_FILE
+        self.csv_file = review_t2w_cfg.CSV_FILE
 
     def move_files(self, d_f, condition, source_dir, destination_folder):
         """
@@ -36,7 +36,7 @@ class Review:
             source_path = os.path.join(source_dir, filename)
             destination_path = os.path.join(destination_folder, filename)
             if os.path.isfile(source_path):
-                shutil.copyfile(source_path, destination_path)
+                shutil.move(source_path, destination_path)
             else:
                 print(f"File {source_path} does not exist.")
 
@@ -62,14 +62,14 @@ class Review:
             dict: Dictionary of created directory paths.
         """
         dirs = {
-            "reviewed_dir": review_cfg.__dict__["REVIEWED_FOLDER"],
-            "dir1_no_comments": review_cfg.__dict__["DIR1_NO_COMMENTS"],
-            "dir1_with_comments": review_cfg.__dict__["DIR1_WITH_COMMENTS"],
-            "dir5": review_cfg.__dict__["DIR5"],
+            "dir1": review_t2w_cfg.__dict__["DIR1"],
+            "dir2": review_t2w_cfg.__dict__["DIR2"],
+            "dir5": review_t2w_cfg.__dict__["DIR5"],
         }
         for dir_path in dirs.values():
             os.makedirs(dir_path, exist_ok=True)
-        dirs["csv_file_after_review"] = dirs["dir1_with_comments"] / "annotations.csv"
+
+        dirs["csv_file_after_review"] = dirs["dir2"] / "annotations.csv"
 
         print("All directories created!")
         return dirs
@@ -192,7 +192,7 @@ class Review:
         artifact_dir = directory / "Artifacts"
         os.makedirs(artifact_dir, exist_ok=True)
 
-        patients_with_artifacts = review_cfg.PATIENTS_WITH_ARTIFACTS
+        patients_with_artifacts = review_t2w_cfg.PATIENTS_WITH_ARTIFACTS
 
         for root, _, filenames in os.walk(directory):
             for patient in patients_with_artifacts:
@@ -221,18 +221,18 @@ class Review:
         dirs = self.create_review_dirs()
 
         # Detect files containing a t2 string in the modality folders
-        detecting = review_cfg.DETECTING
+        detecting = review_t2w_cfg.DETECTING
         if detecting:
-            data_folders = [review_cfg.DATA_FOLDER]  # Add folder here
-            output_detection_folders = [review_cfg.OUTPUT_DETECTTION]  # Add folder here
+            data_folders = [review_t2w_cfg.DATA_FOLDER]  # Add folder here
+            output_detection_folders = [review_t2w_cfg.OUTPUT_DETECTTION]  # Add folder here
             self.detect_t2(data_folders, output_detection_folders)
 
         # Moving files if needed for initial review
-        moving2review = review_cfg.MOVING_2_REVIEW
-        if moving2review:
-            source_dir = review_cfg.DATA_FOLDER_T2
-            dir1_no_comments = dirs["dir1_no_comments"]
-            dir1_with_comments = dirs["dir1_with_comments"]
+        moving_after_review = review_t2w_cfg.MOVING_AFTER_REVIEW
+        if moving_after_review:
+            source_dir = review_t2w_cfg.DATA_FOLDER
+            dir1 = dirs["dir1"]
+            dir2 = dirs["dir2"]
             dir5 = dirs["dir5"]
 
             # Move the files
@@ -241,20 +241,20 @@ class Review:
                     d_f,
                     (d_f["Quality"] == 1) & (d_f["Comments"].isnull()),
                     source_dir,
-                    dir1_no_comments,
+                    dir1,
                 )
                 self.move_files(
                     d_f,
-                    (d_f["Quality"] == 1) & (d_f["Comments"].notnull()),
+                    d_f["Quality"] == 2,
                     source_dir,
-                    dir1_with_comments,
+                    dir2,
                 )
                 self.move_files(d_f, d_f["Quality"] == 5, source_dir, dir5)
             except IOError as error:
                 print(error)
 
         # Moving files after radiologist review
-        moving4dataset = review_cfg.MOVING_4_DATASET
+        moving4dataset = review_t2w_cfg.MOVING_4_DATASET
         if moving4dataset:
             source_dir = dirs["dir1_with_comments"]
             dest_dir = dirs["dir1_no_comments"]
@@ -264,16 +264,16 @@ class Review:
             print("Moved images for full dataset!")
 
         # Moving files containing massive artifacts
-        delete_artifacts = review_cfg.DELETE_ARTIFACTS
+        delete_artifacts = review_t2w_cfg.DELETE_ARTIFACTS
         if delete_artifacts:
             print("Removing artifacts!")
-            for t2_dir in [review_cfg.DIR1_NO_COMMENTS]:  # Add folder here
+            for t2_dir in [review_t2w_cfg.DIR1_NO_COMMENTS]:  # Add folder here
                 self.remove_artifacts(t2_dir)
 
-        compare_ids = review_cfg.COMPARE_IDS
+        compare_ids = review_t2w_cfg.COMPARE_IDS
         if compare_ids:
             print("Comparing IDs!")
-            for t2_dir in [review_cfg.DIR1_NO_COMMENTS]:
+            for t2_dir in [review_t2w_cfg.DIR1]:
                 self.compare_ids_and_flag(t2_dir)
 
 
