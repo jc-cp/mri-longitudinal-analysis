@@ -4,10 +4,10 @@ from pathlib import Path
 
 # Directories
 SEG_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/accepted"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/accepted"
 )
 OUTPUT_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/output"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/output"
 )
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series_csv_kernel_smoothed"

@@ -149,6 +149,21 @@ CBTN_LOCATION = {
     "Other": "Other",
 }
 
+
+# BCH_GLIOMA_TYPES = {
+#     : "Astrocytoma",
+#     : "Ganglioglioma",
+#     : "Glial-neuronal",
+# }
+
+# CBTN_GLIOMA_TYPES = {
+#     : "Astrocytoma",
+#     : "Ganglioglioma",
+#     : "Glial-neuronal",
+# }
+
+
+# Mapping of BCH and CBTN columns
 BCH_DTYPE_MAPPING = {
     "BCH MRN": "string",
     "Location": "category",

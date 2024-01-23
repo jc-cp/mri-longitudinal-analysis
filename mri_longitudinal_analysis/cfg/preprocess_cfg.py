@@ -10,7 +10,7 @@ DATA_DIR = Path(
     "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event"
 )
 
-INPUT_DIR = DATA_DIR / "1_no_comments"
+INPUT_DIR = DATA_DIR / "after_review_before_pp"
 OUPUT_DIR = DATA_DIR / "output"
 
 REG_DIR = OUPUT_DIR / "T2W_registration"

@@ -4,7 +4,7 @@ Configuration file for parsing the pLGG CBTN dataset.
 from pathlib import Path
 
 
-CSV_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/redcap")
+CSV_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical")
 PATH_CLINICAL_CSV = CSV_DIR / "cbtn_filtered_and_pruned_513.csv"
 PATH_METADATA_CSV = CSV_DIR / "flywheel_file_metadata.csv"
 

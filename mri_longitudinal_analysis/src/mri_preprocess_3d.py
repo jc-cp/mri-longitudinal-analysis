@@ -88,9 +88,10 @@ def registration(
     random.shuffle(input_data)
 
     for index, img_path in enumerate(tqdm(input_data)):
-        id_ = os.path.splitext(img_path)[0]
-        if is_already_processed(img_path, processed_files):
-            print(f"Skipping already processed file: {img_path}")
+        id_ = os.path.basename(img_path)  # Get filename from the full path
+        id_ = id_.replace(".nii.gz", "")
+        if id_ in processed_files:
+            print(f"Skipping already processed file: {id_}")
             continue
 
         try:
@@ -170,12 +171,8 @@ def registration(
 
             # get the file names
             filename = os.path.basename(img_path)  # Get filename from the full path
-            filename_parts = os.path.splitext(filename)[0].split(
-                "_"
-            )  # Split filename without extension on underscores
-            patient_id = filename_parts[0]
-            scan_id = filename_parts[1]
-            new_filename = f"{patient_id}_{scan_id}_0000.nii.gz"
+            filename_without_ext = filename.replace(".nii.gz", "")
+            new_filename = f"{filename_without_ext}_0000.nii.gz"
             out_path = os.path.join(output_dir, new_filename)
             sitk.WriteImage(moving_img_resampled, out_path)
 
@@ -256,26 +253,6 @@ def get_processed_files(output_dir):
             processed_files.add(base_name)
 
     return processed_files
-
-
-def is_already_processed(img_path, processed_files):
-    """
-    Check if the input image file has already been processed.
-
-    Args:
-        img_path (str): Path to the input image file.
-        processed_files (set): Set of base names of already processed files.
-
-    Returns:
-        bool: True if the file has already been processed, False otherwise.
-    """
-    # Extract the base name of the file from the path
-    base_name = os.path.basename(img_path)
-    # Remove the extension from the base name
-    base_name = os.path.splitext(base_name)[0]
-
-    # Check if the base name is in the set of processed files
-    return base_name in processed_files
 
 
 if __name__ == "__main__":

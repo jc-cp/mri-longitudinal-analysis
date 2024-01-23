@@ -959,7 +959,6 @@ class TumorAnalysis:
         into progressors, stable or regressors.
         """
         patients_ids = data["Patient_ID"].unique()
-
         # Edit this to have other plots
         # column_name = "Volume Change"
         column_name = "Normalized Volume"
@@ -978,7 +977,6 @@ class TumorAnalysis:
             for patient_id in patients_ids
         }
         data["Classification"] = data["Patient_ID"].map(patient_classifications)
-
         # Save to original dataframe
         classifications_series = pd.Series(patient_classifications)
         self.pre_treatment_data["Patient Classification"] = (
@@ -994,7 +992,6 @@ class TumorAnalysis:
         """
         Descriptive statistics.
         """
-        print(self.pre_treatment_data.dtypes)
 
         # Age
         median_age = self.pre_treatment_data["Age"].median()
@@ -1025,8 +1022,7 @@ class TumorAnalysis:
 
         # Volume Change
         filtered_data = self.pre_treatment_data[self.pre_treatment_data["Volume Change"] != 0]
-        print(filtered_data["Volume Change"].describe())
-
+        # print(filtered_data["Volume Change"].describe())
         median_volume_change = filtered_data["Volume Change"].median()
         max_volume_change = filtered_data["Volume Change"].max()
         min_volume_change = filtered_data["Volume Change"].min()
@@ -1067,7 +1063,6 @@ class TumorAnalysis:
         median_follow_up_months = median_follow_up / average_days_per_month
         max_follow_up_months = max_follow_up / average_days_per_month
         min_follow_up_months = min_follow_up / average_days_per_month
-
         print(f"\t\tMedian Follow-Up Time: {median_follow_up_months:.2f} months")
         print(f"\t\tMaximum Follow-Up Time: {max_follow_up_months:.2f} months")
         print(f"\t\tMinimum Follow-Up Time: {min_follow_up_months:.2f} months")
@@ -1288,7 +1283,7 @@ class TumorAnalysis:
             # )
 
             # Last consistency check
-            consistency_check(self.pre_treatment_data)
+            # consistency_check(self.pre_treatment_data)
 
             step_idx += 1
 
