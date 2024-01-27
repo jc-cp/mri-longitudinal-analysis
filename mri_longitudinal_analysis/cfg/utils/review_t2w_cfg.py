@@ -6,7 +6,7 @@ from pathlib import Path
 
 # overall path(s) for reviewed T2 data
 DATA_FOLDER = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/new_review"
 )
 CSV_FILE = DATA_FOLDER / "annotations.csv"
 ####################################################################################################

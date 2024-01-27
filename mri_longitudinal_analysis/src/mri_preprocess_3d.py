@@ -8,7 +8,7 @@ import random
 import sys
 
 import SimpleITK as sitk
-from cfg import preprocess_cfg
+from cfg.src import preprocess_cfg
 from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))

@@ -9,7 +9,7 @@ from collections import defaultdict
 
 import nibabel as nib
 import numpy as np
-from cfg import qa_cfg
+from cfg.utils import qa_cfg
 from tqdm import tqdm
 
 
@@ -176,51 +176,51 @@ if qa_cfg.PART_1:
     # Dictionary to store matched pairs
     matched_pairs = {}
 
-    # Read and match images from both image folders
-    for folder in [qa_cfg.IMAGES_FOLDER_1, qa_cfg.IMAGES_FOLDER_2]:
-        for filename in os.listdir(folder):
-            if filename.endswith(".nii.gz"):
-                patient_id, scan_id = extract_ids(filename, image=True, mask=False)
-                matched_pairs[(patient_id, scan_id)] = [os.path.join(folder, filename), None]
+    # Read and match images
+    folder = qa_cfg.IMAGES_FOLDER
+    for filename in os.listdir(folder):
+        if filename.endswith(".nii.gz"):
+            patient_id, scan_id = extract_ids(filename, image=True, mask=False)
+            matched_pairs[(patient_id, scan_id)] = [os.path.join(folder, filename), None]
 
     print(f"Total matched pairs found: {len(matched_pairs)}")
 
-    # Match masks from both mask folders
-    for folder in [qa_cfg.MASKS_FOLDER_1, qa_cfg.MASKS_FOLDER_2]:
-        for filename in os.listdir(folder):
-            if filename.endswith(".nii.gz"):
-                patient_id, scan_id = extract_ids(filename, image=False, mask=True)
-                print(f"Mask file: {filename}, patient_id: {patient_id}, scan_id: {scan_id}")
-                if (patient_id, scan_id) in matched_pairs:
-                    matched_pairs[(patient_id, scan_id)][1] = os.path.join(folder, filename)
-                else:
-                    print(f"Unmatched mask file: {filename}")
+    # Match masks
+    folder = qa_cfg.MASKS_FOLDER
+    for filename in os.listdir(folder):
+        if filename.endswith(".nii.gz"):
+            patient_id, scan_id = extract_ids(filename, image=False, mask=True)
+            print(f"Mask file: {filename}, patient_id: {patient_id}, scan_id: {scan_id}")
+            if (patient_id, scan_id) in matched_pairs:
+                matched_pairs[(patient_id, scan_id)][1] = os.path.join(folder, filename)
+            else:
+                print(f"Unmatched mask file: {filename}")
 
     matched_count = sum(1 for _, v in matched_pairs.items() if v[1] is not None)
     print(f"Total matched pairs found: {matched_count}")
 
     # Copy and rename the files
-    counter = 1
+    COUNTER = 1
     for (patient_id, scan_id), (image_path, mask_path) in tqdm(
         matched_pairs.items(), desc="Processing files"
     ):
         if (mask_path and image_path) is not None:
             image_target = os.path.join(
-                qa_cfg.TARGET_FOLDER, f"image{counter}_{patient_id}_{scan_id}.nii.gz"
+                qa_cfg.TARGET_FOLDER, f"image{COUNTER}_{patient_id}_{scan_id}.nii.gz"
             )
             mask_target = os.path.join(
-                qa_cfg.TARGET_FOLDER, f"image{counter}_{patient_id}_{scan_id}_mask.nii.gz"
+                qa_cfg.TARGET_FOLDER, f"image{COUNTER}_{patient_id}_{scan_id}_mask.nii.gz"
             )
             shutil.copyfile(image_path, image_target)
             shutil.copyfile(mask_path, mask_target)
-            counter += 1
+            COUNTER += 1
         else:
             print(
                 f"Missing pair for patient_id={patient_id}, scan_id={scan_id}:"
                 f" image_path={image_path}, mask_path={mask_path}"
             )
 
-    print(f"Processed {counter - 1} image-mask pairs.")
+    print(f"Processed {COUNTER - 1} image-mask pairs.")
 
 if qa_cfg.PART_2:
     image_directory = qa_cfg.TARGET_FOLDER
