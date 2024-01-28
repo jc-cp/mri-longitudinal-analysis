@@ -2,42 +2,36 @@
 
 from pathlib import Path
 
-# Directories
+# Directories and files
 SEG_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/accepted"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/qa"
 )
 OUTPUT_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/output"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/output"
 )
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series_csv_kernel_smoothed"
-
-# Individual files
-REDCAP_FILE = Path(
-    "/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_108_cohort.csv"
-)
-
-CLINICAL_DATA_FILE = Path(
-    "/home/jc053/GIT/mri_longitudinal_analysis/data/output/correlation_stats/pre-treatment_dl_features.csv"
-)
-
-FEW_SCANS_FILE = OUTPUT_DIR / "patients_with_few_scans.txt"
 ZERO_VOLUME_FILE = OUTPUT_DIR / "zero_volume_segmentations.txt"
-NUMBER_TOTAL_PATIENTS = 108
+FEW_SCANS_FILE = OUTPUT_DIR / "few_scans_patients.txt"
 
-# Options for creating the plots
-LIMIT_LOADING = 108
+# Clinical data files
+CLINICAL_DATA_FILE = Path(
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/cbtn_filtered_and_pruned_513.csv"
+)
+# If test data is being used or not
+TEST_DATA = False
+BCH_DATA = False
+CBTN_DATA = True
+NUMBER_TOTAL_CBTN_PATIENTS = 115
+NUMBER_TOTAL_BCH_PATIENTS = 85
 
 RAW = True
 FILTERED = True
-POLY_SMOOTHING = True
-KERNEL_SMOOTHING = True
-WINDOW_SMOOTHING = True
+POLY_SMOOTHING = False
+KERNEL_SMOOTHING = False
+WINDOW_SMOOTHING = False
 BANDWIDTH = 200
 PLOT_COMPARISON = True
-
-# If test data is being used or not
-TEST_DATA = False
 
 # Other options
 NORMALIZE = False
