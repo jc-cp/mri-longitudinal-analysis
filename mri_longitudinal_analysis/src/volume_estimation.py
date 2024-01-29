@@ -100,10 +100,11 @@ class VolumeEstimator:
                 ), "Warning: The length of the filtered dataset is not 115. Check the csv again."
 
                 self.clinical_data = final_clinical_data
-                self.use_age = True
 
             if volume_est_cfg.BCH_DATA:
-                clinical_data["BCH MRN"] = clinical_data["BCH MRN"].astype(str)
+                clinical_data["BCH MRN"] = (
+                    clinical_data["BCH MRN"].astype(str).apply(prefix_zeros_to_six_digit_ids)
+                )
                 final_clinical_data = clinical_data[
                     clinical_data["BCH MRN"].isin(identifiers_in_dir)
                 ]
@@ -123,7 +124,6 @@ class VolumeEstimator:
                     clinical_data["Date of Birth"], format="%d/%m/%Y"
                 )
                 self.clinical_data = final_clinical_data
-                self.use_age = False
 
     @staticmethod
     def estimate_volume(segmentation_path):
@@ -227,26 +227,22 @@ class VolumeEstimator:
         # Additional logic to process and store other states of data
         # (poly-smoothed, kernel-smoothed, window-smoothed)
         if volume_est_cfg.POLY_SMOOTHING:
-            self.poly_smoothing_data = self.apply_polysmoothing(use_age=self.use_age)
+            self.poly_smoothing_data = self.apply_polysmoothing()
             self.data_sources["poly_smoothing"] = self.poly_smoothing_data
             print("\tAdded polynomial smoothing data!")
         if volume_est_cfg.KERNEL_SMOOTHING:
             self.kernel_smoothing_data = self.apply_kernel_smoothing(
-                use_age=self.use_age, bandwidth=volume_est_cfg.BANDWIDTH
+                bandwidth=volume_est_cfg.BANDWIDTH
             )
             self.data_sources["kernel_smoothing"] = self.kernel_smoothing_data
             print("\tAdded kernel smoothing data!")
         if volume_est_cfg.WINDOW_SMOOTHING:
-            self.window_smoothing_data = self.apply_sliding_window_interpolation(
-                use_age=self.use_age
-            )
+            self.window_smoothing_data = self.apply_sliding_window_interpolation()
             self.data_sources["window_smoothing"] = self.window_smoothing_data
             print("\tAdded sliding window smoothing data!")
 
         # Additionally, process the volume rate data
-        self.volume_growth_rate = self.calculate_volume_growth_rate(
-            self.filtered_data, use_age=self.use_age
-        )
+        self.volume_growth_rate = self.calculate_volume_growth_rate(self.filtered_data)
         print("\tAdded volume rate data!")
 
     def process_scans(self, all_scans) -> defaultdict(list):
@@ -269,8 +265,9 @@ class VolumeEstimator:
                 for _, volume, scan_id in scans:
                     date = datetime.strptime(scan_id, "%Y%m%d")
                     dob = self.clinical_data.loc[
-                        self.clinical_data["BCH MRN"] == int(patient_id), "Date of Birth"
+                        self.clinical_data["BCH MRN"] == patient_id, "Date of Birth"
                     ].iloc[0]
+                    dob = datetime.strptime(dob, "%d/%m/%Y")  # Adjust format if necessary
                     age = (date - dob).days
                     scan_dict[patient_id].append((date, volume, age))
 
@@ -287,7 +284,7 @@ class VolumeEstimator:
 
         return scan_dict
 
-    def apply_filtering(self, all_scans, zero_volume_scans) -> defaultdict(list):
+    def apply_filtering(self, all_scans, zero_volume_scans, minimum_days=365) -> defaultdict(list):
         """
         Applies filtering to exclude scans with less than a certain number of points.
 
@@ -303,6 +300,7 @@ class VolumeEstimator:
         # Counters for patients with too few scans and such scans
         total_patients_with_few_scans = 0
         total_zero_volume_scans = 0
+        total_patients_with_short_follow_up = 0
         total_scans_few_scans = 0
         total_scans_removed = 0
         few_scans_file_path = volume_est_cfg.FEW_SCANS_FILE
@@ -323,7 +321,14 @@ class VolumeEstimator:
         with open(few_scans_file_path, "w", encoding="utf-8") as file:
             for patient_id, scans in all_scans.items():
                 if len(scans) >= 3:
-                    filtered_data[patient_id] = scans
+                    # Sort scans by age to calculate the age range
+                    sorted_scans = sorted(scans, key=lambda x: x[-1])
+                    age_range = int(sorted_scans[-1][-1]) - int(sorted_scans[0][-1])
+                    if age_range >= minimum_days:
+                        filtered_data[patient_id] = scans
+                    else:
+                        total_patients_with_short_follow_up += 1
+                        total_scans_removed += len(scans)
                 else:
                     total_patients_with_few_scans += 1  # Increment the patient counter
                     total_scans_few_scans += len(scans)  # Increment the scan counter
@@ -332,13 +337,16 @@ class VolumeEstimator:
                     for _, _, scan_id in scans:
                         file.write(f"---- {scan_id}\n")
             file.write(f"\nTotal patients with too few scans: {total_patients_with_few_scans}\n")
+            file.write(
+                "Total patients with short follow-up period:"
+                f" {total_patients_with_short_follow_up}\n"
+            )
             file.write(f"Total scans with too few scans: {total_scans_few_scans}\n")
             file.write(f"Total scans removed: {total_scans_removed}\n")
         return filtered_data
 
     def apply_polysmoothing(
         self,
-        use_age=False,
         poly_degree=3,
     ):
         """
@@ -356,31 +364,29 @@ class VolumeEstimator:
             num_points = 25  # Number of points for interpolation
             scans.sort(key=lambda x: x[-1])  # Sort by age
 
-            if use_age:
+            if volume_est_cfg.CBTN_DATA:
                 volumes, ages = zip(*scans)
-                age_numbers = [float(age) for age in ages]
-                poly_coeff = np.polyfit(age_numbers, volumes, poly_degree)
-                poly_interp = np.poly1d(poly_coeff)
-                smoothed_volumes = poly_interp(age_numbers)
-                polysmoothed_data[patient_id] = list(zip(smoothed_volumes, ages))
-
             else:
-                dates, volumes, ages = zip(*[(date, volume, age) for date, volume, age in scans])
-                date_numbers = mdates.date2num(dates)
-                poly_coeff = np.polyfit(date_numbers, volumes, poly_degree)
-                poly_interp = np.poly1d(poly_coeff)
+                dates, volumes, ages = zip(*scans)
 
-                start = min(dates)
-                end = max(dates)
-                interpolated_dates = np.linspace(start, end, num_points)
-                smoothed_volumes = poly_interp(interpolated_dates)
-                smoothed_volumes = np.maximum(smoothed_volumes, 0)
+            age_numbers = [float(age) for age in ages]
+            poly_coeff = np.polyfit(age_numbers, volumes, poly_degree)
+            poly_interp = np.poly1d(poly_coeff)
 
+            start = min(age_numbers)
+            end = max(age_numbers)
+            interpolated_ages = np.linspace(start, end, num_points)
+            smoothed_volumes = poly_interp(interpolated_ages)
+            smoothed_volumes = np.maximum(smoothed_volumes, 0)
+
+            if volume_est_cfg.CBTN_DATA:
+                polysmoothed_data[patient_id] = list(zip(smoothed_volumes, ages))
+            else:
                 polysmoothed_data[patient_id] = list(zip(dates, smoothed_volumes, ages))
 
         return polysmoothed_data
 
-    def apply_kernel_smoothing(self, use_age=False, bandwidth=None):
+    def apply_kernel_smoothing(self, bandwidth=None):
         """
         Applies kernel smoothing to the volume data.
 
@@ -393,7 +399,7 @@ class VolumeEstimator:
         kernelsmoothed_data = defaultdict(list)
 
         if bandwidth is None:
-            if use_age:
+            if volume_est_cfg.CBTN_DATA:
                 # Extract volumes from (volume, age) structure
                 all_volumes = [
                     volume for scans in self.filtered_data.values() for volume, _ in scans
@@ -412,13 +418,16 @@ class VolumeEstimator:
 
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[-1])  # Sort by age
-            if use_age:
+            if volume_est_cfg.CBTN_DATA:
                 volumes, ages = zip(*scans)
-                age_numbers = [float(age) for age in ages]
+            else:
+                dates, volumes, ages = zip(*scans)
 
-                smoothed_volumes = np.zeros(len(volumes))
+            age_numbers = [float(age) for age in ages]
+            smoothed_volumes = np.zeros(len(volumes))
 
-                # Apply kernel smoothing to volumes based on age
+            # Apply kernel smoothing to volumes based on age
+            if volume_est_cfg.CBTN_DATA:
                 for i, (age, _) in enumerate(scans):
                     weights = np.array(
                         [gaussian_kernel(age, age_i, bandwidth) for age_i in age_numbers]
@@ -429,21 +438,10 @@ class VolumeEstimator:
                         smoothed_volumes[i] = np.sum(weights * volumes)
                     else:
                         smoothed_volumes[i] = volumes[i]
-
-                # Store smoothed data
-                kernelsmoothed_data[patient_id] = [
-                    (age, smoothed_vol) for age, smoothed_vol in zip(smoothed_volumes, ages)
-                ]
-
             else:
-                dates, volumes, ages = zip(*scans)
-                num_dates = mdates.date2num(dates)
-                smoothed_volumes = np.zeros(len(volumes))
-
-                # Apply kernel smoothing to volumes and ages
-                for i, date in enumerate(num_dates):
+                for i, (_, _, age) in enumerate(scans):
                     weights = np.array(
-                        [gaussian_kernel(date, date_i, bandwidth) for date_i in num_dates]
+                        [gaussian_kernel(age, age_i, bandwidth) for age_i in age_numbers]
                     )
                     weights_sum = np.sum(weights)
                     if weights_sum > 0:
@@ -452,14 +450,14 @@ class VolumeEstimator:
                     else:
                         smoothed_volumes[i] = volumes[i]
 
-                # Store smoothed data
-                kernelsmoothed_data[patient_id] = [
-                    (mdates.num2date(date), smoothed_vol, age)
-                    for date, smoothed_vol, age in zip(dates, smoothed_volumes, ages)
-                ]
+            if volume_est_cfg.CBTN_DATA:
+                kernelsmoothed_data[patient_id] = list(zip(smoothed_volumes, ages))
+            else:
+                kernelsmoothed_data[patient_id] = list(zip(dates, smoothed_volumes, ages))
+
         return kernelsmoothed_data
 
-    def apply_sliding_window_interpolation(self, use_age=False, window_size=3):
+    def apply_sliding_window_interpolation(self, window_size=3):
         """
         Apply sliding window interpolation to smooth volumetric data of patients.
 
@@ -484,7 +482,7 @@ class VolumeEstimator:
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[-1])  # Sort by age
 
-            if use_age:
+            if volume_est_cfg.CBTN_DATA:
                 volumes, ages = zip(*scans)
             else:
                 # BCH data: (date, volume, age)
@@ -498,7 +496,7 @@ class VolumeEstimator:
                 weights = np.ones(len(window_volumes)) / len(window_volumes)
                 weighted_vol = weighted_median(window_volumes, weights)
 
-                if use_age:
+                if volume_est_cfg.CBTN_DATA:
                     interpolated_data[patient_id].append((weighted_vol, ages[i]))
                 else:
                     interpolated_data[patient_id].append((dates[i], weighted_vol, ages[i]))
@@ -538,7 +536,7 @@ class VolumeEstimator:
         # Calculate mean and standard deviation
         print(f"\t95% CI for volume growth rate: {lower:.2f}, {upper:.2f}")
 
-    def calculate_volume_growth_rate(self, scans, use_age=False) -> defaultdict(list):
+    def calculate_volume_growth_rate(self, scans) -> defaultdict(list):
         """
         Calculates the rate of volume change (normalized by time span) for each patient.
 
@@ -554,24 +552,40 @@ class VolumeEstimator:
             if volume_est_cfg.BCH_DATA:
                 patient_id = prefix_zeros_to_six_digit_ids(patient_id)
 
-            sorted_scans = sorted(patient_scans, key=lambda x: x[0] if not use_age else x[-1])
+            sorted_scans = sorted(patient_scans, key=lambda x: x[-1])
             prev_volume = None
             prev_time_point = None
 
-            for volume, time_point in sorted_scans:
-                if prev_time_point is not None:
-                    days_diff = float(time_point) - float(prev_time_point)
+            if volume_est_cfg.CBTN_DATA:
+                for volume, time_point in sorted_scans:
+                    if prev_time_point is not None:
+                        days_diff = float(time_point) - float(prev_time_point)
 
-                    volume_rate_of_change = (
-                        (volume - prev_volume) / days_diff if days_diff != 0 else 0
-                    )
-                else:
-                    volume_rate_of_change = None  # or you can set it to 0 if you prefer
+                        volume_rate_of_change = (
+                            (volume - prev_volume) / days_diff if days_diff != 0 else 0
+                        )
+                    else:
+                        volume_rate_of_change = None
 
-                prev_volume = volume
-                prev_time_point = time_point
+                    prev_volume = volume
+                    prev_time_point = time_point
 
-                rate_of_change_dict[patient_id].append((time_point, volume_rate_of_change))
+                    rate_of_change_dict[patient_id].append((time_point, volume_rate_of_change))
+            else:
+                for _, volume, time_point in sorted_scans:
+                    if prev_time_point is not None:
+                        days_diff = float(time_point) - float(prev_time_point)
+
+                        volume_rate_of_change = (
+                            (volume - prev_volume) / days_diff if days_diff != 0 else 0
+                        )
+                    else:
+                        volume_rate_of_change = None
+
+                    prev_volume = volume
+                    prev_time_point = time_point
+
+                    rate_of_change_dict[patient_id].append((time_point, volume_rate_of_change))
 
         return rate_of_change_dict
 
@@ -731,7 +745,7 @@ class VolumeEstimator:
             date_labels = [
                 date.strftime("%d/%m/%Y") if isinstance(date, datetime) else date for date in dates
             ]
-            a_x2.set_xticklabels(date_labels)
+            a_x2.set_xticklabels(date_labels, rotation=90)
             a_x2.xaxis.set_tick_params(labelsize=8)
 
     def plot_volumes(self, output_path):
@@ -743,10 +757,10 @@ class VolumeEstimator:
         """
         for data_type, data in self.data_sources.items():
             if getattr(volume_est_cfg, data_type.upper(), None):
-                self.plot_each_type(data, output_path, data_type, use_age=self.use_age)
+                self.plot_each_type(data, output_path, data_type)
                 print(f"\tPlotted {data_type} data!")
 
-    def plot_each_type(self, data, output_path, data_type, use_age=False):
+    def plot_each_type(self, data, output_path, data_type):
         """
         Plots the volumes data for a specific data type.
 
@@ -757,7 +771,7 @@ class VolumeEstimator:
         """
         os.makedirs(output_path, exist_ok=True)
         for patient_id, volumes_data in data.items():
-            if use_age:
+            if volume_est_cfg.CBTN_DATA:
                 # CBTN data: (volume, age)
                 volumes_data.sort(key=lambda x: x[-1])  # sort by age
                 volumes, ages = zip(*volumes_data)
@@ -808,12 +822,13 @@ class VolumeEstimator:
         fig, a_x1 = self.setup_plot_base(normalize=False)
 
         if has_dates:
+            dates, volumes, ages = zip(*sorted(zip(dates, volumes, ages)))
             a_x1.plot(ages, volumes, color="tab:blue", marker="o")
             self.add_volume_change_to_plot(a_x1, ages, volumes)
             self.add_date_to_plot(a_x1, dates, ages)
 
         else:
-            ages, volumes = zip(*sorted(zip(ages, volumes)))
+            volumes, ages = zip(*sorted(zip(volumes, ages)))
             a_x1.plot(ages, volumes, color="tab:blue", marker="o")
             self.add_volume_change_to_plot(a_x1, ages, volumes)
 
@@ -846,13 +861,14 @@ class VolumeEstimator:
 
         # Plot data
         if has_dates:
+            dates, normalized_volumes, ages = zip(*sorted(zip(dates, normalized_volumes, ages)))
             ax1.plot(ages, normalized_volumes, color="tab:blue", marker="o", linestyle="-")
-            self.add_volume_change_to_plot(ax1, dates, normalized_volumes)
+            self.add_volume_change_to_plot(ax1, ages, normalized_volumes)
             self.add_date_to_plot(ax1, dates, ages)
 
         else:
             # Handle CBTN data without dates
-            ages, _ = zip(*sorted(zip(ages, normalized_volumes)))
+            normalized_volumes, ages = zip(*sorted(zip(normalized_volumes, ages)))
             ax1.plot(ages, normalized_volumes, color="tab:blue", marker="o", linestyle="-")
             self.add_volume_change_to_plot(ax1, ages, normalized_volumes)
 
