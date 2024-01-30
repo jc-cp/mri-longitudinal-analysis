@@ -12,13 +12,12 @@ from collections import defaultdict
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
 
-import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 
-from cfg import volume_est_cfg
+from cfg.src import volume_est_cfg
 from utils.helper_functions import (
     gaussian_kernel,
     weighted_median,
@@ -591,7 +590,7 @@ class VolumeEstimator:
 
     def generate_csv(self, output_folder):
         """
-        Generate a CSV file for each patient containing their time series volume data.
+        Generate a CSV file for each patient containing their time series volume data using pandas.
 
         Args:
             output_folder (str): Path to the directory where CSV files should be saved.
@@ -603,18 +602,54 @@ class VolumeEstimator:
         for patient_id, volume_data in self.kernel_smoothing_data.items():
             csv_file_path = os.path.join(output_folder, f"{patient_id}.csv")
 
-            # Calculate average and standard deviation of volume growth
-            volume_growths = []
-            for i in range(1, len(volume_data)):
-                prev_vol = volume_data[i - 1][1]
-                curr_vol = volume_data[i][1]
-                volume_growths.append(curr_vol - prev_vol)
-            volume_growth_avg = np.mean(volume_growths) if volume_growths else 0
-            volume_growth_std = np.std(volume_growths) if volume_growths else 0
+            # Creating DataFrame from volume data
+            df_columns = (
+                ["Date", "Volume", "Age"] if not volume_est_cfg.CBTN_DATA else ["Volume", "Age"]
+            )
+            df = pd.DataFrame(volume_data, columns=df_columns)
 
-            with open(csv_file_path, "w", newline="", encoding="utf-8") as csvfile:
-                csv_writer = csv.writer(csvfile)
-                header = [
+            # Calculate baseline volume
+            initial_volume = df["Volume"].iloc[0] if not df.empty else None
+            df["Baseline Volume"] = initial_volume
+
+            # Sorting by Age or Date
+            sort_column = "Age" if not volume_est_cfg.TEST_DATA else "Date"
+            df.sort_values(by=sort_column)
+
+            # Calculate additional columns
+            df["Normalized Volume"] = df["Volume"] / initial_volume if initial_volume else 0
+            df["Volume Growth[%]"] = df["Volume"].diff()
+            df["Volume Growth[%] Rate"] = df["Age"].map(
+                lambda age, pid=patient_id: next(
+                    (x[1] for x in self.volume_growth_rate[pid] if x[0] == age), None
+                )
+            )
+            df["Volume Growth[%] Avg"] = df["Volume Growth[%]"].mean()
+            df["Volume Growth[%] Std"] = df["Volume Growth[%]"].std()
+
+            if not volume_est_cfg.TEST_DATA:
+                df["Days Between Scans"] = df["Age"].diff()
+                if volume_est_cfg.CBTN_DATA:
+                    df["Date"] = "N/A"
+                else:
+                    df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d/%m/%Y")
+
+            # Reordering columns based on data type
+            columns_order = (
+                [
+                    "Date",
+                    "Age",
+                    "Days Between Scans",
+                    "Volume",
+                    "Normalized Volume",
+                    "Baseline Volume",
+                    "Volume Growth[%]",
+                    "Volume Growth[%] Rate",
+                    "Volume Growth[%] Avg",
+                    "Volume Growth[%] Std",
+                ]
+                if not volume_est_cfg.TEST_DATA
+                else [
                     "Date",
                     "Volume",
                     "Normalized Volume",
@@ -624,62 +659,11 @@ class VolumeEstimator:
                     "Volume Growth[%] Avg",
                     "Volume Growth[%] Std",
                 ]
+            )
+            df = df[columns_order]
 
-                # Adjust header based on data type
-                if not volume_est_cfg.TEST_DATA:
-                    header.insert(1, "Age")
-                    header.insert(2, "Days Between Scans")
-
-                csv_writer.writerow(header)
-
-                if not volume_est_cfg.TEST_DATA:
-                    sorted_volume_data = sorted(volume_data, key=lambda x: x[1])
-                    initial_volume = sorted_volume_data[0][1] if sorted_volume_data else None
-                else:
-                    sorted_volume_data = sorted(volume_data, key=lambda x: x[0])
-                    initial_volume = sorted_volume_data[0][1] if sorted_volume_data else None
-
-                previous_volume = None
-                previous_age = None
-
-                for entry in sorted_volume_data:
-                    if volume_est_cfg.CBTN_DATA:
-                        date_str = "N/A"
-                        volume, age = entry
-                    else:
-                        date, volume, age = entry
-                        date_str = date.strftime("%d/%m/%Y")
-
-                    normalized_volume = volume / initial_volume if initial_volume else 0
-                    volume_growth = (
-                        self.calculate_volume_change(previous_volume, volume)
-                        if previous_volume is not None
-                        else 0
-                    )
-                    volume_growth_rate = next(
-                        (x[1] for x in self.volume_growth_rate[patient_id] if x[0] == age),
-                        None,
-                    )
-
-                    row = [
-                        date_str,
-                        volume,
-                        normalized_volume,
-                        initial_volume,
-                        volume_growth,
-                        volume_growth_rate,
-                        volume_growth_avg,
-                        volume_growth_std,
-                    ]
-
-                    if not volume_est_cfg.TEST_DATA:
-                        days_since_last = (age - previous_age) if previous_age is not None else 0
-                        row.insert(1, age)
-                        row.insert(2, days_since_last)
-
-                    csv_writer.writerow(row)
-                    previous_volume = volume
-                    previous_age = age
+            # Export to CSV
+            df.to_csv(csv_file_path, index=False)
 
     ############################
     # Plotting-related methods #
@@ -771,9 +755,10 @@ class VolumeEstimator:
         """
         os.makedirs(output_path, exist_ok=True)
         for patient_id, volumes_data in data.items():
+            volumes_data.sort(key=lambda x: x[-1])  # sort by age
+
             if volume_est_cfg.CBTN_DATA:
                 # CBTN data: (volume, age)
-                volumes_data.sort(key=lambda x: x[-1])  # sort by age
                 volumes, ages = zip(*volumes_data)
                 self.plot_data(
                     data_type,
@@ -795,7 +780,6 @@ class VolumeEstimator:
                 )
             else:
                 # BCH data: (date, volume, age)
-                volumes_data.sort(key=lambda x: x[0])  # sort by date
                 dates, volumes, ages = zip(*volumes_data)
                 self.plot_data(
                     data_type, output_path, patient_id, dates, volumes, ages, has_dates=True
