@@ -1,17 +1,17 @@
 """Config file for the correlation analysis script."""
 from pathlib import Path
 
-CLINICAL_CSV_BCH = Path(
-    "/home/jc053/GIT/mri_longitudinal_analysis/data/redcap/redcap_full_108_cohort.csv"
+CLINICAL_CSV = Path(
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/bch_filtered_88.csv"
 )
 
-VOLUMES_CSV_BCH = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/output/time_series_csv_kernel_smoothed"
+VOLUMES_CSV = Path(
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/new_review/output/time_series_csv_kernel_smoothed"
 )
 
 OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output")
-OUTPUT_DIR_CORRELATIONS_BCH = OUTPUT_DIR / "correlation_plots_bch"
-OUTPUT_DIR_STATS_BCH = OUTPUT_DIR / "correlation_stats_bch"
+OUTPUT_DIR_CORRELATIONS = OUTPUT_DIR / "correlation_plots_bch"
+OUTPUT_DIR_STATS = OUTPUT_DIR / "correlation_stats_bch"
 
 EXCLUSION_LIST_PATH = Path(
     "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/output/patients_with_few_scans.txt"
@@ -22,7 +22,7 @@ CORRELATION_PRE_TREATMENT = "spearman"
 CORRELATION_POST_TREATMENT = "spearman"
 
 # Step 0
-SEPARATION = True
+SEPARATION = False
 
 # Step 1
 SENSITIVITY = False
@@ -40,13 +40,11 @@ PROGRESSION_THRESHOLD = 10  # angle value that defines progression
 HIGH_RISK_THRESHOLD = 25  # angle value that defines high increase
 STABILITY_THRESHOLD = 2  # angle value that defines stability
 
-SAMPLE_SIZE = 108  # for plotting growth trajectories, usually number of patients in cohort
+SAMPLE_SIZE = 79  # for plotting growth trajectories, usually number of patients in cohort
 
 VOLUME_WEIGHT = 0.25
 GROWTH_WEIGHT = 0.75
 CHANGE_THRESHOLD = 25  # % volume change threshold for stability index
-
-ANALYSIS_POST_TREATMENT = False
 
 
 # Step 4
@@ -170,14 +168,17 @@ BCH_DTYPE_MAPPING = {
     "Symptoms": "category",
     "Sex": "category",
     "Race": "category",
-    "Mutations": "category",
+    "BRAF Status": "category",
     "Treatment Type": "category",
     "Tumor Progression": "category",
+    "Received Treatment": "category",
+    "Follow-up Time": "int",
+    "Time to Treatment": "int",
 }
 
 BCH_DATETIME_COLUMNS = [
     "Date First Diagnosis",
+    "Date First Treatment",
     "Date First Progression",
     "Date of last clinical follow-up",
-    "Follow-up Time",
 ]

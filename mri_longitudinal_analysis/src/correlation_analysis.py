@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import numpy as np
-from cfg import correlation_cfg
+from cfg.src import correlation_cfg
 from lifelines import KaplanMeierFitter
 from utils.helper_functions import (
     bonferroni_correction,
@@ -37,7 +37,6 @@ from utils.helper_functions import (
     plot_individual_trajectories,
     calculate_percentage_change,
     visualize_tumor_stability,
-    read_exclusion_list,
     consistency_check,
 )
 
@@ -46,6 +45,10 @@ class TumorAnalysis:
     """
     A class to perform tumor analysis using clinical and volumetric data.
     """
+
+    ##################################
+    # DATA LOADING AND PREPROCESSING #
+    ##################################
 
     def __init__(self, clinical_data_path, volumes_data_paths, cohort):
         """
@@ -59,7 +62,7 @@ class TumorAnalysis:
         self.merged_data = pd.DataFrame()
         self.clinical_data_reduced = pd.DataFrame()
         self.post_treatment_data = pd.DataFrame()
-        self.pre_treatment_data = pd.DataFrame()
+        self.merged_data = pd.DataFrame()
         self.p_values = []
         self.coef_values = []
         self.progression_threshold = correlation_cfg.PROGRESSION_THRESHOLD
@@ -68,13 +71,16 @@ class TumorAnalysis:
         self.angle = correlation_cfg.ANGLE
         self.caliper = correlation_cfg.CALIPER
         self.sample_size_plots = correlation_cfg.SAMPLE_SIZE
-        self.exclusion_list_path = correlation_cfg.EXCLUSION_LIST_PATH
         self.cohort = cohort
         print("Step 0: Initializing TumorAnalysis class...")
 
         self.validate_files(clinical_data_path, volumes_data_paths)
-        self.load_clinical_data(clinical_data_path)
-        self.load_volumes_data(volumes_data_paths)
+        patient_ids_volumes = self.load_volumes_data(volumes_data_paths)
+
+        if self.cohort == "BCH":
+            self.load_clinical_data_bch(clinical_data_path, patient_ids_volumes)
+        else:
+            self.load_clinical_data_cbtn(clinical_data_path, patient_ids_volumes)
         self.merge_data()
         self.aggregate_summary_statistics()
 
@@ -98,7 +104,7 @@ class TumorAnalysis:
             raise FileNotFoundError(f"The following files could not be found: {missing_files}")
         print("\tValidated files.")
 
-    def map_dictionary(self, dictionary, column, type):
+    def map_dictionary(self, dictionary, column, map_type):
         """
         Maps given instance according to predefined dictionary.
         """
@@ -107,14 +113,14 @@ class TumorAnalysis:
             for keyword, value in dictionary.items():
                 if keyword.lower() in str(cell).casefold():
                     return value
-            if type == "location":
+            if map_type == "location":
                 return "Other"
-            if type == "symptoms":
+            if map_type == "symptoms":
                 return "No symptoms (incident finding)"
 
         return column.apply(map_value)
 
-    def load_clinical_data(self, clinical_data_path):
+    def load_clinical_data_bch(self, clinical_data_path, patient_ids_volumes):
         """
         Load clinical data from a CSV file, parse the clinical data to
         categorize diagnosesand other relevant fields to reduce the data for analysis.
@@ -126,18 +132,20 @@ class TumorAnalysis:
         The function updates the `self.clinical_data` attribute with processed data.
         """
         self.clinical_data = pd.read_csv(clinical_data_path)
+        print(f"\tOriginal clinical data has length {len(self.clinical_data)}.")
 
-        self.clinical_data["Treatment Type"] = self.extract_treatment_types()
         self.clinical_data["BCH MRN"] = zero_fill(self.clinical_data["BCH MRN"], 7)
 
         self.clinical_data["Location"] = self.map_dictionary(
-            correlation_cfg.BCH_LOCATION, self.clinical_data["Location of Tumor"], type="location"
+            correlation_cfg.BCH_LOCATION,
+            self.clinical_data["Location of Tumor"],
+            map_type="location",
         )
 
         self.clinical_data["Symptoms"] = self.map_dictionary(
             correlation_cfg.BCH_SYMPTOMS,
             self.clinical_data["Symptoms at diagnosis"],
-            type="symptoms",
+            map_type="symptoms",
         )
 
         self.clinical_data["Sex"] = self.clinical_data["Sex"].apply(
@@ -145,16 +153,14 @@ class TumorAnalysis:
         )
         self.clinical_data["Race"] = self.clinical_data["Race/Ethnicity"]
         self.clinical_data["Race"] = self.clinical_data["Race"].apply(process_race_ethnicity)
-        self.clinical_data["Mutations"] = self.clinical_data.apply(
-            lambda row: "Yes"
+        self.clinical_data["BRAF Status"] = self.clinical_data.apply(
+            lambda row: "V600E"
             if row["BRAF V600E mutation"] == "Yes"
-            or row["BRAF fusion"] == "Yes"
-            or row["FGFR fusion"] == "Yes"
-            else "No",
+            else ("Fusion" if row["BRAF fusion"] == "Yes" else "Wildtype"),
             axis=1,
         )
         self.clinical_data["Date First Diagnosis"] = pd.to_datetime(
-            self.clinical_data["Date of MRI diagnosis"], dayfirst=True
+            self.clinical_data["MRI Date"], dayfirst=True
         )
         self.clinical_data["Date of last clinical follow-up"] = pd.to_datetime(
             self.clinical_data["Date of last clinical follow-up"], dayfirst=True
@@ -162,12 +168,30 @@ class TumorAnalysis:
         self.clinical_data["Date First Progression"] = pd.to_datetime(
             self.clinical_data["Date of First Progression"], dayfirst=True
         )
-        self.clinical_data["Follow-up Time"] = (
-            self.clinical_data["Date of last clinical follow-up"]
-            - self.clinical_data["Date First Diagnosis"]
-        ).dt.days
 
-        self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"]
+        self.clinical_data["Date First Treatment"] = pd.to_datetime(
+            self.clinical_data["First Treatment"], dayfirst=True
+        )
+
+        self.clinical_data["Received Treatment"] = (
+            self.clinical_data["Date First Treatment"].notna().map({True: "Yes", False: "No"})
+        )
+
+        self.clinical_data["Treatment Type"] = self.extract_treatment_types()
+
+        self.clinical_data["Follow-up Time"] = np.where(
+            self.clinical_data["Follow-Up"].notna(), self.clinical_data["Follow-Up"], 0
+        )
+        self.clinical_data["Time to Treatment"] = np.where(
+            self.clinical_data["Date First Treatment"].notna(),
+            (
+                self.clinical_data["Date First Treatment"]
+                - self.clinical_data["Date First Diagnosis"]
+            ).dt.days,
+            0,
+        )
+
+        self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"].fillna("No")
 
         # Apply the type conversions according to the dictionary
         for column, dtype in correlation_cfg.BCH_DTYPE_MAPPING.items():
@@ -176,9 +200,19 @@ class TumorAnalysis:
         all_relevant_columns = (
             list(correlation_cfg.BCH_DTYPE_MAPPING.keys()) + correlation_cfg.BCH_DATETIME_COLUMNS
         )
-        self.clinical_data_reduced = self.clinical_data[all_relevant_columns]
+        self.clinical_data_reduced = self.clinical_data[all_relevant_columns].copy()
+        self.clinical_data_reduced["BCH MRN"] = (
+            self.clinical_data_reduced["BCH MRN"].astype(str).str.zfill(7)
+        )
+        self.clinical_data_reduced = self.clinical_data_reduced[
+            self.clinical_data_reduced["BCH MRN"].isin(patient_ids_volumes)
+        ]
+        print(f"\tFiltered clinical data has length {len(self.clinical_data_reduced)}.")
 
         print("\tParsed clinical data.")
+
+    def load_clinical_data_cbtn(self, clinical_data_path, patient_ids_volumes):
+        pass
 
     def load_volumes_data(self, volumes_data_paths):
         """
@@ -190,21 +224,16 @@ class TumorAnalysis:
 
         The function updates the `self.volumes_data` attribute with the concatenated DataFrame.
         """
-        exclude_patients = read_exclusion_list(self.exclusion_list_path)
 
         data_frames = []
         for volumes_data_path in volumes_data_paths:
             all_files = [f for f in os.listdir(volumes_data_path) if f.endswith(".csv")]
+            print(f"\tVolume data found: {len(all_files)}.")
+
             for file in all_files:
                 patient_id = file.split(".")[0]
 
-                if patient_id in exclude_patients:
-                    continue
-
                 patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
-                # Get the first volume value
-                baseline_volume = patient_df["Volume"].iloc[0]
-                patient_df["Baseline Volume"] = baseline_volume
                 # Adjust patient id
                 patient_df["Patient_ID"] = patient_id
                 patient_df["Patient_ID"] = (
@@ -213,15 +242,17 @@ class TumorAnalysis:
 
                 data_frames.append(patient_df)
 
-            print(f"\tLoaded volume data {volumes_data_path}.")
         self.volumes_data = pd.concat(data_frames, ignore_index=True)
-        self.volumes_data["Date"] = pd.to_datetime(self.volumes_data["Date"], format="%Y-%m-%d")
-        self.volumes_data = self.volumes_data.rename(
-            columns={
-                "Growth[%]": "Volume Change",
-                "Normalized Growth[%]": "Normalized Volume Change",
-            }
-        )
+        if self.cohort == "BCH":
+            self.volumes_data["Date"] = pd.to_datetime(self.volumes_data["Date"], format="%d/%m/%Y")
+
+        patient_ids_volumes = set(self.volumes_data["Patient_ID"].unique())
+
+        self.volumes_data = self.volumes_data.rename(columns={"Volume Growth[%]": "Volume Change"})
+
+        if self.volumes_data.isna().any().any():
+            self.volumes_data.fillna(0.0, inplace=True)
+        return patient_ids_volumes
 
     def extract_treatment_types(self):
         """
@@ -265,17 +296,25 @@ class TumorAnalysis:
 
         This function updates the `self.merged_data` attribute with the merged DataFrame.
         """
+
+        if self.cohort == "BCH":
+            column = "BCH MRN"
+        else:
+            column = "CBTN Subject ID"
+
         self.merged_data = pd.merge(
             self.clinical_data_reduced,
             self.volumes_data,
-            left_on=["BCH MRN"],
+            left_on=[column],
             right_on=["Patient_ID"],
             how="right",
         )
-        self.merged_data = self.merged_data.drop(columns=["BCH MRN"])
+        self.merged_data = self.merged_data.drop(columns=[column])
         self.merged_data["Age Group"] = self.merged_data.apply(categorize_age_group, axis=1).astype(
             "category"
         )
+        # Reset index after merging
+        self.merged_data.reset_index(drop=True, inplace=True)
         print("\tMerged clinical and volume data.")
 
     def aggregate_summary_statistics(self):
@@ -308,7 +347,6 @@ class TumorAnalysis:
             "Volume",
             "Normalized Volume",
             "Volume Change",
-            # "Normalized Volume Change",
         ]:
             self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
                 cumulative_stats, var
@@ -319,12 +357,16 @@ class TumorAnalysis:
 
         print("\tAdded rolling and accumulative summary statistics.")
 
+    ###################################
+    # DATA ANALYSIS AND VISUALIZATION #
+    ###################################
+
     def longitudinal_separation(self):
         """
         Separate the merged data into two DataFrames based on whether the
         data is from before or after the first treatment date.
 
-        This function updates `self.pre_treatment_data` and `self.post_treatment_data`
+        This function updates `self.merged_data` and `self.post_treatment_data`
         with the separated data.
         """
         pre_treatment_data_frames = []
@@ -352,41 +394,40 @@ class TumorAnalysis:
                 post_treatment_data_frames.append(post_treatment)
 
         # Concatenate the list of DataFrames into a single DataFrame for pre and post treatment
-        self.pre_treatment_data = pd.concat(pre_treatment_data_frames, ignore_index=True)
+        self.merged_data = pd.concat(pre_treatment_data_frames, ignore_index=True)
         self.post_treatment_data = pd.concat(post_treatment_data_frames, ignore_index=True)
 
-        self.pre_treatment_data["Treatment Type"] = self.pre_treatment_data[
+        self.merged_data["Treatment Type"] = self.merged_data[
             "Treatment Type"
         ].cat.remove_unused_categories()
         self.post_treatment_data["Treatment Type"] = self.post_treatment_data[
             "Treatment Type"
         ].cat.remove_unused_categories()
 
-        self.pre_treatment_data["Received Treatment"] = self.pre_treatment_data[
-            "Received Treatment"
-        ].astype("category")
+        self.merged_data["Received Treatment"] = self.merged_data["Received Treatment"].astype(
+            "category"
+        )
         self.post_treatment_data["Received Treatment"] = self.post_treatment_data[
             "Received Treatment"
         ].astype("category")
 
-        for patient_id in self.pre_treatment_data["Patient_ID"].unique():
+        for patient_id in self.merged_data["Patient_ID"].unique():
             if (
-                self.pre_treatment_data[self.pre_treatment_data["Patient_ID"] == patient_id][
+                self.merged_data[self.merged_data["Patient_ID"] == patient_id][
                     "Date First Treatment"
                 ]
                 .isna()
                 .any()
             ):
-                last_scan_date = self.pre_treatment_data[
-                    self.pre_treatment_data["Patient_ID"] == patient_id
-                ]["Date"].max()
-                self.pre_treatment_data.loc[
-                    self.pre_treatment_data["Patient_ID"] == patient_id, "Date First Treatment"
+                last_scan_date = self.merged_data[self.merged_data["Patient_ID"] == patient_id][
+                    "Date"
+                ].max()
+                self.merged_data.loc[
+                    self.merged_data["Patient_ID"] == patient_id, "Date First Treatment"
                 ] = last_scan_date
 
-        self.pre_treatment_data["Time to Treatment"] = (
-            self.pre_treatment_data["Date First Treatment"]
-            - self.pre_treatment_data["Date First Diagnosis"]
+        self.merged_data["Time to Treatment"] = (
+            self.merged_data["Date First Treatment"] - self.merged_data["Date First Diagnosis"]
         ).dt.days
 
         self.post_treatment_data["Time to Treatment"] = (
@@ -520,7 +561,7 @@ class TumorAnalysis:
             "Treatment Type",
             "Age Group",
             "Sex",
-            "Mutations",
+            "BRAF Status",
             "Received Treatment",
             "Tumor Progression",
             "Tumor Classification",
@@ -549,11 +590,11 @@ class TumorAnalysis:
 
         for num_var in numerical_vars:
             for cat_var in categorical_vars:
-                if self.pre_treatment_data[cat_var].nunique() == 2:
+                if self.merged_data[cat_var].nunique() == 2:
                     self.analyze_correlation(
                         cat_var,
                         num_var,
-                        self.pre_treatment_data,
+                        self.merged_data,
                         prefix,
                         output_dir,
                         method="t-test",
@@ -561,7 +602,7 @@ class TumorAnalysis:
                     self.analyze_correlation(
                         cat_var,
                         num_var,
-                        self.pre_treatment_data,
+                        self.merged_data,
                         prefix,
                         output_dir,
                         method="point-biserial",
@@ -570,7 +611,7 @@ class TumorAnalysis:
                     self.analyze_correlation(
                         cat_var,
                         num_var,
-                        self.pre_treatment_data,
+                        self.merged_data,
                         prefix,
                         output_dir,
                         method="ANOVA",
@@ -585,7 +626,7 @@ class TumorAnalysis:
                     self.analyze_correlation(
                         num_var,
                         other_num_var,
-                        self.pre_treatment_data,
+                        self.merged_data,
                         prefix,
                         output_dir,
                         method="spearman",
@@ -593,14 +634,14 @@ class TumorAnalysis:
                     self.analyze_correlation(
                         num_var,
                         other_num_var,
-                        self.pre_treatment_data,
+                        self.merged_data,
                         prefix,
                         output_dir,
                         method="pearson",
                     )
 
         aggregated_data = (
-            self.pre_treatment_data.sort_values("Date").groupby("Patient_ID", as_index=False).last()
+            self.merged_data.sort_values("Date").groupby("Patient_ID", as_index=False).last()
         )
 
         for cat_var in categorical_vars:
@@ -613,14 +654,6 @@ class TumorAnalysis:
                         prefix,
                         output_dir,
                     )
-
-    def analyze_post_treatment(self, prefix, output_dir):
-        """
-        Analyze data for post-treatment cases. This involves finding correlations between
-        variables such as treatment types, tumor volume changes, and specific mutations.
-        """
-        print("Post-treatment Correlations:")
-        # TODO: treatment type to volume change, mutations to volume change, treatment type to XYZ
 
     def visualize_statistical_test(
         self,
@@ -744,28 +777,28 @@ class TumorAnalysis:
             plt.savefig(heat_map_file)
             plt.close()
 
-    def model_growth_trajectories(self, prefix, output_dir):
+    #####################################
+    # CURVE PLOTTING AND TREND ANALYSIS #
+    #####################################
+
+    def trajectories(self, prefix, output_dir):
         """
-        Model the growth trajectories of patients using a mixed-effects linear model.
+        Plot trajectories of patients.
 
         Parameters:
         - prefix (str): Prefix used for naming the output files.
-
-        The method models the tumor growth percentage as a function of time since the first
-        scan for each patient, separates the individual and predicted growth trajectories, and
-        saves the plots to files.
+        - output_dir (str): Directory to save the output plots.
         """
         print("\tModeling growth trajectories:")
         # Data preparation for modeling
-        pre_treatment_data = self.pre_treatment_data.copy()
-        pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
+        pre_treatment_data = self.merged_data.copy()
+        pre_treatment_data.sort_values(by=["Patient_ID", "Age"], inplace=True)
         pre_treatment_data["Time since First Scan"] = pre_treatment_data.groupby("Patient_ID")[
-            "Date"
-        ].transform(lambda x: (x - x.min()).dt.days)
-        self.pre_treatment_data.sort_values(by=["Patient_ID", "Date"], inplace=True)
-        self.pre_treatment_data["Time since First Scan"] = pre_treatment_data[
-            "Time since First Scan"
-        ]
+            "Age"
+        ].transform(lambda x: (x - x.iloc[0]))
+
+        self.merged_data.sort_values(by=["Patient_ID", "Age"], inplace=True)
+        self.merged_data["Time since First Scan"] = pre_treatment_data["Time since First Scan"]
 
         # Error handling for sample size
         sample_size = self.sample_size_plots
@@ -806,7 +839,7 @@ class TumorAnalysis:
 
         category_list = [
             "Sex",
-            "Mutations",
+            "BRAF Status",
             "Tumor Progression",
             "Received Treatment",
             "Location",
@@ -835,62 +868,6 @@ class TumorAnalysis:
 
         # Trend analysis and classifciation of patients
         self.trend_analysis(pre_treatment_data, output_dir, prefix)
-
-    def time_to_event_analysis(self, prefix, output_dir, stratify_by=None):
-        """
-        Perform a Kaplan-Meier survival analysis on time-to-event data for tumor progression.
-
-        Parameters:
-        - prefix (str): Prefix used for naming the output file.
-
-        The method fits the survival curve using the KaplanMeierFitter on the pre-treatment data,
-        saves the plot image, and prints a confirmation message.
-        """
-        print(f"\tAnalyzing time to event for {stratify_by}:")
-        # pre_treatment_data as df copy for KM curves
-        # only patients who showed tumor progression before the first treatment
-        analysis_data_pre = self.pre_treatment_data.copy()
-        analysis_data_pre = analysis_data_pre[
-            analysis_data_pre["Date First Progression"] < analysis_data_pre["Date First Treatment"]
-        ]
-        analysis_data_pre.loc[:, "Duration"] = (
-            analysis_data_pre["Date First Progression"] - analysis_data_pre["Date First Diagnosis"]
-        ).dt.days
-
-        analysis_data_pre["Event_Occurred"] = ~analysis_data_pre["Date First Progression"].isna()
-
-        # TODO: Add cases of survival in the post treatment setting, adjust the data accordingly
-        # TODO: Add a if/else condition based on the prefix and generalize data_handling
-
-        kmf = KaplanMeierFitter()
-
-        if stratify_by and stratify_by in analysis_data_pre.columns:
-            for category in analysis_data_pre[stratify_by].unique():
-                category_data = analysis_data_pre[analysis_data_pre[stratify_by] == category]
-                kmf.fit(
-                    category_data["Duration"],
-                    event_observed=category_data["Event_Occurred"],
-                    label=str(category),
-                )
-                ax = kmf.plot_survival_function()
-            plt.title(f"Stratified Survival Function by {stratify_by}")
-
-        else:
-            kmf.fit(
-                analysis_data_pre["Duration"], event_observed=analysis_data_pre["Event_Occurred"]
-            )
-            ax = kmf.plot_survival_function()
-            ax.set_title("Survival function of Tumor Progression")
-
-        ax.set_xlabel("Days since Diagnosis")
-        ax.set_ylabel("Survival Probability")
-
-        survival_plot = os.path.join(
-            output_dir, f"{prefix}_survival_plot_category_{stratify_by}.png"
-        )
-        plt.savefig(survival_plot, dpi=300)
-        plt.close()
-        print(f"\t\tSaved survival KaplanMeier curve for {stratify_by}.")
 
     def analyze_tumor_stability(
         self, data, output_dir, volume_weight=0.5, growth_weight=0.5, change_threshold=20
@@ -941,15 +918,15 @@ class TumorAnalysis:
         ).astype("category")
 
         # Map the 'Stability Index' and 'Tumor Classification' to the
-        # self.pre_treatment_data using the maps
-        merged_data = pd.merge(
-            self.pre_treatment_data,
+        # self.merged_data using the maps
+        m_data = pd.merge(
+            self.merged_data,
             data[["Patient_ID", "Date", "Stability Index", "Tumor Classification"]],
             on=["Patient_ID", "Date"],
             how="left",
         )
 
-        self.pre_treatment_data = merged_data
+        self.merged_data = m_data
         visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold)
         print("\t\tSaved tumor stability plots.")
 
@@ -979,8 +956,8 @@ class TumorAnalysis:
         data["Classification"] = data["Patient_ID"].map(patient_classifications)
         # Save to original dataframe
         classifications_series = pd.Series(patient_classifications)
-        self.pre_treatment_data["Patient Classification"] = (
-            self.pre_treatment_data["Patient_ID"].map(classifications_series).astype("category")
+        self.merged_data["Patient Classification"] = (
+            self.merged_data["Patient_ID"].map(classifications_series).astype("category")
         )
 
         # Plots
@@ -988,84 +965,156 @@ class TumorAnalysis:
         plot_trend_trajectories(data, output_filename, column_name, unit="mm^3")
         print("\t\tSaved trend analysis plot.")
 
-    def printout_stats(self):
+    def printout_stats(self, output_file_path, prefix):
         """
-        Descriptive statistics.
+        Descriptive statistics written to a file.
+
+        Parameters:
+        - output_file_path (str): Path to the output path.
+        - prefix (str): Prefix used for naming the output file.
         """
+        filename = f"{prefix}_summary_statistics.txt"
+        file_path = os.path.join(output_file_path, filename)
+        with open(file_path, "w", encoding="utf-8") as file:
 
-        # Age
-        median_age = self.pre_treatment_data["Age"].median()
-        max_age = self.pre_treatment_data["Age"].max()
-        min_age = self.pre_treatment_data["Age"].min()
-        print(f"\t\tMedian Age: {median_age} years")
-        print(f"\t\tMaximum Age: {max_age} years")
-        print(f"\t\tMinimum Age: {min_age} years")
+            def write_stat(statement):
+                file.write(statement + "\n")
 
-        # Sex, Received Treatment, Progression, Symptoms,
-        # Location, Patient Classification, Treatment Type
-        copy_df = self.pre_treatment_data.copy()
-        unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
-        counts_sex = unique_pat["Sex"].value_counts()
-        counts_progression = unique_pat["Tumor Progression"].value_counts()
-        counts_received_treatment = unique_pat["Received Treatment"].value_counts()
-        counts_symptoms = unique_pat["Symptoms"].value_counts()
-        counts_location = unique_pat["Location"].value_counts()
-        counts_patient_classification = unique_pat["Patient Classification"].value_counts()
-        counts_treatment_type = unique_pat["Treatment Type"].value_counts()
-        print(f"\t\tReceived Treatment: {counts_received_treatment}")
-        print(f"\t\tSymptoms: {counts_symptoms}")
-        print(f"\t\tLocation: {counts_location}")
-        print(f"\t\tSex: {counts_sex}")
-        print(f"\t\tProgression: {counts_progression}")
-        print(f"\t\tPatient Classification: {counts_patient_classification}")
-        print(f"\t\tTreatment Type: {counts_treatment_type}")
+            # Age
+            median_age = self.merged_data["Age"].median()
+            max_age = self.merged_data["Age"].max()
+            min_age = self.merged_data["Age"].min()
+            write_stat(f"\t\tMedian Age: {median_age} years")
+            write_stat(f"\t\tMaximum Age: {max_age} years")
+            write_stat(f"\t\tMinimum Age: {min_age} years")
 
-        # Volume Change
-        filtered_data = self.pre_treatment_data[self.pre_treatment_data["Volume Change"] != 0]
-        # print(filtered_data["Volume Change"].describe())
-        median_volume_change = filtered_data["Volume Change"].median()
-        max_volume_change = filtered_data["Volume Change"].max()
-        min_volume_change = filtered_data["Volume Change"].min()
-        print(f"\t\tMedian Volume Change: {median_volume_change} %")
-        print(f"\t\tMaximum Volume Change: {max_volume_change} %")
-        print(f"\t\tMinimum Volume Change: {min_volume_change} %")
+            # Sex, Received Treatment, Progression, Symptoms, Location, Patient Classification, Treatment Type
+            copy_df = self.merged_data.copy()
+            unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
+            counts_sex = unique_pat["Sex"].value_counts()
+            counts_progression = unique_pat["Tumor Progression"].value_counts()
+            counts_received_treatment = unique_pat["Received Treatment"].value_counts()
+            counts_symptoms = unique_pat["Symptoms"].value_counts()
+            counts_location = unique_pat["Location"].value_counts()
+            counts_patient_classification = unique_pat["Patient Classification"].value_counts()
+            counts_treatment_type = unique_pat["Treatment Type"].value_counts()
 
-        # Nomralized Volume
-        median_normalized_volume = self.pre_treatment_data["Normalized Volume"].median()
-        max_normalized_volume = self.pre_treatment_data["Normalized Volume"].max()
-        min_normalized_volume = self.pre_treatment_data["Normalized Volume"].min()
-        print(f"\t\tMedian Normalized Volume: {median_normalized_volume} mm^3")
-        print(f"\t\tMaximum Normalized Volume: {max_normalized_volume} mm^3")
-        print(f"\t\tMinimum Normalized Volume: {min_normalized_volume} mm^3")
+            write_stat(f"\t\tReceived Treatment: {counts_received_treatment}")
+            write_stat(f"\t\tSymptoms: {counts_symptoms}")
+            write_stat(f"\t\tLocation: {counts_location}")
+            write_stat(f"\t\tSex: {counts_sex}")
+            write_stat(f"\t\tProgression: {counts_progression}")
+            write_stat(f"\t\tPatient Classification: {counts_patient_classification}")
+            write_stat(f"\t\tTreatment Type: {counts_treatment_type}")
 
-        # Volume
-        mm3_to_cm3 = 1000
-        median_volume = self.pre_treatment_data["Volume"].median()
-        max_volume = self.pre_treatment_data["Volume"].max()
-        min_volume = self.pre_treatment_data["Volume"].min()
-        print(f"\t\tMedian Volume: {median_volume / mm3_to_cm3} cm^3")
-        print(f"\t\tMaximum Volume: {max_volume / mm3_to_cm3} cm^3")
-        print(f"\t\tMinimum Volume: {min_volume / mm3_to_cm3} cm^3")
+            # Volume Change
+            filtered_data = self.merged_data[self.merged_data["Volume Change"] != 0]
+            median_volume_change = filtered_data["Volume Change"].median()
+            max_volume_change = filtered_data["Volume Change"].max()
+            min_volume_change = filtered_data["Volume Change"].min()
+            write_stat(f"\t\tMedian Volume Change: {median_volume_change} %")
+            write_stat(f"\t\tMaximum Volume Change: {max_volume_change} %")
+            write_stat(f"\t\tMinimum Volume Change: {min_volume_change} %")
 
-        # Baseline volume
-        median_baseline_volume = self.pre_treatment_data["Baseline Volume"].median()
-        max_baseline_volume = self.pre_treatment_data["Baseline Volume"].max()
-        min_baseline_volume = self.pre_treatment_data["Baseline Volume"].min()
-        print(f"\t\tMedian Baseline Volume: {median_baseline_volume / mm3_to_cm3} cm^3")
-        print(f"\t\tMaximum Baseline Volume: {max_baseline_volume / mm3_to_cm3} cm^3")
-        print(f"\t\tMinimum Baseline Volume: {min_baseline_volume / mm3_to_cm3} cm^3")
+            # Normalized Volume
+            median_normalized_volume = self.merged_data["Normalized Volume"].median()
+            max_normalized_volume = self.merged_data["Normalized Volume"].max()
+            min_normalized_volume = self.merged_data["Normalized Volume"].min()
+            write_stat(f"\t\tMedian Normalized Volume: {median_normalized_volume} mm^3")
+            write_stat(f"\t\tMaximum Normalized Volume: {max_normalized_volume} mm^3")
+            write_stat(f"\t\tMinimum Normalized Volume: {min_normalized_volume} mm^3")
 
-        # Follow-up time
-        average_days_per_month = 30.44
-        median_follow_up = self.pre_treatment_data["Follow-up Time"].median()
-        max_follow_up = self.pre_treatment_data["Follow-up Time"].max()
-        min_follow_up = self.pre_treatment_data["Follow-up Time"].min()
-        median_follow_up_months = median_follow_up / average_days_per_month
-        max_follow_up_months = max_follow_up / average_days_per_month
-        min_follow_up_months = min_follow_up / average_days_per_month
-        print(f"\t\tMedian Follow-Up Time: {median_follow_up_months:.2f} months")
-        print(f"\t\tMaximum Follow-Up Time: {max_follow_up_months:.2f} months")
-        print(f"\t\tMinimum Follow-Up Time: {min_follow_up_months:.2f} months")
+            # Volume
+            mm3_to_cm3 = 1000
+            median_volume = self.merged_data["Volume"].median()
+            max_volume = self.merged_data["Volume"].max()
+            min_volume = self.merged_data["Volume"].min()
+            write_stat(f"\t\tMedian Volume: {median_volume / mm3_to_cm3} cm^3")
+            write_stat(f"\t\tMaximum Volume: {max_volume / mm3_to_cm3} cm^3")
+            write_stat(f"\t\tMinimum Volume: {min_volume / mm3_to_cm3} cm^3")
+
+            # Baseline volume
+            median_baseline_volume = self.merged_data["Baseline Volume"].median()
+            max_baseline_volume = self.merged_data["Baseline Volume"].max()
+            min_baseline_volume = self.merged_data["Baseline Volume"].min()
+            write_stat(f"\t\tMedian Baseline Volume: {median_baseline_volume / mm3_to_cm3} cm^3")
+            write_stat(f"\t\tMaximum Baseline Volume: {max_baseline_volume / mm3_to_cm3} cm^3")
+            write_stat(f"\t\tMinimum Baseline Volume: {min_baseline_volume / mm3_to_cm3} cm^3")
+
+            # Follow-up time
+            average_days_per_month = 30.44
+            median_follow_up = self.merged_data["Follow-up Time"].median()
+            max_follow_up = self.merged_data["Follow-up Time"].max()
+            min_follow_up = self.merged_data["Follow-up Time"].min()
+            median_follow_up_months = median_follow_up / average_days_per_month
+            max_follow_up_months = max_follow_up / average_days_per_month
+            min_follow_up_months = min_follow_up / average_days_per_month
+            write_stat(f"\t\tMedian Follow-Up Time: {median_follow_up_months:.2f} months")
+            write_stat(f"\t\tMaximum Follow-Up Time: {max_follow_up_months:.2f} months")
+            write_stat(f"\t\tMinimum Follow-Up Time: {min_follow_up_months:.2f} months")
+
+    ##########################################
+    # EFS RELATED ANALYSIS AND VISUALIZATION #
+    ##########################################
+    def time_to_event_analysis(self, prefix, output_dir, stratify_by=None):
+        """
+        Perform a Kaplan-Meier survival analysis on time-to-event data for tumor progression.
+
+        Parameters:
+        - prefix (str): Prefix used for naming the output file.
+
+        The method fits the survival curve using the KaplanMeierFitter on the pre-treatment data,
+        saves the plot image, and prints a confirmation message.
+        """
+        print(f"\tAnalyzing time to event for {stratify_by}:")
+        # pre_treatment_data as df copy for KM curves
+        # only patients who showed tumor progression before the first treatment
+        analysis_data_pre = self.merged_data.copy()
+        analysis_data_pre = analysis_data_pre[
+            analysis_data_pre["Date First Progression"] < analysis_data_pre["Date First Treatment"]
+        ]
+        analysis_data_pre.loc[:, "Duration"] = (
+            analysis_data_pre["Date First Progression"] - analysis_data_pre["Date First Diagnosis"]
+        ).dt.days
+
+        analysis_data_pre["Event_Occurred"] = ~analysis_data_pre["Date First Progression"].isna()
+
+        # TODO: Add cases of survival in the post treatment setting, adjust the data accordingly
+        # TODO: Add a if/else condition based on the prefix and generalize data_handling
+
+        kmf = KaplanMeierFitter()
+
+        if stratify_by and stratify_by in analysis_data_pre.columns:
+            for category in analysis_data_pre[stratify_by].unique():
+                category_data = analysis_data_pre[analysis_data_pre[stratify_by] == category]
+                kmf.fit(
+                    category_data["Duration"],
+                    event_observed=category_data["Event_Occurred"],
+                    label=str(category),
+                )
+                ax = kmf.plot_survival_function()
+            plt.title(f"Stratified Survival Function by {stratify_by}")
+
+        else:
+            kmf.fit(
+                analysis_data_pre["Duration"], event_observed=analysis_data_pre["Event_Occurred"]
+            )
+            ax = kmf.plot_survival_function()
+            ax.set_title("Survival function of Tumor Progression")
+
+        ax.set_xlabel("Days since Diagnosis")
+        ax.set_ylabel("Survival Probability")
+
+        survival_plot = os.path.join(
+            output_dir, f"{prefix}_survival_plot_category_{stratify_by}.png"
+        )
+        plt.savefig(survival_plot, dpi=300)
+        plt.close()
+        print(f"\t\tSaved survival KaplanMeier curve for {stratify_by}.")
+
+    #################
+    # MAIN ANALYSIS #
+    #################
 
     def run_analysis(self, output_correlations, output_stats):
         """
@@ -1083,10 +1132,8 @@ class TumorAnalysis:
 
             self.longitudinal_separation()
 
-            assert self.pre_treatment_data.columns.all() == self.post_treatment_data.columns.all()
-            assert (len(self.pre_treatment_data) + len(self.post_treatment_data)) == len(
-                self.merged_data
-            )
+            assert self.merged_data.columns.all() == self.post_treatment_data.columns.all()
+            assert (len(self.merged_data) + len(self.post_treatment_data)) == len(self.merged_data)
             print(
                 "\tData separated, assertation for same columns in separated dataframes and"
                 " corresponding lenghts passed."
@@ -1096,7 +1143,7 @@ class TumorAnalysis:
             # datasets matches the number in the original dataset. This ensures that no
             # patients were lost during the data separation process.
             unique_ids_original = set(self.merged_data["Patient_ID"].unique())
-            unique_ids_pre = set(self.pre_treatment_data["Patient_ID"].unique())
+            unique_ids_pre = set(self.merged_data["Patient_ID"].unique())
             unique_ids_post = set(self.post_treatment_data["Patient_ID"].unique())
 
             if unique_ids_original != unique_ids_pre.union(unique_ids_post):
@@ -1107,8 +1154,8 @@ class TumorAnalysis:
             # It should be the same in both pre-treatment and post-treatment data for any
             # given patient.
             for patient_id in unique_ids_original:
-                treatment_dates_pre = self.pre_treatment_data[
-                    self.pre_treatment_data["Patient_ID"] == patient_id
+                treatment_dates_pre = self.merged_data[
+                    self.merged_data["Patient_ID"] == patient_id
                 ]["Date First Treatment"].unique()
 
                 treatment_dates_post = self.post_treatment_data[
@@ -1138,15 +1185,13 @@ class TumorAnalysis:
                 # Check if the treatment date is not set (NaN) and use the last scan
                 # date in that case
                 if pd.isna(first_treatment_date):
-                    first_treatment_date = self.pre_treatment_data[
-                        self.pre_treatment_data["Patient_ID"] == patient_id
+                    first_treatment_date = self.merged_data[
+                        self.merged_data["Patient_ID"] == patient_id
                     ]["Date"].max()
 
                 # Pre-treatment data should be before the first treatment date
                 if not all(
-                    self.pre_treatment_data[self.pre_treatment_data["Patient_ID"] == patient_id][
-                        "Date"
-                    ]
+                    self.merged_data[self.merged_data["Patient_ID"] == patient_id]["Date"]
                     <= first_treatment_date
                 ):
                     print(f"\tError: Pre-treatment date inconsistency for patient {patient_id}")
@@ -1174,16 +1219,16 @@ class TumorAnalysis:
                 print("\tAll date ranges are consistent.")
 
             # Check for any missing or NaN values in critical columns after the separation process.
-            for column in self.pre_treatment_data.columns:
+            for column in self.merged_data.columns:
                 if column == "Date First Progression":
                     # Check for missing Date First Progression only if Tumor Progression is True
-                    missing_progression_data = self.pre_treatment_data[
-                        (self.pre_treatment_data["Tumor Progression"] is True)
-                        & (self.pre_treatment_data["Date First Progression"].isna())
+                    missing_progression_data = self.merged_data[
+                        (self.merged_data["Tumor Progression"] is True)
+                        & (self.merged_data["Date First Progression"].isna())
                     ]
                     if not missing_progression_data.empty:
                         print(f"\tError: Missing data in pre_treatment column - {column}")
-                elif self.pre_treatment_data[column].isna().any():
+                elif self.merged_data[column].isna().any():
                     print(f"\tError: Missing data in pre_treatment column - {column}")
             print("\tNo more missing data in pre_treatment columns.")
             for column in self.post_treatment_data.columns:
@@ -1215,8 +1260,8 @@ class TumorAnalysis:
 
             for pre_var in pre_treatment_vars:
                 print(f"\tPerforming sensitivity analysis on pre-treatment variables {pre_var}...")
-                self.pre_treatment_data = sensitivity_analysis(
-                    self.pre_treatment_data,
+                self.merged_data = sensitivity_analysis(
+                    self.merged_data,
                     pre_var,
                     z_threshold=correlation_cfg.SENSITIVITY_THRESHOLD,
                 )
@@ -1235,8 +1280,8 @@ class TumorAnalysis:
 
         if correlation_cfg.PROPENSITY:
             print(f"Step {step_idx}: Performing Propensity Score Matching...")
-            print(self.pre_treatment_data.dtypes)
-            for data in [self.pre_treatment_data]:
+            print(self.merged_data.dtypes)
+            for data in [self.merged_data]:
                 treatment_column = "Received Treatment"
                 covariate_columns = ["Normalized Volume", "Volume Change"]
 
@@ -1257,40 +1302,34 @@ class TumorAnalysis:
             prefix = f"{self.cohort}_pre_treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
-            # # Survival analysis
-            # stratify_by_list = ["Location", "Sex", "Mutations", "Age Group", "Symptoms"]
-            # for element in stratify_by_list:
-            #     self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
+            # Survival analysis
+            stratify_by_list = ["Location", "Sex", "BRAF Status", "Age Group", "Symptoms"]
+            for element in stratify_by_list:
+                self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
 
-            # Growth trajectories & Trend analysis
-            self.model_growth_trajectories(prefix, output_dir=output_stats)
+            # Trajectories & Trend analysis
+            self.trajectories(prefix, output_dir=output_stats)
 
             # Tumor stability
             self.analyze_tumor_stability(
-                data=self.pre_treatment_data,
+                data=self.merged_data,
                 output_dir=output_stats,
                 volume_weight=correlation_cfg.VOLUME_WEIGHT,
                 growth_weight=correlation_cfg.GROWTH_WEIGHT,
                 change_threshold=correlation_cfg.CHANGE_THRESHOLD,
             )
 
-            self.printout_stats()
+            # Descriptive statistics for table1 in paper
+            self.printout_stats(prefix=prefix, output_file_path=output_stats)
 
-            # # Correlations between variables
-            # self.analyze_pre_treatment(
-            #     prefix=prefix,
-            #     output_dir=output_correlations,
-            # )
+            # Correlations between variables
+            self.analyze_pre_treatment(
+                prefix=prefix,
+                output_dir=output_correlations,
+            )
 
             # Last consistency check
-            # consistency_check(self.pre_treatment_data)
-
-            step_idx += 1
-
-        if correlation_cfg.ANALYSIS_POST_TREATMENT:
-            prefix = "post-treatment"
-            print(f"Step {step_idx}: Starting main analyses {prefix}...")
-            # self.analyze_post_treatment(prefix=prefix)
+            consistency_check(self.merged_data)
 
             step_idx += 1
 
@@ -1316,21 +1355,21 @@ class TumorAnalysis:
 
         if correlation_cfg.FEATURE_ENG:
             print(f"Step {step_idx}: Starting Feature Engineering...")
-            save_for_deep_learning(self.pre_treatment_data, output_stats, prefix="pre-treatment")
+            save_for_deep_learning(self.merged_data, output_stats, prefix="pre-treatment")
             # save_for_deep_learning(self.post_treatment_data, output_stats, prefix="post-treatment")
             step_idx += 1
 
 
 if __name__ == "__main__":
     analysis_bch = TumorAnalysis(
-        correlation_cfg.CLINICAL_CSV_BCH,
-        [correlation_cfg.VOLUMES_CSV_BCH],
+        correlation_cfg.CLINICAL_CSV,
+        [correlation_cfg.VOLUMES_CSV],
         cohort="BCH",
     )
 
-    os.makedirs(correlation_cfg.OUTPUT_DIR_CORRELATIONS_BCH, exist_ok=True)
-    os.makedirs(correlation_cfg.OUTPUT_DIR_STATS_BCH, exist_ok=True)
+    os.makedirs(correlation_cfg.OUTPUT_DIR_CORRELATIONS, exist_ok=True)
+    os.makedirs(correlation_cfg.OUTPUT_DIR_STATS, exist_ok=True)
 
     analysis_bch.run_analysis(
-        correlation_cfg.OUTPUT_DIR_CORRELATIONS_BCH, correlation_cfg.OUTPUT_DIR_STATS_BCH
+        correlation_cfg.OUTPUT_DIR_CORRELATIONS, correlation_cfg.OUTPUT_DIR_STATS
     )
