@@ -117,6 +117,8 @@ class TumorAnalysis:
                 return "Other"
             if map_type == "symptoms":
                 return "No symptoms (incident finding)"
+            if map_type == "histology":
+                return "Other"
 
         return column.apply(map_value)
 
@@ -146,6 +148,12 @@ class TumorAnalysis:
             correlation_cfg.BCH_SYMPTOMS,
             self.clinical_data["Symptoms at diagnosis"],
             map_type="symptoms",
+        )
+
+        self.clinical_data["Histology"] = self.map_dictionary(
+            correlation_cfg.BCH_GLIOMA_TYPES,
+            self.clinical_data["Pathologic diagnosis"],
+            map_type="histology",
         )
 
         self.clinical_data["Sex"] = self.clinical_data["Sex"].apply(
@@ -450,6 +458,7 @@ class TumorAnalysis:
         categorical_vars = [
             "Location",
             "Symptoms",
+            "Histology",
             "Treatment Type",
             "Age Group",
             "Sex",
@@ -887,12 +896,14 @@ class TumorAnalysis:
             counts_progression = unique_pat["Tumor Progression"].value_counts()
             counts_received_treatment = unique_pat["Received Treatment"].value_counts()
             counts_symptoms = unique_pat["Symptoms"].value_counts()
+            counts_histology = unique_pat["Histology"].value_counts()
             counts_location = unique_pat["Location"].value_counts()
             counts_patient_classification = unique_pat["Patient Classification"].value_counts()
             counts_treatment_type = unique_pat["Treatment Type"].value_counts()
 
             write_stat(f"\t\tReceived Treatment: {counts_received_treatment}")
             write_stat(f"\t\tSymptoms: {counts_symptoms}")
+            write_stat(f"\t\tHistology: {counts_histology}")
             write_stat(f"\t\tLocation: {counts_location}")
             write_stat(f"\t\tSex: {counts_sex}")
             write_stat(f"\t\tProgression: {counts_progression}")
@@ -1076,7 +1087,14 @@ class TumorAnalysis:
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
 
             # Survival analysis
-            stratify_by_list = ["Location", "Sex", "BRAF Status", "Age Group", "Symptoms"]
+            stratify_by_list = [
+                "Location",
+                "Sex",
+                "BRAF Status",
+                "Age Group",
+                "Symptoms",
+                "Histology",
+            ]
             for element in stratify_by_list:
                 self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
 

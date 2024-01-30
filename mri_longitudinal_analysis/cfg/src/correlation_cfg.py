@@ -13,16 +13,6 @@ OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output")
 OUTPUT_DIR_CORRELATIONS = OUTPUT_DIR / "correlation_plots_bch"
 OUTPUT_DIR_STATS = OUTPUT_DIR / "correlation_stats_bch"
 
-EXCLUSION_LIST_PATH = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/curated_longitudinal_dataset_new/output/patients_with_few_scans.txt"
-)
-
-
-CORRELATION_PRE_TREATMENT = "spearman"
-CORRELATION_POST_TREATMENT = "spearman"
-
-# Step 0
-SEPARATION = False
 
 # Step 1
 SENSITIVITY = False
@@ -148,11 +138,18 @@ CBTN_LOCATION = {
 }
 
 
-# BCH_GLIOMA_TYPES = {
-#     : "Astrocytoma",
-#     : "Ganglioglioma",
-#     : "Glial-neuronal",
-# }
+BCH_GLIOMA_TYPES = {
+    "astro": "Astrocytoma",
+    "JPA": "Astrocytoma",
+    "gang": "Ganglioglioma",
+    "glio": "Glial-neuronal glioma",
+    "DNET": "Glial-neuronal glioma",
+    "neo": "Glial-neuronal glioma",
+    "pseudo": "Other",
+    "oligodendroglioma": "Other",
+    "low": "Plain Low Grade Glioma",
+    "tectal": "Plain Low Grade Glioma",
+}
 
 # CBTN_GLIOMA_TYPES = {
 #     : "Astrocytoma",
@@ -174,6 +171,7 @@ BCH_DTYPE_MAPPING = {
     "Received Treatment": "category",
     "Follow-up Time": "int",
     "Time to Treatment": "int",
+    "Histology": "category",
 }
 
 BCH_DATETIME_COLUMNS = [
