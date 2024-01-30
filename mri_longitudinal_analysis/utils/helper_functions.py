@@ -474,7 +474,7 @@ def categorize_age_group(data, debug=False):
         print(data["Age"].median())
         print(data["Age"].std())
 
-    age = data["Age"]
+    age = data["Age"] / 365  # Convert age to years
 
     if age <= 2:
         return "Infant"
@@ -596,8 +596,6 @@ def calculate_percentage_change(data, patient_id, column_name):
     considering the first and last value.
     """
     patient_data = data[data["Patient_ID"] == patient_id].sort_values(by="Time since First Scan")
-    if len(patient_data) < 2:
-        return None  # Not enough data
 
     start_volume = patient_data[column_name].iloc[0]
     end_volume = patient_data[column_name].iloc[-1]
@@ -860,27 +858,31 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     plt.close()
 
 
-def plot_individual_trajectories(name, plot_data, column, category_column=None, unit=None):
+def plot_individual_trajectories(
+    name, plot_data, column, category_column=None, unit=None, time_limit=4000, median_freq=273
+):
     """
-    Plot the individual trajectories for a sample of patients.
+    Plot the individual volume trajectories for a sample of patients.
 
     Parameters:
-    - name (str): The filename to save the plot image.
-
-    This method samples a n number of unique patient IDs from the pre-treatment data,
-    plots their variable trajectories, and saves the plot to the specified filename.
+    - name (str): The filename for the saved plot image.
+    - plot_data (DataFrame): The data to be plotted.
+    - column (str): The name of the column representing volume to be plotted.
+    - output_dir (str): Directory where the plot image will be saved.
+    - time_limit (int): Cutoff time in days for plotting data.
+    - freq_days (int): Frequency in days for calculating median trajectories.
     """
     plt.figure(figsize=(10, 6))
-
-    # Cutoff the data at 4000 days
-    plot_data = plot_data[plot_data["Time since First Scan"] <= 4000]
+    plot_data = plot_data[plot_data["Time since First Scan"] <= time_limit]
     num_patients = plot_data["Patient_ID"].nunique()
     # Get the median every 3 months
     median_data = (
         plot_data.groupby(
             pd.cut(
                 plot_data["Time since First Scan"],
-                pd.interval_range(start=0, end=plot_data["Time since First Scan"].max(), freq=273),
+                pd.interval_range(
+                    start=0, end=plot_data["Time since First Scan"].max(), freq=median_freq
+                ),
             )
         )[column]
         .median()
@@ -902,7 +904,9 @@ def plot_individual_trajectories(name, plot_data, column, category_column=None, 
                     pd.cut(
                         category_data["Time since First Scan"],
                         pd.interval_range(
-                            start=0, end=category_data["Time since First Scan"].max(), freq=273
+                            start=0,
+                            end=category_data["Time since First Scan"].max(),
+                            freq=median_freq,
                         ),
                     )
                 )[column]
