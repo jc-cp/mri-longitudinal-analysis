@@ -454,15 +454,6 @@ def save_for_deep_learning(df: pd.DataFrame, output_dir, prefix):
         print("No data to save.")
 
 
-def process_race_ethnicity(race):
-    """
-    Removing 'Non-Hispanic' from the string for consistency in data.
-    """
-    if "Non-Hispanic" in race:
-        race = race.replace("Non-Hispanic ", "")
-    return race
-
-
 def categorize_age_group(data, debug=False):
     """
     Categorize patients according to an age group for more thorough analysis.
@@ -512,7 +503,7 @@ def calculate_group_norms_and_stability(data, volume_column, volume_change_colum
     data["Growth Stability Score"] = (
         data[f"{volume_change_column} RollStd"] / data[f"{volume_change_column} RollStd GroupNorm"]
     )
-    data["Period"] = data["Date"].dt.to_period("M")
+    data["Period"] = data["Age"]
 
     return data
 

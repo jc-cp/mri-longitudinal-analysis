@@ -14,6 +14,8 @@ OUTPUT_DIR_CORRELATIONS = OUTPUT_DIR / "correlation_plots_bch"
 OUTPUT_DIR_STATS = OUTPUT_DIR / "correlation_stats_bch"
 
 
+COHORT = "BCH"  # "BCH" or "CBTN"
+
 # Step 1
 SENSITIVITY = False
 SENSITIVITY_THRESHOLD = 2
@@ -143,6 +145,8 @@ BCH_GLIOMA_TYPES = {
     "JPA": "Astrocytoma",
     "gang": "Ganglioglioma",
     "glio": "Glial-neuronal glioma",
+    "glial": "Glial-neuronal glioma",
+    "neuro": "Glial-neuronal glioma",
     "DNET": "Glial-neuronal glioma",
     "neo": "Glial-neuronal glioma",
     "pseudo": "Other",
@@ -151,11 +155,11 @@ BCH_GLIOMA_TYPES = {
     "tectal": "Plain Low Grade Glioma",
 }
 
-# CBTN_GLIOMA_TYPES = {
-#     : "Astrocytoma",
-#     : "Ganglioglioma",
-#     : "Glial-neuronal",
-# }
+CBTN_GLIOMA_TYPES = {
+    "gang": "Ganglioglioma",
+    "astro": "Astrocytoma",
+    "glial": "Glial-neuronal",
+}
 
 
 # Mapping of BCH and CBTN columns
@@ -164,7 +168,6 @@ BCH_DTYPE_MAPPING = {
     "Location": "category",
     "Symptoms": "category",
     "Sex": "category",
-    "Race": "category",
     "BRAF Status": "category",
     "Treatment Type": "category",
     "Tumor Progression": "category",
@@ -175,8 +178,8 @@ BCH_DTYPE_MAPPING = {
 }
 
 BCH_DATETIME_COLUMNS = [
-    "Date First Diagnosis",
-    "Date First Treatment",
-    "Date First Progression",
-    "Date of last clinical follow-up",
+    "Age at First Diagnosis",
+    "Age at First Treatment",
+    "Age at First Progression",
+    "Age at Last Clinical Follow-Up",
 ]

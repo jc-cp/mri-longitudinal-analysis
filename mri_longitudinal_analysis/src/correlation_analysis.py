@@ -29,7 +29,6 @@ from utils.helper_functions import (
     fdr_correction,
     visualize_fdr_correction,
     save_for_deep_learning,
-    process_race_ethnicity,
     categorize_age_group,
     calculate_group_norms_and_stability,
     classify_patient,
@@ -159,30 +158,51 @@ class TumorAnalysis:
         self.clinical_data["Sex"] = self.clinical_data["Sex"].apply(
             lambda x: "Female" if x == "Female" else "Male"
         )
-        self.clinical_data["Race"] = self.clinical_data["Race/Ethnicity"]
-        self.clinical_data["Race"] = self.clinical_data["Race"].apply(process_race_ethnicity)
+
         self.clinical_data["BRAF Status"] = self.clinical_data.apply(
             lambda row: "V600E"
             if row["BRAF V600E mutation"] == "Yes"
             else ("Fusion" if row["BRAF fusion"] == "Yes" else "Wildtype"),
             axis=1,
         )
+
+        self.clinical_data["Date of Birth"] = pd.to_datetime(
+            self.clinical_data["Date of Birth"], dayfirst=True
+        )
+
         self.clinical_data["Date First Diagnosis"] = pd.to_datetime(
             self.clinical_data["MRI Date"], dayfirst=True
         )
+
+        self.clinical_data["Age at First Diagnosis"] = (
+            self.clinical_data["Date First Diagnosis"] - self.clinical_data["Date of Birth"]
+        ).dt.days / 365.25
+
         self.clinical_data["Date of last clinical follow-up"] = pd.to_datetime(
             self.clinical_data["Date of last clinical follow-up"], dayfirst=True
         )
+        self.clinical_data["Age at Last Clinical Follow-Up"] = (
+            self.clinical_data["Date of last clinical follow-up"]
+            - self.clinical_data["Date of Birth"]
+        ).dt.days / 365.25
+
         self.clinical_data["Date First Progression"] = pd.to_datetime(
             self.clinical_data["Date of First Progression"], dayfirst=True
         )
+        self.clinical_data["Age at First Progression"] = (
+            self.clinical_data["Date First Progression"] - self.clinical_data["Date of Birth"]
+        ).dt.days / 365.25
 
         self.clinical_data["Date First Treatment"] = pd.to_datetime(
             self.clinical_data["First Treatment"], dayfirst=True
         )
 
+        self.clinical_data["Age at First Treatment"] = (
+            self.clinical_data["Date First Treatment"] - self.clinical_data["Date of Birth"]
+        ).dt.days / 365.25
+
         self.clinical_data["Received Treatment"] = (
-            self.clinical_data["Date First Treatment"].notna().map({True: "Yes", False: "No"})
+            self.clinical_data["Age at First Treatment"].notna().map({True: "Yes", False: "No"})
         )
 
         self.clinical_data["Treatment Type"] = self.extract_treatment_types()
@@ -191,11 +211,11 @@ class TumorAnalysis:
             self.clinical_data["Follow-Up"].notna(), self.clinical_data["Follow-Up"], 0
         )
         self.clinical_data["Time to Treatment"] = np.where(
-            self.clinical_data["Date First Treatment"].notna(),
+            self.clinical_data["Age at First Treatment"].notna(),
             (
-                self.clinical_data["Date First Treatment"]
-                - self.clinical_data["Date First Diagnosis"]
-            ).dt.days,
+                self.clinical_data["Age at First Treatment"]
+                - self.clinical_data["Age at First Diagnosis"]
+            ),
             0,
         )
 
@@ -221,6 +241,61 @@ class TumorAnalysis:
 
     def load_clinical_data_cbtn(self, clinical_data_path, patient_ids_volumes):
         pass
+        # """
+        # Load clinical data from a CBTN CSV file, parse the clinical data to
+        # categorize diagnoses and other relevant fields to reduce the data for analysis.
+        # Updates the `self.clinical_data_reduced` attribute for CBTN data.
+
+        # Parameters:
+        # - clinical_data_path (str): Path to the clinical data file.
+        # """
+        # self.clinical_data = pd.read_csv(clinical_data_path)
+        # print(f"\tOriginal CBTN clinical data has length {len(self.clinical_data)}.")
+
+        # # Map CBTN columns to BCH equivalent
+        # self.clinical_data["CBTN Subject ID"] = self.clinical_data["CBTN Subject ID"].astype(str)
+
+        # # Map Location
+        # self.clinical_data["Location"] = self.map_dictionary(
+        #     correlation_cfg.CBTN_LOCATION,  # Define a suitable mapping dictionary
+        #     self.clinical_data["Tumor Locations"],
+        #     map_type="location",
+        # )
+
+        # # Map Sex
+        # self.clinical_data["Sex"] = self.clinical_data["Legal Sex"].apply(
+        #     lambda x: "Female" if x == "Female" else "Male"
+        # )
+
+        # # BRAF Status - Adjust based on available data
+        # # self.clinical_data["BRAF Status"] = [Your logic here]
+
+        # # Treatment Type
+        # self.clinical_data[
+        #     "Treatment Type"
+        # ] = self.extract_treatment_types_cbtn()  # Define this method based on CBTN data
+
+        # # Follow-up Time - Handle the absence of direct date information
+        # # self.clinical_data["Follow-up Time"] = [Your logic here]
+
+        # # Tumor Progression - Example mapping, adjust as necessary
+        # self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"].fillna("No")
+
+        # # Apply type conversions - Define CBTN_DTYPE_MAPPING as per CBTN data structure
+        # for column, dtype in correlation_cfg.CBTN_DTYPE_MAPPING.items():
+        #     self.clinical_data[column] = self.clinical_data[column].astype(dtype)
+
+        # # Select relevant columns for reduced data
+        # all_relevant_columns = list(
+        #     correlation_cfg.CBTN_DTYPE_MAPPING.keys()
+        # )  # Adjust this list based on CBTN data structure
+        # self.clinical_data_reduced = self.clinical_data[all_relevant_columns].copy()
+        # self.clinical_data_reduced = self.clinical_data_reduced[
+        #     self.clinical_data_reduced["CBTN Subject ID"].isin(patient_ids_volumes)
+        # ]
+        # print(f"\tFiltered CBTN clinical data has length {len(self.clinical_data_reduced)}.")
+
+        print("\tParsed CBTN clinical data.")
 
     def load_volumes_data(self, volumes_data_paths):
         """
@@ -450,7 +525,7 @@ class TumorAnalysis:
     def analyze_pre_treatment(self, prefix, output_dir):
         """
         Analyze data for pre-treatment cases. This involves finding correlations
-        between variables such as initial tumor volume, age, sex, mutations, and race.
+        between variables such as initial tumor volume, age, sex, mutations, etc.
         """
         print("\tPre-treatment Correlations:")
 
@@ -822,8 +897,8 @@ class TumorAnalysis:
         # self.merged_data using the maps
         m_data = pd.merge(
             self.merged_data,
-            data[["Patient_ID", "Date", "Stability Index", "Tumor Classification"]],
-            on=["Patient_ID", "Date"],
+            data[["Patient_ID", "Age", "Stability Index", "Tumor Classification"]],
+            on=["Patient_ID", "Age"],
             how="left",
         )
 
@@ -974,17 +1049,16 @@ class TumorAnalysis:
         # only patients who showed tumor progression before the first treatment
         analysis_data_pre = self.merged_data.copy()
         analysis_data_pre = analysis_data_pre[
-            analysis_data_pre["Date First Progression"] < analysis_data_pre["Date First Treatment"]
+            analysis_data_pre["Age at First Diagnosis"]
+            < analysis_data_pre["Age at First Treatment"]
         ]
         analysis_data_pre.loc[:, "Duration"] = (
-            analysis_data_pre["Date First Progression"] - analysis_data_pre["Date First Diagnosis"]
-        ).dt.days
+            analysis_data_pre["Age at First Progression"]
+            - analysis_data_pre["Age at First Diagnosis"]
+        )
 
-        analysis_data_pre["Event_Occurred"] = ~analysis_data_pre["Date First Progression"].isna()
-
-        # TODO: Add cases of survival in the post treatment setting, adjust the data accordingly
-        # TODO: Add a if/else condition based on the prefix and generalize data_handling
-
+        analysis_data_pre["Event_Occurred"] = ~analysis_data_pre["Age at First Progression"].isna()
+        analysis_data_pre = analysis_data_pre.dropna(subset=["Duration", "Event_Occurred"])
         kmf = KaplanMeierFitter()
 
         if stratify_by and stratify_by in analysis_data_pre.columns:
@@ -1152,15 +1226,13 @@ class TumorAnalysis:
 
 
 if __name__ == "__main__":
-    analysis_bch = TumorAnalysis(
+    analysis = TumorAnalysis(
         correlation_cfg.CLINICAL_CSV,
         [correlation_cfg.VOLUMES_CSV],
-        cohort="BCH",
+        cohort=correlation_cfg.COHORT,
     )
 
     os.makedirs(correlation_cfg.OUTPUT_DIR_CORRELATIONS, exist_ok=True)
     os.makedirs(correlation_cfg.OUTPUT_DIR_STATS, exist_ok=True)
 
-    analysis_bch.run_analysis(
-        correlation_cfg.OUTPUT_DIR_CORRELATIONS, correlation_cfg.OUTPUT_DIR_STATS
-    )
+    analysis.run_analysis(correlation_cfg.OUTPUT_DIR_CORRELATIONS, correlation_cfg.OUTPUT_DIR_STATS)
