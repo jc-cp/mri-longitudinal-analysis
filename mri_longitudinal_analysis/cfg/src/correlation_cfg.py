@@ -9,12 +9,14 @@ VOLUMES_CSV = Path(
     "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/new_review/output/time_series_csv_kernel_smoothed"
 )
 
-OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output")
-OUTPUT_DIR_CORRELATIONS = OUTPUT_DIR / "correlation_plots_bch"
-OUTPUT_DIR_STATS = OUTPUT_DIR / "correlation_stats_bch"
-
-
 COHORT = "BCH"  # "BCH" or "CBTN"
+SAMPLE_SIZE = 85  # for plotting growth trajectories, usually number of patients in cohort
+
+
+OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output")
+OUTPUT_DIR_CORRELATIONS = OUTPUT_DIR / f"correlation_plots_{COHORT.lower()}"
+OUTPUT_DIR_STATS = OUTPUT_DIR / f"correlation_stats_{COHORT.lower()}"
+
 
 # Step 1
 SENSITIVITY = False
@@ -32,8 +34,6 @@ PROGRESSION_THRESHOLD = 10  # angle value that defines progression
 HIGH_RISK_THRESHOLD = 25  # angle value that defines high increase
 STABILITY_THRESHOLD = 2  # angle value that defines stability
 
-SAMPLE_SIZE = 79  # for plotting growth trajectories, usually number of patients in cohort
-
 VOLUME_WEIGHT = 0.25
 GROWTH_WEIGHT = 0.75
 CHANGE_THRESHOLD = 25  # % volume change threshold for stability index
@@ -47,7 +47,7 @@ CORRECTION_ALPHA = 0.05
 FEATURE_ENG = True
 
 
-#### DICTIONARIES
+# DICTIONARIES: Symptoms, Locations, Glioma Types
 
 BCH_SYMPTOMS = {
     "incidental": "No symptoms (incident finding)",
@@ -123,6 +123,7 @@ BCH_LOCATION = {
 }
 
 CBTN_LOCATION = {
+    "Ventricles": "Ventricles",
     "Basal": "Basal Ganglia / Thalamus",
     "Thalamus": "Basal Ganglia / Thalamus",
     "Stem": "Brainstem",
@@ -135,10 +136,8 @@ CBTN_LOCATION = {
     "Suprasellar": "Meninges / Suprasellar",
     "Optic": "Optic Pathway",
     "Spinal": "Other",
-    "Ventricles": "Ventricles",
     "Other": "Other",
 }
-
 
 BCH_GLIOMA_TYPES = {
     "astro": "Astrocytoma",
@@ -156,9 +155,9 @@ BCH_GLIOMA_TYPES = {
 }
 
 CBTN_GLIOMA_TYPES = {
+    "neuro": "Glial-neuronal",
     "gang": "Ganglioglioma",
     "astro": "Astrocytoma",
-    "glial": "Glial-neuronal",
 }
 
 
@@ -172,12 +171,33 @@ BCH_DTYPE_MAPPING = {
     "Treatment Type": "category",
     "Tumor Progression": "category",
     "Received Treatment": "category",
-    "Follow-up Time": "int",
+    "Follow-Up Time": "int",
     "Time to Treatment": "int",
     "Histology": "category",
 }
 
 BCH_DATETIME_COLUMNS = [
+    "Age at First Diagnosis",
+    "Age at First Treatment",
+    "Age at First Progression",
+    "Age at Last Clinical Follow-Up",
+]
+
+CBTN_DTYPE_MAPPING = {
+    "CBTN Subject ID": "string",
+    "Location": "category",
+    "Symptoms": "category",
+    "Sex": "category",
+    "BRAF Status": "category",
+    "Treatment Type": "category",
+    "Tumor Progression": "category",
+    "Received Treatment": "category",
+    # "Follow-up Time": "int",          # provided through the volume data csv's and the ages
+    "Time to Treatment": "int",
+    "Histology": "category",
+}
+
+CBTN_DATETIME_COLUMNS = [
     "Age at First Diagnosis",
     "Age at First Treatment",
     "Age at First Progression",

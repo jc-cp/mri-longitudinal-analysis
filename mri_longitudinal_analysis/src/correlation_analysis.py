@@ -205,9 +205,9 @@ class TumorAnalysis:
             self.clinical_data["Age at First Treatment"].notna().map({True: "Yes", False: "No"})
         )
 
-        self.clinical_data["Treatment Type"] = self.extract_treatment_types()
+        self.clinical_data["Treatment Type"] = self.extract_treatment_types_bch()
 
-        self.clinical_data["Follow-up Time"] = np.where(
+        self.clinical_data["Follow-Up Time"] = np.where(
             self.clinical_data["Follow-Up"].notna(), self.clinical_data["Follow-Up"], 0
         )
         self.clinical_data["Time to Treatment"] = np.where(
@@ -240,60 +240,76 @@ class TumorAnalysis:
         print("\tParsed clinical data.")
 
     def load_clinical_data_cbtn(self, clinical_data_path, patient_ids_volumes):
-        pass
-        # """
-        # Load clinical data from a CBTN CSV file, parse the clinical data to
-        # categorize diagnoses and other relevant fields to reduce the data for analysis.
-        # Updates the `self.clinical_data_reduced` attribute for CBTN data.
+        """
+        Load clinical data from a CBTN CSV file, parse the clinical data to
+        categorize diagnoses and other relevant fields to reduce the data for analysis.
+        Updates the `self.clinical_data_reduced` attribute for CBTN data.
 
-        # Parameters:
-        # - clinical_data_path (str): Path to the clinical data file.
-        # """
-        # self.clinical_data = pd.read_csv(clinical_data_path)
-        # print(f"\tOriginal CBTN clinical data has length {len(self.clinical_data)}.")
+        Parameters:
+        - clinical_data_path (str): Path to the clinical data file.
+        """
+        self.clinical_data = pd.read_csv(clinical_data_path)
+        print(f"\tOriginal CBTN clinical data has length {len(self.clinical_data)}.")
 
-        # # Map CBTN columns to BCH equivalent
-        # self.clinical_data["CBTN Subject ID"] = self.clinical_data["CBTN Subject ID"].astype(str)
+        # Map CBTN columns to BCH equivalent
+        self.clinical_data["CBTN Subject ID"] = self.clinical_data["CBTN Subject ID"].astype(str)
 
-        # # Map Location
-        # self.clinical_data["Location"] = self.map_dictionary(
-        #     correlation_cfg.CBTN_LOCATION,  # Define a suitable mapping dictionary
-        #     self.clinical_data["Tumor Locations"],
-        #     map_type="location",
-        # )
+        # Map Location
+        self.clinical_data["Location"] = self.map_dictionary(
+            correlation_cfg.CBTN_LOCATION,  # Define a suitable mapping dictionary
+            self.clinical_data["Tumor Locations"],
+            map_type="location",
+        )
 
-        # # Map Sex
-        # self.clinical_data["Sex"] = self.clinical_data["Legal Sex"].apply(
-        #     lambda x: "Female" if x == "Female" else "Male"
-        # )
+        # Map symptoms
+        self.clinical_data["Symptoms"] = self.map_dictionary(
+            correlation_cfg.CBTN_SYMPTOMS,
+            self.clinical_data["Medical Conditions Present at Event"],
+            map_type="symptoms",
+        )
 
-        # # BRAF Status - Adjust based on available data
-        # # self.clinical_data["BRAF Status"] = [Your logic here]
+        # Map Sex
+        self.clinical_data["Sex"] = self.clinical_data["Legal Sex"].apply(
+            lambda x: "Female" if x == "Female" else "Male"
+        )
 
-        # # Treatment Type
-        # self.clinical_data[
-        #     "Treatment Type"
-        # ] = self.extract_treatment_types_cbtn()  # Define this method based on CBTN data
+        # Map Histology
+        self.clinical_data["Histology"] = self.map_dictionary(
+            correlation_cfg.CBTN_GLIOMA_TYPES, self.clinical_data["Diagnoses"], map_type="histology"
+        )
 
-        # # Follow-up Time - Handle the absence of direct date information
-        # # self.clinical_data["Follow-up Time"] = [Your logic here]
+        # Age Last Clinical Follow Up
+        self.clinical_data["Age at Last Clinical Follow-Up"] = self.clinical_data[
+            "Age at Last Known Clinical Status"
+        ]
 
-        # # Tumor Progression - Example mapping, adjust as necessary
-        # self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"].fillna("No")
+        # BRAF Status
+        self.clinical_data["BRAF Status"] = self.clinical_data[
+            "OpenPedCan Molecular Subtype"
+        ].apply(
+            lambda x: "V600E"
+            if "V600E" in str(x)
+            else ("Fusion" if "1549" in str(x) else "Wildtype")
+        )
 
-        # # Apply type conversions - Define CBTN_DTYPE_MAPPING as per CBTN data structure
-        # for column, dtype in correlation_cfg.CBTN_DTYPE_MAPPING.items():
-        #     self.clinical_data[column] = self.clinical_data[column].astype(dtype)
+        # Treatment Type, Received Treatment, Time to treatment and Age at First Treatment
+        self.extract_treatment_info_cbtn()
 
-        # # Select relevant columns for reduced data
-        # all_relevant_columns = list(
-        #     correlation_cfg.CBTN_DTYPE_MAPPING.keys()
-        # )  # Adjust this list based on CBTN data structure
-        # self.clinical_data_reduced = self.clinical_data[all_relevant_columns].copy()
-        # self.clinical_data_reduced = self.clinical_data_reduced[
-        #     self.clinical_data_reduced["CBTN Subject ID"].isin(patient_ids_volumes)
-        # ]
-        # print(f"\tFiltered CBTN clinical data has length {len(self.clinical_data_reduced)}.")
+        # Apply type conversions - Define CBTN_DTYPE_MAPPING as per CBTN data structure
+        for column, dtype in correlation_cfg.CBTN_DTYPE_MAPPING.items():
+            self.clinical_data[column] = self.clinical_data[column].astype(dtype)
+
+        # Select relevant columns for reduced data
+        all_relevant_columns = (
+            list(correlation_cfg.CBTN_DTYPE_MAPPING.keys()) + correlation_cfg.CBTN_DATETIME_COLUMNS
+        )
+
+        self.clinical_data_reduced = self.clinical_data[all_relevant_columns].copy()
+
+        self.clinical_data_reduced = self.clinical_data_reduced[
+            self.clinical_data_reduced["CBTN Subject ID"].isin(patient_ids_volumes)
+        ]
+        print(f"\tFiltered CBTN clinical data has length {len(self.clinical_data_reduced)}.")
 
         print("\tParsed CBTN clinical data.")
 
@@ -319,9 +335,10 @@ class TumorAnalysis:
                 patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
                 # Adjust patient id
                 patient_df["Patient_ID"] = patient_id
-                patient_df["Patient_ID"] = (
-                    patient_df["Patient_ID"].astype(str).str.zfill(7).astype("string")
-                )
+                if self.cohort == "BCH":
+                    patient_df["Patient_ID"] = (
+                        patient_df["Patient_ID"].astype(str).str.zfill(7).astype("string")
+                    )
 
                 data_frames.append(patient_df)
 
@@ -329,6 +346,20 @@ class TumorAnalysis:
         if self.cohort == "BCH":
             self.volumes_data["Date"] = pd.to_datetime(self.volumes_data["Date"], format="%d/%m/%Y")
 
+        # CBTN Follow up time
+        if self.cohort == "CBTN":
+            follow_up_times = {}
+            for patient_id in self.volumes_data["Patient_ID"].unique():
+                patient_data = self.volumes_data[self.volumes_data["Patient_ID"] == patient_id]
+                min_date = patient_data["Age"].min()
+                max_date = patient_data["Age"].max()
+                follow_up = max_date - min_date
+                follow_up_times[patient_id] = follow_up
+            self.volumes_data["Follow-Up Time"] = self.volumes_data["Patient_ID"].map(
+                follow_up_times
+            )
+
+        # Patient IDs in volumes data
         patient_ids_volumes = set(self.volumes_data["Patient_ID"].unique())
 
         self.volumes_data = self.volumes_data.rename(columns={"Volume Growth[%]": "Volume Change"})
@@ -337,7 +368,7 @@ class TumorAnalysis:
             self.volumes_data.fillna(0.0, inplace=True)
         return patient_ids_volumes
 
-    def extract_treatment_types(self):
+    def extract_treatment_types_bch(self):
         """
         Extract treatment types from the clinical data based on whether surgical resection,
         systemic therapy, or radiation was part of the initial treatment.
@@ -348,7 +379,7 @@ class TumorAnalysis:
         This function is called within the `load_clinical_data` method.
         """
         treatment_list = []
-
+        # TODO: Adjust this to the other logic
         for _, row in self.clinical_data.iterrows():
             treatments = []
 
@@ -371,6 +402,129 @@ class TumorAnalysis:
                 treatment_list.append("All Treatments")
 
         return treatment_list
+
+    def extract_treatment_info_cbtn(self):
+        """
+        Extracts treatment information for CBTN data.
+
+        Updates self.clinical_data with the columns:
+        [Age at First Diagnosis, Treatment Type,
+        Received Treatment, Time to Treatment, Age at First Treatment]
+        """
+
+        # Extract the first age recorded in volumes data for each patient
+        first_age_volumes = self.volumes_data.groupby("Patient_ID")["Age"].min()
+
+        # Initialize new columns in clinical_data
+        self.clinical_data["Age at First Diagnosis"] = None
+        self.clinical_data["Treatment Type"] = None
+        self.clinical_data["Received Treatment"] = None
+        self.clinical_data["Time to Treatment"] = None
+        self.clinical_data["Age at First Treatment"] = None
+        self.clinical_data["Tumor Progression"] = None
+        self.clinical_data["Age at First Progression"] = None
+        self.clinical_data["Time to Progression"] = None
+
+        # Loop through each patient in clinical_data
+        for idx, row in self.clinical_data.iterrows():
+            patient_id = str(row["CBTN Subject ID"])
+            age_at_event = int(row["Age at Event Days"])
+            surgery = row["Surgery"]
+            chemotherapy = row["Chemotherapy"]
+            radiation = row["Radiation"]
+            efsur = row["Event Free Survival"]
+            osur = row["Overall Survival"]
+            efsur = int(efsur) if str(efsur).isnumeric() else float("inf")
+            osur = int(osur) if str(osur).isnumeric() else float("inf")
+
+            # Progression
+            progression = "Yes" if efsur < osur else "No"
+            self.clinical_data.at[idx, "Tumor Progression"] = progression
+
+            # Age at First Diagnosis
+            if surgery == "Yes":
+                age_at_first_diagnosis = int(first_age_volumes.get(patient_id, age_at_event))
+            else:
+                age_at_first_diagnosis = age_at_event
+
+            self.clinical_data.at[idx, "Age at First Diagnosis"] = age_at_first_diagnosis
+
+            # Treatment Type
+            treatments = []
+            if surgery == "Yes":
+                treatments.append("Surgery")
+            if chemotherapy == "Yes":
+                treatments.append("Chemotherapy")
+            if radiation == "Yes":
+                treatments.append("Radiation")
+            treatment_type = ", ".join(treatments) if treatments else "No Treatment"
+
+            # TODO: Fix this manual correction
+            if treatment_type != "Surgery, Chemotherapy, Radiation":
+                self.clinical_data.at[idx, "Treatment Type"] = treatment_type
+
+            # Received Treatment
+            received_treatment = "Yes" if treatments else "No"
+            self.clinical_data.at[idx, "Received Treatment"] = received_treatment
+
+            # Time to Treatment and Age at First Treatment
+            if received_treatment == "Yes":
+                age_at_radiation_start = row["Age at Radiation Start"]
+                age_at_chemotherapy_start = row["Age at Chemotherapy Start"]
+                age_at_radiation_start = (
+                    int(age_at_radiation_start)
+                    if str(age_at_radiation_start).isnumeric()
+                    else float("inf")
+                )
+                age_at_chemotherapy_start = (
+                    int(age_at_chemotherapy_start)
+                    if str(age_at_chemotherapy_start).isnumeric()
+                    else float("inf")
+                )
+                age_at_first_treatment = min(
+                    age_at_chemotherapy_start, age_at_radiation_start, age_at_event
+                )
+
+                self.clinical_data.at[idx, "Age at First Treatment"] = age_at_first_treatment
+                self.clinical_data.at[idx, "Time to Treatment"] = (
+                    age_at_first_treatment - age_at_first_diagnosis
+                )
+
+            # Calculate Age at First Progression and Time to Progression
+            if pd.notna(efsur) and pd.notna(osur):
+                if efsur < osur:
+                    self.clinical_data.at[idx, "Tumor Progression"] = "Yes"
+                    if pd.notna(row["Age at First Treatment"]):
+                        age_at_first_progression = row["Age at First Treatment"] + efsur
+                    else:
+                        # Use Age at First Diagnosis + EFS if Age at First Treatment is not available
+                        age_at_first_progression = age_at_first_diagnosis + efsur
+                    self.clinical_data.at[
+                        idx, "Age at First Progression"
+                    ] = age_at_first_progression
+                    self.clinical_data.at[idx, "Time to Progression"] = (
+                        age_at_first_progression - age_at_first_diagnosis
+                    )
+                else:
+                    self.clinical_data.at[idx, "Progression"] = "No"
+
+        self.clinical_data["Age at First Diagnosis"] = pd.to_numeric(
+            self.clinical_data["Age at First Diagnosis"], errors="coerce"
+        )
+        self.clinical_data["Age at Last Clinical Follow-Up"] = pd.to_numeric(
+            self.clinical_data["Age at Last Clinical Follow-Up"], errors="coerce"
+        )
+
+        # Fill missing values
+        self.clinical_data.fillna(
+            {
+                "Time to Treatment": 0,
+                "Age at First Treatment": age_at_first_diagnosis,
+                "Age at First Progression": 0,
+                "Time to Progression": 0,
+            },
+            inplace=True,
+        )
 
     def merge_data(self):
         """
@@ -659,8 +813,8 @@ class TumorAnalysis:
         num_patients = data["Patient_ID"].nunique()
 
         units = {
-            "Age": "years",
-            "Age Group": "years",
+            "Age": "days",
+            "Age Group": "days",
             "Date": "date",
             "Time to Treatment": "days",
             "Volume": "mm³",
@@ -1019,11 +1173,11 @@ class TumorAnalysis:
             write_stat(f"\t\tMaximum Baseline Volume: {max_baseline_volume / mm3_to_cm3} cm^3")
             write_stat(f"\t\tMinimum Baseline Volume: {min_baseline_volume / mm3_to_cm3} cm^3")
 
-            # Follow-up time
+            # Follow-Up time
             average_days_per_month = 30.44
-            median_follow_up = self.merged_data["Follow-up Time"].median()
-            max_follow_up = self.merged_data["Follow-up Time"].max()
-            min_follow_up = self.merged_data["Follow-up Time"].min()
+            median_follow_up = self.merged_data["Follow-Up Time"].median()
+            max_follow_up = self.merged_data["Follow-Up Time"].max()
+            min_follow_up = self.merged_data["Follow-Up Time"].min()
             median_follow_up_months = median_follow_up / average_days_per_month
             max_follow_up_months = max_follow_up / average_days_per_month
             min_follow_up_months = min_follow_up / average_days_per_month
@@ -1159,7 +1313,6 @@ class TumorAnalysis:
         if correlation_cfg.ANALYSIS_PRE_TREATMENT:
             prefix = f"{self.cohort}_pre_treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
-
             # Survival analysis
             stratify_by_list = [
                 "Location",
