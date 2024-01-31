@@ -10,7 +10,7 @@ import pandas as pd
 from cfg.src import arima_cfg
 from pandas.plotting import autocorrelation_plot
 from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.stattools import adfuller, pacf
+from statsmodels.tsa.stattools import adfuller, pacf, acf
 
 
 class TimeSeriesDataHandler:
@@ -261,12 +261,18 @@ class ArimaPrediction:
             stationary_data = data
             d_value = 0
 
-        # Get p_value from partial correlation
+        # Get range for p_value from partial correlation
         if p_value is None:
             suggested_p_value = self._determine_p_from_pacf(stationary_data)
             p_range = range(max(0, suggested_p_value - 2), suggested_p_value + 3)
 
-        if p_value is None or d_value is None or q_value is None:
+        # Get range for q_value from auto correlation
+        if q_value is None:
+            suggested_q_value = self._determine_q_from_acf(stationary_data)
+            q_range = range(max(0, suggested_q_value - 2), suggested_q_value + 3)
+
+        # Get the best ARIMA order
+        if p_value is None or q_value is None:
             p_value, d_value, q_value = self.find_best_arima_order(
                 stationary_data, p_range, d_value, q_range
             )
@@ -288,12 +294,13 @@ class ArimaPrediction:
             hqic = model_fit.hqic
 
             # Forecast and plotting
-            forecast, _, conf_int = model_fit.forecast(steps=forecast_steps)
-            # forecast = model_fit.forecast(steps=forecast_steps)
-            forecast = ArimaPrediction.invert_differencing(data, forecast, d_value)
+            forecast, stderr, conf_int = model_fit.forecast(steps=forecast_steps)
+            if d_value > 0:
+                forecast = ArimaPrediction.invert_differencing(data, forecast, d_value)
             forecast_series = pd.Series(forecast, name="Predictions")
+
             # Save forecasts plots
-            # self._save_forecast_fig(data, forecast, forecast_steps, conf_int, patient_id)
+            self._save_forecast_fig(data, forecast, forecast_steps, conf_int, patient_id)
 
             # plot residual errors
             residuals = model_fit.resid
@@ -305,12 +312,14 @@ class ArimaPrediction:
             # Saving to df
             self.cohort_summary[patient_id] = {
                 "forecast": forecast_series.tolist(),
+                "stderr": stderr,
+                "CI": conf_int,
                 "aic": aic,
                 "bic": bic,
                 "hqic": hqic,
                 "residuals": residuals,
-                "CI": conf_int,
             }
+            self._save_cohort_summary_to_csv()
 
         except (IOError, ValueError) as error:
             print("An error occurred:", str(error))
@@ -340,15 +349,6 @@ class ArimaPrediction:
 
         return data, d_value
 
-    def _get_adaptive_forecast_steps(self, data):
-        """
-        Returns the forecast frequency based on the size of the dataset.
-        """
-        n_steps = len(data)
-        # Forecast proportionally based on data length.
-        # This takes 5% of data length as forecast steps. Adjust as needed.
-        return max(1, int(n_steps * 0.05))
-
     def _determine_p_from_pacf(self, data, alpha=0.05):
         """
         Returns the optimal p value for ARIMA based on PACF.
@@ -361,32 +361,52 @@ class ArimaPrediction:
         """
 
         pacf_vals, confint = pacf(data, alpha=alpha, nlags=min(len(data) // 2 - 1, 10))
-        significant_lags = np.where(pacf_vals > confint[:, 1]) or np.where(
-            pacf_vals < confint[:, 0]
-        )
+        significant_lags = [
+            lag
+            for lag, pacf_val in enumerate(pacf_vals)
+            if pacf_val > confint[lag, 1] or pacf_val < confint[lag, 0]
+        ]
 
-        if significant_lags[0].any():
-            return significant_lags[0][-1]
+        if significant_lags:
+            return max(significant_lags)
+        return 1  # Default to 1 if none are significant
+
+    def _determine_q_from_acf(self, data, alpha=0.05):
+        """
+        Returns the optimal q value for ARIMA based on ACF.
+        Parameters:
+        - data: Time series data.
+        - alpha: Significance level for ACF.
+
+        Returns:
+        - q value
+        """
+        acf_vals, confint = acf(data, alpha=alpha, nlags=min(len(data) // 2 - 1, 10))
+
+        significant_lags = [
+            lag
+            for lag, acf_val in enumerate(acf_vals)
+            if acf_val > confint[lag, 1] or acf_val < confint[lag, 0]
+        ]
+
+        if significant_lags:
+            return max(significant_lags)
         return 1  # Default to 1 if none are significant
 
     def find_best_arima_order(self, stationary_data, p_range, d_value, q_range):
         """
-        Determine the best ARIMA order based on AIC, BIC, and HQIC criteria.
+        Determine the best ARIMA order based on AIC.
 
         Parameters:
         - data (pd.Series): The time series data for which the ARIMA order needs to be determined.
         - p_range (range): The range of values for the ARIMA 'p' parameter to be tested.
-        - d_range (range): The range of values for the ARIMA 'd' parameter to be tested.
         - q_range (range): The range of values for the ARIMA 'q' parameter to be tested.
 
         Returns:
         - tuple: The optimal (p, d, q) order for the ARIMA model.
 
-        Note:
-        The function attempts to fit an ARIMA model for each combination of p, d, q values provided.
-        The combination that minimizes the AIC, BIC, and HQIC values is selected as the best order.
         """
-        best_aic, best_bic, best_hqic = float("inf"), float("inf"), float("inf")
+        best_aic = float("inf")
         best_order = None
 
         for p_value in p_range:
@@ -395,30 +415,24 @@ class ArimaPrediction:
                     model = ARIMA(stationary_data, order=(p_value, d_value, q_value))
                     model_fit = model.fit()
 
-                    if (
-                        (model_fit.aic < best_aic)
-                        and (model_fit.bic < best_bic)
-                        and (model_fit.hqic < best_hqic)
-                    ):
-                        best_aic, best_bic, best_hqic = (
-                            model_fit.aic,
-                            model_fit.bic,
-                            model_fit.hqic,
-                        )
+                    if model_fit.aic < best_aic:
+                        best_aic = model_fit.aic
                         best_order = (p_value, d_value, q_value)
 
-                        # [FIXME]:
-                        # avg_score = (model_fit.aic + model_fit.bic + model_fit.hqic) / 3
-                        # if avg_score < (best_aic + best_bic + best_hqic) / 3:
-                        #     best_aic = model_fit.aic
-                        #     best_bic = model_fit.bic
-                        #     best_hqic = model_fit.hqic
-                        #     best_order = (p_value, d_value, q_value)
                 except (MemoryError, ModuleNotFoundError, InterruptedError) as error:
                     print(error)
                     continue
 
         return best_order
+
+    def _get_adaptive_forecast_steps(self, data):
+        """
+        Returns the forecast frequency based on the size of the dataset.
+        """
+        n_steps = len(data)
+        # Forecast proportionally based on data length.
+        # This takes 25% of data length as forecast steps. Adjust as needed.
+        return max(1, int(n_steps * 0.25))
 
     @staticmethod
     def invert_differencing(original_series, diff_values, d_order=1):
@@ -455,9 +469,9 @@ class ArimaPrediction:
     # Output methods #
     ##################
 
-    def _save_cohort_summary_to_csv(self, summary: pd.DataFrame):
+    def _save_cohort_summary_to_csv(self):
         """Save the forecast to a .csv file."""
-        summary.to_csv(
+        self.cohort_summary.to_csv(
             os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_summary.csv"),
             index=False,
         )
