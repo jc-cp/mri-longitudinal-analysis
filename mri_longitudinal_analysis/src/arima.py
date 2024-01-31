@@ -85,7 +85,7 @@ class TimeSeriesDataHandler:
                 print(f"\tPatient {file_names[idx]} is not stationary.")
 
             print("Starting prediction:")
-            arima_pred.arima_prediction(data=ts_data, filename=file_names[idx])
+            arima_pred.arima_prediction(data=ts_data, patient_id=file_names[idx])
 
     def perform_dickey_fuller_test(self, data, patient_id):
         """Performing Dickey Fuller test to see the stationarity of series."""
@@ -149,7 +149,7 @@ class ArimaPrediction:
                     data
                 ).plot(),  # Use lambda to adapt the plot() method
                 "title": "Residuals Plot",
-                "xlabel": "Date/Time",
+                "xlabel": "Age (in days)",
                 "ylabel": "Residuals",
             },
             "density": {
