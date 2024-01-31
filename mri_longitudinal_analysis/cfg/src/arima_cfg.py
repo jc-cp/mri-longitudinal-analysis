@@ -2,13 +2,11 @@
 
 from pathlib import Path
 
-TIME_SERIES_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/output/time_series_csv_kernel_smoothed"
-)
+TIME_SERIES_DIR = Path("/home/juanqui55/git/mri-longitudinal-analysis/data/input/time_series")
 COHORT = "CBTN"
 
 OUTPUT_DIR = Path(
-    f"/home/jc053/GIT/mri_longitudinal_analysis/data/output/arima_plots_{COHORT.lower()}"
+    f"/home/juanqui55/git/mri-longitudinal-analysis/data/output/arima_plots_{COHORT.lower()}"
 )
 
 

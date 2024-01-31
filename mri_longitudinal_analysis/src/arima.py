@@ -25,25 +25,25 @@ class TimeSeriesDataHandler:
         Loads time series data either from a directory or from a specified file.
 
         Returns:
-        - list: A list of loaded time series data.
+        - list: A list of loaded time series data as DataFrames.
         """
         time_series_list = []
         file_names = []
         try:
             if os.path.isdir(self.directory):
                 print("\tLoading data...")
-                for filename in os.listdir(self.directory):
+                for idx, filename in enumerate(os.listdir(self.directory)):
                     if filename.endswith(".csv"):
+                        if self.loading_limit and idx >= self.loading_limit:
+                            break
                         filepath = os.path.join(self.directory, filename)
-                        ts_data = pd.read_csv(
-                            filepath, usecols=[0, 1], parse_dates=[0], index_col=0
-                        )
-                        time_series_list.append(ts_data.squeeze())
+                        ts_data = pd.read_csv(filepath)
+                        time_series_list.append(ts_data)
                         file_names.append(os.path.splitext(filename)[0])
             elif os.path.isfile(self.directory) and self.directory.endswith(".csv"):
                 print("\tLoading data...")
-                ts_data = pd.read_csv(self.directory, usecols=[0, 1], parse_dates=[0], index_col=0)
-                time_series_list.append(ts_data.squeeze())
+                ts_data = pd.read_csv(self.directory)
+                time_series_list.append(ts_data)
                 file_names.append(os.path.splitext(self.directory)[0])
             return time_series_list, file_names
         except (FileNotFoundError, IOError) as error:
@@ -62,7 +62,38 @@ class TimeSeriesDataHandler:
             ts_data = pd.read_csv(self.directory, usecols=[0, 1], parse_dates=[0], index_col=0)
             yield ts_data.squeeze(), os.path.splitext(self.directory)[0]
 
-    def process_series(self, series_list, arima_pred, file_names):
+    def process_and_interpolate_series(self, series_list, file_names, freq=1):
+        """
+        Process and interpolate the series with 'Age' as an integer index representing days.
+
+        :param series_list: List of loaded time series data as DataFrames.
+        :param file_names: List of filenames.
+        :param freq: Frequency for interpolation (default is 1, representing daily data).
+        :return: List of processed and interpolated series.
+        """
+        processed_series_list = []
+
+        for idx, ts_data in enumerate(series_list):
+            print(f"Interpolating data for: {file_names[idx]}")
+
+            # Set 'Age' as the index if it's not already
+            if "Age" in ts_data.columns:
+                ts_data["Age"] = ts_data["Age"].astype(int)
+                ts_data.set_index("Age", inplace=True)
+
+            # Generate a new index that fills in the missing days
+            new_index = range(ts_data.index.min(), ts_data.index.max() + freq, freq)
+            ts_data = ts_data.reindex(new_index)
+            ts_data.interpolate(method="linear", inplace=True)
+
+            if "Volume" not in ts_data.columns:
+                print(f"Warning: 'Volume' column missing after interpolation for {file_names[idx]}")
+                continue
+            processed_series_list.append(ts_data)
+
+        return processed_series_list
+
+    def process_series(self, series_list, arima_pred, file_names, target_column="Volume"):
         """
         Main method to handle series for csv data.
         :param series_list: List of series data.
@@ -70,22 +101,26 @@ class TimeSeriesDataHandler:
         :param file_names: List of filenames
         """
         for idx, ts_data in enumerate(series_list):
+            volume_ts = ts_data[target_column]
+
             print(f"Preliminary check for patient: {file_names[idx]}")
             if arima_cfg.PLOTTING:
                 print(f"\tCreating Autocorrelation plot for: {file_names[idx]}")
-                arima_pred.generate_plot(ts_data, "autocorrelation", file_names[idx])
+                arima_pred.generate_plot(volume_ts, "autocorrelation", file_names[idx])
                 print(f"\tCreating Partial Autocorrelation plot for: {file_names[idx]}")
-                arima_pred.generate_plot(ts_data, "partial_autocorrelation", file_names[idx])
+                arima_pred.generate_plot(volume_ts, "partial_autocorrelation", file_names[idx])
 
             print("\tChecking stationarity through ADF test.")
-            is_stat = self.perform_dickey_fuller_test(data=ts_data, patient_id=file_names[idx])
+            is_stat = self.perform_dickey_fuller_test(data=volume_ts, patient_id=file_names[idx])
             if is_stat:
                 print(f"\tPatient {file_names[idx]} is stationary.")
             else:
                 print(f"\tPatient {file_names[idx]} is not stationary.")
 
             print("Starting prediction:")
-            arima_pred.arima_prediction(data=ts_data, patient_id=file_names[idx])
+            arima_pred.arima_prediction(
+                data=volume_ts, patient_id=file_names[idx], is_stationary=is_stat
+            )
 
     def perform_dickey_fuller_test(self, data, patient_id):
         """Performing Dickey Fuller test to see the stationarity of series."""
@@ -185,7 +220,12 @@ class ArimaPrediction:
         plt.bar(range(len(values)), values)
         plt.fill_between(range(len(confint)), confint[:, 0], confint[:, 1], color="pink", alpha=0.3)
 
-    def generate_plot(self, data, plot_type, patient_id):
+    def generate_plot(
+        self,
+        data,
+        plot_type,
+        patient_id,
+    ):
         """
         Generates and saves various plots based on the provided data and plot type.
 
@@ -255,8 +295,9 @@ class ArimaPrediction:
 
         # Make series stationary and gets the differencing d_value
         if not is_stationary:
-            print("\tMaking data stationary!")
             stationary_data, d_value = self._make_series_stationary(data)
+            print("\tMade data stationary!")
+
         else:
             stationary_data = data
             d_value = 0
@@ -265,17 +306,20 @@ class ArimaPrediction:
         if p_value is None:
             suggested_p_value = self._determine_p_from_pacf(stationary_data)
             p_range = range(max(0, suggested_p_value - 2), suggested_p_value + 3)
+            print("\tGotten p_range!")
 
         # Get range for q_value from auto correlation
         if q_value is None:
             suggested_q_value = self._determine_q_from_acf(stationary_data)
             q_range = range(max(0, suggested_q_value - 2), suggested_q_value + 3)
+            print("\tGotten q_range!")
 
         # Get the best ARIMA order
         if p_value is None or q_value is None:
             p_value, d_value, q_value = self.find_best_arima_order(
                 stationary_data, p_range, d_value, q_range
             )
+            print(f"\tBest ARIMA order: ({p_value}, {d_value}, {q_value})")
 
         try:
             # Get adaptive forecast steps
@@ -283,7 +327,7 @@ class ArimaPrediction:
 
             model = ARIMA(stationary_data, order=(p_value, d_value, q_value))
             model_fit = model.fit()
-
+            print(f"\tModel fit for patient {patient_id}.")
             if arima_cfg.DIAGNOSTICS:
                 self._diagnostics(model_fit, patient_id)
                 print(f"ARIMA model summary for patient {patient_id}:\n{model_fit.summary()}")
@@ -328,7 +372,11 @@ class ArimaPrediction:
     # ARIMA variables methods #
     ###########################
 
-    def _make_series_stationary(self, data, max_diff=3):
+    def _make_series_stationary(
+        self,
+        data,
+        max_diff=3,
+    ):
         """
         Returns the differenced series until it becomes stationary or reaches max
         allowed differencing.
@@ -490,4 +538,6 @@ if __name__ == "__main__":
     ts_handler = TimeSeriesDataHandler(arima_cfg.TIME_SERIES_DIR, arima_cfg.LOADING_LIMIT)
     ts_data_list, filenames = ts_handler.load_data()
     print("\tData loaded!")
-    ts_handler.process_series(ts_data_list, arima_prediction, filenames)
+    processed_series = ts_handler.process_and_interpolate_series(ts_data_list, filenames)
+    print("\tData interpolated!")
+    ts_handler.process_series(processed_series, arima_prediction, filenames)
