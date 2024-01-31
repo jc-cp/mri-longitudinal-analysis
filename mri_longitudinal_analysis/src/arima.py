@@ -1,89 +1,24 @@
 """
 This script provides functionality for ARIMA-based time series prediction.
-It supports loading data from both images and .csv files.
+It supports loading data from .csv files.
 """
 import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from cfg import arima_cfg
+from cfg.src import arima_cfg
 from pandas.plotting import autocorrelation_plot
-from PIL import Image
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.stattools import adfuller, pacf
 
 
-class DataHandler:
-    """Abstract class for both loading DataHandler child classes."""
+class TimeSeriesDataHandler:
+    """Loads time-series data and processes it for the prediction."""
 
     def __init__(self, directory, loading_limit):
         self.directory = directory
         self.loading_limit = loading_limit
-
-    def load_data(self):
-        """Load data from the source. Should be implemented by subclasses."""
-        raise NotImplementedError
-
-    def process_series(self, series_list, arima_pred, file_names):
-        """
-        Main method to handle series for both images and csv data.
-        :param series_list: List of series data.
-        :param arima_pred: Constructor of the class
-        :param file_names: List of filenames
-        """
-        for idx, ts_data in enumerate(series_list):
-            print(f"Creating Autocorrelation plot for: {file_names[idx]}")
-            arima_pred.generate_plot(ts_data, "autocorrelation", file_names[idx])
-            print(f"Creating Partial Autocorrelation plot for: {file_names[idx]}")
-            arima_pred.generate_plot(ts_data, "partial_autocorrelation", file_names[idx])
-            print("Checking stationarity through ADF test.")
-            arima_pred.perform_dickey_fuller_test(data=ts_data, filename=file_names[idx])
-            print("Starting prediction!")
-            arima_pred.arima_prediction(data=ts_data, filename=file_names[idx])
-
-    def load_data_generator(self):
-        """Generate data on-the-fly for memory efficiency. Should be implemented by subclasses."""
-        raise NotImplementedError
-
-
-class ImageDataHandler(DataHandler):
-    """Loads image data and processes it for the prediction."""
-
-    def load_data(self):
-        """Loads images from the specified directory up to the loading limit."""
-        imgs = []
-        file_names = []
-        try:
-            loaded_images = 0
-            print("Loading data!")
-            for filename in os.listdir(self.directory):
-                if filename.endswith(".png"):
-                    img = Image.open(os.path.join(self.directory, filename)).convert("L")
-                    imgs.append(list(img.getdata()))
-                    file_names.append(os.path.splitext(filename)[0])
-                    loaded_images += 1
-                    if self.loading_limit and loaded_images >= self.loading_limit:
-                        break
-            return imgs, file_names
-        except (FileNotFoundError, IOError) as error:
-            print(f"Error loading images: {error}")
-            return [], []
-
-    def load_data_generator(self):
-        """Generate image data on-the-fly for memory efficiency."""
-        loaded_images = 0
-        for filename in os.listdir(self.directory):
-            if filename.endswith(".png"):
-                img = Image.open(os.path.join(self.directory, filename)).convert("L")
-                yield list(img.getdata()), os.path.splitext(filename)[0]
-                loaded_images += 1
-                if self.loading_limit and loaded_images >= self.loading_limit:
-                    break
-
-
-class TimeSeriesDataHandler(DataHandler):
-    """Loads time-series data and processes it for the prediction."""
 
     def load_data(self):
         """
@@ -96,7 +31,7 @@ class TimeSeriesDataHandler(DataHandler):
         file_names = []
         try:
             if os.path.isdir(self.directory):
-                print("Loading data!")
+                print("\tLoading data...")
                 for filename in os.listdir(self.directory):
                     if filename.endswith(".csv"):
                         filepath = os.path.join(self.directory, filename)
@@ -106,7 +41,7 @@ class TimeSeriesDataHandler(DataHandler):
                         time_series_list.append(ts_data.squeeze())
                         file_names.append(os.path.splitext(filename)[0])
             elif os.path.isfile(self.directory) and self.directory.endswith(".csv"):
-                print("Loading data!")
+                print("\tLoading data...")
                 ts_data = pd.read_csv(self.directory, usecols=[0, 1], parse_dates=[0], index_col=0)
                 time_series_list.append(ts_data.squeeze())
                 file_names.append(os.path.splitext(self.directory)[0])
@@ -127,6 +62,61 @@ class TimeSeriesDataHandler(DataHandler):
             ts_data = pd.read_csv(self.directory, usecols=[0, 1], parse_dates=[0], index_col=0)
             yield ts_data.squeeze(), os.path.splitext(self.directory)[0]
 
+    def process_series(self, series_list, arima_pred, file_names):
+        """
+        Main method to handle series for csv data.
+        :param series_list: List of series data.
+        :param arima_pred: Constructor of the class
+        :param file_names: List of filenames
+        """
+        for idx, ts_data in enumerate(series_list):
+            print(f"Preliminary check for patient: {file_names[idx]}")
+            if arima_cfg.PLOTTING:
+                print(f"\tCreating Autocorrelation plot for: {file_names[idx]}")
+                arima_pred.generate_plot(ts_data, "autocorrelation", file_names[idx])
+                print(f"\tCreating Partial Autocorrelation plot for: {file_names[idx]}")
+                arima_pred.generate_plot(ts_data, "partial_autocorrelation", file_names[idx])
+
+            print("\tChecking stationarity through ADF test.")
+            is_stat = self.perform_dickey_fuller_test(data=ts_data, patient_id=file_names[idx])
+            if is_stat:
+                print(f"\tPatient {file_names[idx]} is stationary.")
+            else:
+                print(f"\tPatient {file_names[idx]} is not stationary.")
+
+            print("Starting prediction:")
+            arima_pred.arima_prediction(data=ts_data, filename=file_names[idx])
+
+    def perform_dickey_fuller_test(self, data, patient_id):
+        """Performing Dickey Fuller test to see the stationarity of series."""
+
+        # Augmented Dickey-Fuller test
+        result = adfuller(data)
+        adf_stat = result[0]
+        p_value = result[1]
+        used_lag = result[2]
+        n_obs = result[3]
+        critical_values = result[4]
+        icbest = result[5]
+        with open(
+            os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_adf_test.txt"),
+            "w",
+            encoding="utf-8",
+        ) as file:
+            file.write(f"ADF Statistic for patient {patient_id}: {adf_stat}\n")
+            file.write(f"p-value for patient {patient_id}: {p_value}\n")
+            file.write(f"Used lags for patient {patient_id}: {used_lag}\n")
+            file.write(
+                f"Number of observations for patient {patient_id}: {n_obs} (len(series)-"
+                " used_lags)\n"
+            )
+            for key, value in critical_values.items():
+                file.write(f"Critical Value ({key}) for patient {patient_id}: {value}\n")
+            file.write(f"IC Best for patient {patient_id}: {icbest}\n")
+
+        is_stationary = p_value < 0.05
+        return is_stationary
+
 
 class ArimaPrediction:
     """
@@ -137,8 +127,8 @@ class ArimaPrediction:
         """
         Constructor for the Arima_prediction class.
         """
-        self.images = []
-        self.filenames = []
+        self.patient_ids = {}
+        self.cohort_summary = pd.DataFrame()
         os.makedirs(arima_cfg.OUTPUT_DIR, exist_ok=True)
 
         self.plot_types = {
@@ -172,6 +162,10 @@ class ArimaPrediction:
             },
         }
 
+    ############
+    # Plotting #
+    ############
+
     def custom_plot_pacf(self, data):
         """
         Plots the Partial Autocorrelation Function (PACF) of the given time series data
@@ -191,49 +185,81 @@ class ArimaPrediction:
         plt.bar(range(len(values)), values)
         plt.fill_between(range(len(confint)), confint[:, 0], confint[:, 1], color="pink", alpha=0.3)
 
-    def generate_plot(self, data, plot_type, filename):
+    def generate_plot(self, data, plot_type, patient_id):
         """
         Generates and saves various plots based on the provided data and plot type.
 
         Parameters:
         - data (Series): Time series data.
         - plot_type (str): Type of the plot to generate.
-        - filename (str): Name of the data file.
+        - patient_id (str): Name of the data file.
         """
         plt.figure(figsize=(10, 6))
 
         plot_func = self.plot_types[plot_type]["function"]
         plot_func(data)
 
-        plt.title(self.plot_types[plot_type]["title"] + f" for {filename}")
+        plt.title(self.plot_types[plot_type]["title"] + f" for {patient_id}")
         plt.xlabel(self.plot_types[plot_type]["xlabel"])
         plt.ylabel(self.plot_types[plot_type]["ylabel"])
 
         plt.grid(True)
         plt.tight_layout()
 
-        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}_{plot_type}.png"))
+        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_{plot_type}.png"))
         plt.close()
+
+    def _save_forecast_fig(
+        self,
+        data,
+        forecast,
+        forecast_steps,
+        conf_int,
+        patient_id,
+    ):
+        plt.figure(figsize=(12, 6))
+        plt.plot(data, color="blue", label="Historical Data")
+        plt.plot(
+            range(len(data), len(data) + forecast_steps), forecast, color="red", label="Forecast"
+        )
+        plt.fill_between(
+            range(len(data), len(data) + forecast_steps),
+            conf_int[:, 0],
+            conf_int[:, 1],
+            color="pink",
+            alpha=0.3,
+        )
+        plt.title("ARIMA Forecast with Confidence Intervals")
+        plt.legend()
+        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_forecast_plot.png"))
+        plt.close()
+
+    #################
+    # Main function #
+    #################
 
     def arima_prediction(
         self,
         data,
-        filename,
+        patient_id,
+        is_stationary=False,
         p_value=None,
         d_value=None,
         q_value=None,
-        forecast_steps=2,
+        forecast_steps=3,
         p_range=range(5),
         q_range=range(5),
     ):
         """Actual arima prediction method. Gets the corresponding
         p,d,q values from analysis and performs a prediction."""
 
-        suffix = "from_image" if "image" in filename else "from_csv"
-
-        # Make series stationary and get the differencing d_value
-        print("Making data stationary!")
-        stationary_data, d_value = self._make_series_stationary(data)
+        # Make series stationary and gets the differencing d_value
+        if not is_stationary:
+            print("\tMaking data stationary!")
+            stationary_data, d_value = self._make_series_stationary(data)
+        else:
+            stationary_data = data
+            d_value = 0
 
         # Get p_value from partial correlation
         if p_value is None:
@@ -252,95 +278,46 @@ class ArimaPrediction:
             model = ARIMA(stationary_data, order=(p_value, d_value, q_value))
             model_fit = model.fit()
 
-            # Display AIC and BIC metrics
-            print(f"ARIMA AIC for image {filename}: {model_fit.aic}")
-            print(f"ARIMA BIC for image {filename}: {model_fit.bic}")
-            print(f"ARIMA HQIC for image {filename}: {model_fit.hqic}")
-            print(f"ARIMA model summary for image {filename}:\n{model_fit.summary()}")
+            if arima_cfg.DIAGNOSTICS:
+                self._diagnostics(model_fit, patient_id)
+                print(f"ARIMA model summary for patient {patient_id}:\n{model_fit.summary()}")
 
-            # Forecast next `forecast_steps` points
-            # forecast, _, conf_int = model_fit.forecast(steps=forecast_steps)
-            forecast = model_fit.forecast(steps=forecast_steps)
+            # Metrics
+            aic = model_fit.aic
+            bic = model_fit.bic
+            hqic = model_fit.hqic
 
-            # self._diagnostics(model_fit, filename)
-
+            # Forecast and plotting
+            forecast, _, conf_int = model_fit.forecast(steps=forecast_steps)
+            # forecast = model_fit.forecast(steps=forecast_steps)
             forecast = ArimaPrediction.invert_differencing(data, forecast, d_value)
             forecast_series = pd.Series(forecast, name="Predictions")
-
-            # Save forecasts
-            # self._save_forecast_fig(data, forecast, forecast_steps, conf_int, filename)
-            self._save_forecast_csv(forecast_series, filename, suffix)
+            # Save forecasts plots
+            # self._save_forecast_fig(data, forecast, forecast_steps, conf_int, patient_id)
 
             # plot residual errors
-            self.generate_plot(model_fit.resid, "residuals", filename)
-            self.generate_plot(model_fit.resid, "density", filename)
-
-            # optional description
             residuals = model_fit.resid
-            print(residuals.describe())
+            self.generate_plot(residuals, "residuals", patient_id)
+            self.generate_plot(residuals, "density", patient_id)
+            if arima_cfg.DIAGNOSTICS:
+                print(residuals.describe())
 
-        except IOError as error:
+            # Saving to df
+            self.cohort_summary[patient_id] = {
+                "forecast": forecast_series.tolist(),
+                "aic": aic,
+                "bic": bic,
+                "hqic": hqic,
+                "residuals": residuals,
+                "CI": conf_int,
+            }
+
+        except (IOError, ValueError) as error:
             print("An error occurred:", str(error))
 
-    def _save_forecast_fig(
-        self,
-        data,
-        forecast,
-        forecast_steps,
-        conf_int,
-        filename,
-    ):
-        plt.figure(figsize=(12, 6))
-        plt.plot(data, color="blue", label="Historical Data")
-        plt.plot(
-            range(len(data), len(data) + forecast_steps), forecast, color="red", label="Forecast"
-        )
-        plt.fill_between(
-            range(len(data), len(data) + forecast_steps),
-            conf_int[:, 0],
-            conf_int[:, 1],
-            color="pink",
-            alpha=0.3,
-        )
-        plt.title("ARIMA Forecast with Confidence Intervals")
-        plt.legend()
-        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}_forecast_plot.png"))
-        plt.close()
-
-    def _save_forecast_csv(self, forecast_series, filename, suffix):
-        """Save the forecast to a .csv file."""
-        forecast_series.to_csv(
-            os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}{suffix}_forecast.csv"),
-            index=False,
-        )
-
-    def _diagnostics(self, model_fit, filename):
-        """Saves the diagnostics plot."""
-        model_fit.plot_diagnostics(figsize=(12, 8))
-        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}_diagnostics_plot.png"))
-        plt.close()
-
-    def perform_dickey_fuller_test(self, data, filename):
-        """Performing Dickey Fuller test to see the stationarity of series."""
-
-        suffix = "from_image" if "image" in filename else "from_csv"
-
-        # Augmented Dickey-Fuller test
-        result = adfuller(data)
-        with open(
-            os.path.join(arima_cfg.OUTPUT_DIR, f"{filename}{suffix}_adf_test.txt"),
-            "w",
-            encoding="utf-8",
-        ) as file:
-            file.write(f"ADF Statistic for image {filename}: {result[0]}\n")
-            file.write(f"p-value for image {filename}: {result[1]}\n")
-            for key, value in result[4].items():
-                file.write(f"Critical Value ({key}) for image {filename}: {value}\n")
-
-        print(f"ADF Statistic for image {filename}: {result[0]}")
-        print(f"p-value for image {filename}: {result[1]}")
-        for key, value in result[4].items():
-            print(f"Critical Value ({key}) for image {filename}: {value}")
+    ###########################
+    # ARIMA variables methods #
+    ###########################
 
     def _make_series_stationary(self, data, max_diff=3):
         """
@@ -348,14 +325,18 @@ class ArimaPrediction:
         allowed differencing.
         """
         d_value = 0  # Track differencing order
-        p_value = 1
         result = adfuller(data)
+        p_value = result[1]
 
         while p_value >= 0.05 and d_value < max_diff:
             data = data.diff().dropna()
             result = adfuller(data)
             p_value = result[1]
             d_value += 1
+
+        if p_value < 0.01 and d_value > 0:
+            data = data.diff(-1).dropna()  # Inverse the last differencing
+            d_value -= 1
 
         return data, d_value
 
@@ -470,20 +451,29 @@ class ArimaPrediction:
                 original_series, integrated, d_order=d_order - 1
             )
 
+    ##################
+    # Output methods #
+    ##################
+
+    def _save_cohort_summary_to_csv(self, summary: pd.DataFrame):
+        """Save the forecast to a .csv file."""
+        summary.to_csv(
+            os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_summary.csv"),
+            index=False,
+        )
+
+    def _diagnostics(self, model_fit, patient_id):
+        """Saves the diagnostics plot."""
+        model_fit.plot_diagnostics(figsize=(12, 8))
+        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_diagnostics_plot.png"))
+        plt.close()
+
 
 if __name__ == "__main__":
     arima_prediction = ArimaPrediction()
 
-    if arima_cfg.FROM_IMAGES:
-        print("Starting ARIMA from images.")
-        image_handler = ImageDataHandler(arima_cfg.PLOTS_DIR, arima_cfg.LOADING_LIMIT)
-        images, filenames = image_handler.load_data()
-        print("Data loaded!")
-        image_handler.process_series(images, arima_prediction, filenames)
-
-    if arima_cfg.FROM_DATA:
-        print("Starting ARIMA from time series csv's.")
-        ts_handler = TimeSeriesDataHandler(arima_cfg.TIME_SERIES_DIR, arima_cfg.LOADING_LIMIT)
-        ts_data_list, filenames = ts_handler.load_data()
-        print("Data loaded!")
-        ts_handler.process_series(ts_data_list, arima_prediction, filenames)
+    print("Starting ARIMA:")
+    ts_handler = TimeSeriesDataHandler(arima_cfg.TIME_SERIES_DIR, arima_cfg.LOADING_LIMIT)
+    ts_data_list, filenames = ts_handler.load_data()
+    print("\tData loaded!")
+    ts_handler.process_series(ts_data_list, arima_prediction, filenames)
