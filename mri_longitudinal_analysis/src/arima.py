@@ -124,8 +124,17 @@ class TimeSeriesDataHandler:
         arima_pred.save_patient_metrics_to_csv()
         arima_pred.print_and_save_cohort_summary()
 
+    def ensure_patient_folder_exists(self, patient_id):
+        """Ensure that a folder for the patient's results exists. If not, create it."""
+        patient_folder_path = os.path.join(arima_cfg.OUTPUT_DIR, patient_id)
+        if not os.path.exists(patient_folder_path):
+            os.makedirs(patient_folder_path)
+        return patient_folder_path
+
     def perform_dickey_fuller_test(self, data, patient_id):
         """Performing Dickey Fuller test to see the stationarity of series."""
+        patient_folder_path = self.ensure_patient_folder_exists(patient_id)
+        adf_test_file_path = os.path.join(patient_folder_path, f"{patient_id}_adf_test.txt")
 
         # Augmented Dickey-Fuller test
         result = adfuller(data)
@@ -136,7 +145,7 @@ class TimeSeriesDataHandler:
         critical_values = result[4]
         icbest = result[5]
         with open(
-            os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_adf_test.txt"),
+            adf_test_file_path,
             "w",
             encoding="utf-8",
         ) as file:
@@ -248,6 +257,9 @@ class ArimaPrediction:
         - plot_type (str): Type of the plot to generate.
         - patient_id (str): Name of the data file.
         """
+        patient_folder_path = self.ensure_patient_folder_exists(patient_id)
+        figure_path = os.path.join(patient_folder_path, f"{patient_id}_{plot_type}.png")
+
         plt.figure(figsize=(10, 6))
 
         plot_func = self.plot_types[plot_type]["function"]
@@ -260,7 +272,7 @@ class ArimaPrediction:
         plt.grid(True)
         plt.tight_layout()
 
-        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_{plot_type}.png"))
+        plt.savefig(figure_path)
         plt.close()
 
     def _save_forecast_fig(
@@ -293,7 +305,9 @@ class ArimaPrediction:
         )
         plt.title("ARIMA Forecast with Confidence Intervals")
         plt.legend()
-        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_forecast_plot.png"))
+        patient_folder_path = self.ensure_patient_folder_exists(patient_id)
+        figure_path = os.path.join(patient_folder_path, f"{patient_id}_forecast_plot.png")
+        plt.savefig(figure_path)
         plt.close()
 
     #################
@@ -338,8 +352,6 @@ class ArimaPrediction:
             q_range = range(max(0, suggested_q_value - 2), suggested_q_value + 3)
             print("\tGotten q_range!")
 
-        # p_value = suggested_p_value
-        # q_value = suggested_q_value
         # Get the best ARIMA order
         if p_value is None or q_value is None:
             p_value, d_value, q_value = self.find_best_arima_order(
@@ -588,16 +600,32 @@ class ArimaPrediction:
 
     def print_and_save_cohort_summary(self):
         """Calculates and prints/saves cohort-wide summary statistics."""
-        summary_stats = {
-            metric: [np.mean(values), np.std(values), np.min(values), np.max(values)]
-            for metric, values in self.cohort_metrics.items()
-        }
-        summary_df = pd.DataFrame(
-            summary_stats, index=["Mean", "Std Dev", "Min", "Max"]
-        ).transpose()
+        summary_data = []
+
+        # Calculate summary statistics for each metric
+        for metric, values in self.cohort_metrics.items():
+            summary_stats = {
+                "Metric": metric.upper(),
+                "Mean": np.mean(values),
+                "Std Dev": np.std(values),
+                "Min": np.min(values),
+                "Max": np.max(values),
+            }
+            summary_data.append(summary_stats)
+
+        # Convert the list of summary statistics to a DataFrame
+        summary_df = pd.DataFrame(summary_data)
+
         print(summary_df)
         filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.csv")
         summary_df.to_csv(filename)
+
+    def ensure_patient_folder_exists(self, patient_id):
+        """Ensure that a folder for the patient's results exists. If not, create it."""
+        patient_folder_path = os.path.join(arima_cfg.OUTPUT_DIR, patient_id)
+        if not os.path.exists(patient_folder_path):
+            os.makedirs(patient_folder_path)
+        return patient_folder_path
 
 
 if __name__ == "__main__":
