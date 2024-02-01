@@ -3,7 +3,6 @@ This script provides functionality for ARIMA-based time series prediction.
 It supports loading data from .csv files.
 """
 import os
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -34,7 +33,7 @@ class TimeSeriesDataHandler:
                 print("\tLoading data...")
                 for idx, filename in enumerate(os.listdir(self.directory)):
                     if filename.endswith(".csv"):
-                        if self.loading_limit and idx >= self.loading_limit:
+                        if self.loading_limit and idx > self.loading_limit:
                             break
                         filepath = os.path.join(self.directory, filename)
                         ts_data = pd.read_csv(filepath)
@@ -121,6 +120,9 @@ class TimeSeriesDataHandler:
             arima_pred.arima_prediction(
                 data=volume_ts, patient_id=file_names[idx], is_stationary=is_stat
             )
+        arima_pred.save_forecasts_to_csv()
+        arima_pred.save_patient_metrics_to_csv()
+        arima_pred.print_and_save_cohort_summary()
 
     def perform_dickey_fuller_test(self, data, patient_id):
         """Performing Dickey Fuller test to see the stationarity of series."""
@@ -163,7 +165,8 @@ class ArimaPrediction:
         Constructor for the Arima_prediction class.
         """
         self.patient_ids = {}
-        self.cohort_summary = pd.DataFrame()
+        self.cohort_summary = {}
+        self.cohort_metrics = {"aic": [], "bic": [], "hqic": []}
         os.makedirs(arima_cfg.OUTPUT_DIR, exist_ok=True)
 
         self.plot_types = {
@@ -217,8 +220,19 @@ class ArimaPrediction:
         """
         nlags = min(len(data) // 2 - 1, 10)
         values, confint = pacf(data, nlags=nlags, alpha=0.05)
-        plt.bar(range(len(values)), values)
-        plt.fill_between(range(len(confint)), confint[:, 0], confint[:, 1], color="pink", alpha=0.3)
+        x = range(len(values))
+
+        plt.figure(figsize=(10, 6))
+        plt.stem(x, values, basefmt="b")
+        plt.errorbar(
+            x,
+            values,
+            yerr=[values - confint[:, 0], confint[:, 1] - values],
+            fmt="o",
+            color="b",
+            capsize=5,
+        )
+        plt.hlines(0, xmin=0, xmax=len(values) - 1, colors="r", linestyles="dashed")
 
     def generate_plot(
         self,
@@ -252,20 +266,28 @@ class ArimaPrediction:
     def _save_forecast_fig(
         self,
         data,
-        forecast,
-        forecast_steps,
+        forecast_mean,
         conf_int,
         patient_id,
     ):
         plt.figure(figsize=(12, 6))
-        plt.plot(data, color="blue", label="Historical Data")
-        plt.plot(
-            range(len(data), len(data) + forecast_steps), forecast, color="red", label="Forecast"
-        )
+        plt.plot(data.index, color="blue", label="Historical Data")
+
+        forecast_index = np.arange(len(data), len(data) + len(forecast_mean))
+
+        plt.plot(forecast_index, forecast_mean, color="red", label="Forecast")
+
+        if isinstance(conf_int, pd.DataFrame):
+            lower_bounds = conf_int.iloc[:, 0]
+            upper_bounds = conf_int.iloc[:, 1]
+        else:  # Assuming it's a numpy array
+            lower_bounds = conf_int[:, 0]
+            upper_bounds = conf_int[:, 1]
+
         plt.fill_between(
-            range(len(data), len(data) + forecast_steps),
-            conf_int[:, 0],
-            conf_int[:, 1],
+            forecast_index,
+            lower_bounds,
+            upper_bounds,
             color="pink",
             alpha=0.3,
         )
@@ -305,15 +327,19 @@ class ArimaPrediction:
         # Get range for p_value from partial correlation
         if p_value is None:
             suggested_p_value = self._determine_p_from_pacf(stationary_data)
+            print("\tSuggested p_value:", suggested_p_value)
             p_range = range(max(0, suggested_p_value - 2), suggested_p_value + 3)
             print("\tGotten p_range!")
 
         # Get range for q_value from auto correlation
         if q_value is None:
             suggested_q_value = self._determine_q_from_acf(stationary_data)
+            print("\tSuggested q_value:", suggested_q_value)
             q_range = range(max(0, suggested_q_value - 2), suggested_q_value + 3)
             print("\tGotten q_range!")
 
+        # p_value = suggested_p_value
+        # q_value = suggested_q_value
         # Get the best ARIMA order
         if p_value is None or q_value is None:
             p_value, d_value, q_value = self.find_best_arima_order(
@@ -328,42 +354,48 @@ class ArimaPrediction:
             model = ARIMA(stationary_data, order=(p_value, d_value, q_value))
             model_fit = model.fit()
             print(f"\tModel fit for patient {patient_id}.")
-            if arima_cfg.DIAGNOSTICS:
-                self._diagnostics(model_fit, patient_id)
-                print(f"ARIMA model summary for patient {patient_id}:\n{model_fit.summary()}")
+
+            # plot residual errors
+            residuals = model_fit.resid
+            self.generate_plot(residuals, "residuals", patient_id)
+            self.generate_plot(residuals, "density", patient_id)
 
             # Metrics
             aic = model_fit.aic
             bic = model_fit.bic
             hqic = model_fit.hqic
 
-            # Forecast and plotting
-            forecast, stderr, conf_int = model_fit.forecast(steps=forecast_steps)
-            if d_value > 0:
-                forecast = ArimaPrediction.invert_differencing(data, forecast, d_value)
-            forecast_series = pd.Series(forecast, name="Predictions")
-
-            # Save forecasts plots
-            self._save_forecast_fig(data, forecast, forecast_steps, conf_int, patient_id)
-
-            # plot residual errors
-            residuals = model_fit.resid
-            self.generate_plot(residuals, "residuals", patient_id)
-            self.generate_plot(residuals, "density", patient_id)
             if arima_cfg.DIAGNOSTICS:
+                self._diagnostics(model_fit, patient_id)
+                print(f"ARIMA model summary for patient {patient_id}:\n{model_fit.summary()}")
                 print(residuals.describe())
+                print(f"AIC: {aic}, BIC: {bic}, HQIC: {hqic}")
+
+            # Forecast and plotting
+            forecast = model_fit.get_forecast(steps=forecast_steps)
+            forecast_mean = forecast.predicted_mean
+            stderr = forecast.se_mean
+            conf_int = forecast.conf_int()
+
+            if d_value > 0:
+                forecast = ArimaPrediction.invert_differencing(data, forecast_mean, d_value)
+            forecast_series = pd.Series(forecast, name="Predictions")
+            # Save forecasts plots
+            self._save_forecast_fig(data, forecast_mean, conf_int, patient_id)
 
             # Saving to df
             self.cohort_summary[patient_id] = {
                 "forecast": forecast_series.tolist(),
-                "stderr": stderr,
+                "forecast_mean": forecast_mean.tolist(),
+                "stderr": stderr.tolist(),
                 "CI": conf_int,
                 "aic": aic,
                 "bic": bic,
                 "hqic": hqic,
                 "residuals": residuals,
             }
-            self._save_cohort_summary_to_csv()
+
+            self.update_cohort_metrics(aic, bic, hqic)
 
         except (IOError, ValueError) as error:
             print("An error occurred:", str(error))
@@ -517,18 +549,55 @@ class ArimaPrediction:
     # Output methods #
     ##################
 
-    def _save_cohort_summary_to_csv(self):
+    def save_forecasts_to_csv(self):
         """Save the forecast to a .csv file."""
-        self.cohort_summary.to_csv(
-            os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_summary.csv"),
-            index=False,
-        )
+        forecast_df_list = []
+
+        for patient_id, metrics in self.cohort_summary.items():
+            forecast_df = pd.DataFrame(metrics["forecast_mean"], columns=["forecast_mean"])
+            forecast_df["stderr"] = metrics["stderr"]
+            forecast_df["lower_ci"] = metrics["CI"].iloc[:, 0]
+            forecast_df["upper_ci"] = metrics["CI"].iloc[:, 1]
+            forecast_df["patient_id"] = patient_id  # Add patient_id as a column for reference
+            forecast_df_list.append(forecast_df)
+
+        # Concatenate all individual DataFrames into one
+        all_forecasts_df = pd.concat(forecast_df_list, ignore_index=True)
+        filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.csv")
+        all_forecasts_df.to_csv(filename, index=False)
 
     def _diagnostics(self, model_fit, patient_id):
         """Saves the diagnostics plot."""
         model_fit.plot_diagnostics(figsize=(12, 8))
         plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_diagnostics_plot.png"))
         plt.close()
+
+    def update_cohort_metrics(self, aic, bic, hqic):
+        """Updates the cohort metrics."""
+        self.cohort_metrics["aic"].append(aic)
+        self.cohort_metrics["bic"].append(bic)
+        self.cohort_metrics["hqic"].append(hqic)
+
+    def save_patient_metrics_to_csv(self):
+        """Saves individual patient metrics to a CSV file."""
+        patient_metrics_df = pd.DataFrame.from_dict(self.cohort_summary, orient="index")
+        patient_metrics_df.reset_index(inplace=True)
+        patient_metrics_df.rename(columns={"index": "patient_id"}, inplace=True)
+        filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_patient_metrics.csv")
+        patient_metrics_df.to_csv(filename)
+
+    def print_and_save_cohort_summary(self):
+        """Calculates and prints/saves cohort-wide summary statistics."""
+        summary_stats = {
+            metric: [np.mean(values), np.std(values), np.min(values), np.max(values)]
+            for metric, values in self.cohort_metrics.items()
+        }
+        summary_df = pd.DataFrame(
+            summary_stats, index=["Mean", "Std Dev", "Min", "Max"]
+        ).transpose()
+        print(summary_df)
+        filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.csv")
+        summary_df.to_csv(filename)
 
 
 if __name__ == "__main__":

@@ -12,4 +12,4 @@ OUTPUT_DIR = Path(
 
 PLOTTING = True  # For AC and PAC plots at the begging of each patient
 DIAGNOSTICS = False
-LOADING_LIMIT = 1
+LOADING_LIMIT = 2
