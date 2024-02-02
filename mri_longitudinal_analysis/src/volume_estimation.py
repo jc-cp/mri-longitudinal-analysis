@@ -800,19 +800,19 @@ class VolumeEstimator:
             patient_id (str): The ID of the patient.
             dates (list): List of dates.
             volumes (list): List of volumes.
-            ages (list, optional): List of ages. Defaults to None.
+            ages (list): List of ages.
         """
         os.makedirs(output_path, exist_ok=True)
         fig, a_x1 = self.setup_plot_base(normalize=False)
 
         if has_dates:
-            dates, volumes, ages = zip(*sorted(zip(dates, volumes, ages)))
+            dates, volumes, ages = zip(*sorted(zip(dates, volumes, ages), key=lambda x: x[2]))
             a_x1.plot(ages, volumes, color="tab:blue", marker="o")
             self.add_volume_change_to_plot(a_x1, ages, volumes)
             self.add_date_to_plot(a_x1, dates, ages)
 
         else:
-            volumes, ages = zip(*sorted(zip(volumes, ages)))
+            volumes, ages = zip(*sorted(zip(volumes, ages), key=lambda x: x[1]))
             a_x1.plot(ages, volumes, color="tab:blue", marker="o")
             self.add_volume_change_to_plot(a_x1, ages, volumes)
 
@@ -845,14 +845,14 @@ class VolumeEstimator:
 
         # Plot data
         if has_dates:
-            dates, normalized_volumes, ages = zip(*sorted(zip(dates, normalized_volumes, ages)))
+            dates, normalized_volumes, ages = zip(*sorted(zip(dates, normalized_volumes, ages), key=lambda x: x[2]))
             ax1.plot(ages, normalized_volumes, color="tab:blue", marker="o", linestyle="-")
             self.add_volume_change_to_plot(ax1, ages, normalized_volumes)
             self.add_date_to_plot(ax1, dates, ages)
 
         else:
             # Handle CBTN data without dates
-            normalized_volumes, ages = zip(*sorted(zip(normalized_volumes, ages)))
+            normalized_volumes, ages = zip(*sorted(zip(normalized_volumes, ages), key=lambda x: x[1]))
             ax1.plot(ages, normalized_volumes, color="tab:blue", marker="o", linestyle="-")
             self.add_volume_change_to_plot(ax1, ages, normalized_volumes)
 
@@ -968,8 +968,8 @@ class VolumeEstimator:
                     continue
 
                 if len(patient_data[0]) == 3:
-                    dates, volumes, _ = zip(*patient_data)
-                    a_x.plot(dates, volumes, label=f"{key} data")
+                    _, volumes, ages = zip(*patient_data)
+                    a_x.plot(ages, volumes, label=f"{key} data")
                     a_x.set_xlabel("Date")
                 elif len(patient_data[0]) == 2:
                     volumes, ages = zip(*patient_data)
