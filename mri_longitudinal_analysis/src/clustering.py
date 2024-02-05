@@ -112,6 +112,7 @@ class ClusterAnalysis:
                 df = pd.read_csv(file_path)
                 selected_features = [feature for feature in selected_features if feature in df.columns]
                 df_selected = df[selected_features]
+                df_selected = df_selected.fillna(0.0)
                 df_selected = df_selected.copy()
                 df_selected.loc[:, "Patient_ID"] = patient_id
                 dfs.append(df_selected)
@@ -200,6 +201,26 @@ class ClusterAnalysis:
 
         return aligned_data_arr, interpolated_df
 
+    def prepare_time_series_data(dfs, time_var="Age", features=None):
+        """
+        Prepares data for DTW-based clustering, focusing on time-dependent features.
+
+        Parameters:
+        - dfs: List of DataFrames, each representing a time series.
+        - time_var: String, the name of the column representing time.
+        - features: List of strings, the names of the time-dependent features to include.
+
+        Returns:
+        - A 3D numpy array suitable for TimeSeriesKMeans with DTW metric.
+        """
+        # Assuming dfs have been sorted by 'Age' and the index reset if necessary
+        # Extracting and stacking the relevant time-dependent features
+        data_array = np.stack([
+            df.sort_values(by=time_var)[features].to_numpy() for df in dfs
+        ], axis=0)
+
+        return data_array
+
     #############################
     # DIMENSIONALITY REDUCTION  #
     #############################
@@ -209,7 +230,7 @@ class ClusterAnalysis:
         numeric_df = combined_df.select_dtypes(include=[np.number])
         return numeric_df
 
-    def apply_umap(self, data, n_neighbors=15, min_dist=0.1, n_components=2):
+    def apply_umap(self, data, n_neighbors=15, min_dist=0.1, n_components=3):
         """
         Applies UMAP (Uniform Manifold Approximation and Projection) to the data.
 
@@ -222,7 +243,7 @@ class ClusterAnalysis:
         n_components : int, optional
             Number of dimensions to reduce to, by default 2.
         """
-        print("Applying UMAP...")
+        print("\tApplying UMAP...")
         self.umap_embedding = umap.UMAP(
             n_neighbors=n_neighbors, min_dist=min_dist, n_components=n_components
         ).fit_transform(data)
@@ -242,15 +263,20 @@ class ClusterAnalysis:
     ######################
     # CLUSTERING METHODS #
     ######################
-
     def perform_time_series_kmeans(self, dfs):
         """
         Performs K-means clustering on the data.
         """
+        if not dfs:
+            print("No data provided for clustering.")
+            return
+        data_array = np.stack([df.iloc[:, 0].values for df in dfs], axis=0)
+        data_array = data_array.reshape(data_array.shape[0], data_array.shape[1], 1)  # Reshape for univariate time series
+        
         ts_kmeans = TimeSeriesKMeans(
             n_clusters=self.n_clusters, metric=self.kmeans_metric, verbose=self.kmeans_verbose
         )
-        cluster_labels = ts_kmeans.fit_predict(dfs)
+        self.cluster_labels = ts_kmeans.fit_predict(data_array)
 
     def perform_dbscan_clustering(self, data, eps=0.5, min_samples=5):
         """
@@ -338,7 +364,6 @@ class ClusterAnalysis:
     ######################
     # PLOTTING FUNCTIONS #
     ######################
-
     def add_cluster_ellipses(self, a_x, embedding, labels, cmap):
         """
         Adds ellipses around the clusters in the scatter plot of embeddings.
@@ -464,7 +489,7 @@ class ClusterAnalysis:
         path = os.path.join(self.output_path, f"heatmap_{suffix_name}")
         plt.savefig(path)
 
-    def plot_embeddings(self, dr_method):
+    def plot_embeddings(self, dr_method, prefix):
         """
         Plots the 2D embeddings from UMAP or t-SNE.
 
@@ -473,32 +498,37 @@ class ClusterAnalysis:
         dr_method : str
             The dimensionality reduction method used ('umap' or 'tsne').
         """
-        if dr_method.lower() == "umap" and self.umap_embedding is not None:
+        embedding = None
+        if dr_method.lower() == "umap" and hasattr(self, 'umap_embedding') and self.umap_embedding is not None:
             embedding = self.umap_embedding
             title = "UMAP Embedding"
-        elif dr_method.lower() == "tsne" and self.tsne_embedding is not None:
+        elif dr_method.lower() == "tsne" and hasattr(self, 'tsne_embedding') and self.umap_embedding is not None:
             embedding = self.tsne_embedding
             title = "t-SNE Embedding"
         else:
             print(f"No embedding found for {dr_method}.")
             return
 
+        centroid = np.mean(embedding, axis=0)
+        distances = np.sqrt(np.sum((embedding - centroid)**2, axis=1))
+        
         plt.figure(figsize=(10, 8))
-        plt.scatter(embedding[:, 0], embedding[:, 1], c=self.cluster_labels, cmap="Spectral", s=5)
-        plt.colorbar(label="Cluster Label")
+        scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=distances, cmap="Spectral", s=5)
+        plt.colorbar(scatter, label="Cluster Label")
+    
         plt.title(title)
         plt.xlabel("Component 1")
         plt.ylabel("Component 2")
 
         plt.tight_layout()
-        file_name = os.path.join(self.output_path, f"{dr_method}_embedding.png")
+        file_name = os.path.join(self.output_path, f"{prefix}_{dr_method}_embedding.png")
         plt.savefig(file_name)
         plt.close()
+
 
     ##########################
     # PLOTTING FUNCTIONS EDA #
     ##########################
-    
     def plot_patient_data(self, dfs, prefix, n_samples=clustering_cfg.LIMIT_LOADING):
         """
         Plots curves for a sample of patients based on the list of DataFrames.
@@ -617,20 +647,16 @@ if __name__ == "__main__":
         cluster_analysis.plot_pairwise_relationships(data_frames, pre)
         print("\tPatient data plotted.")
         STEP += 1
-    if clustering_cfg.USE_UMAP:
-        print(f"Step {STEP}: Applying UMAP to reduce dimensions of the data...")
-        numeric_data = cluster_analysis.aggregate_data(data_frames)
-        cluster_analysis.apply_umap(numeric_data)
-        cluster_analysis.plot_embeddings("umap")
-        print("\tPatient data plotted.")
-        STEP += 1
-    if clustering_cfg.USE_TSNE:
-        print(f"Step {STEP}: Applying t-SNE to reduce dimensions of the data...")
-        numeric_data = cluster_analysis.aggregate_data(data_frames)
-        cluster_analysis.apply_tsne(numeric_data)
-        cluster_analysis.plot_embeddings("tsne")
-        print("\tPatient data plotted.")
-        STEP += 1
+        if clustering_cfg.USE_UMAP:
+            numeric_data = cluster_analysis.aggregate_data(data_frames)
+            cluster_analysis.apply_umap(numeric_data)
+            cluster_analysis.plot_embeddings("umap", pre)
+            print("\tPatient data plotted.")
+        if clustering_cfg.USE_TSNE:
+            numeric_data = cluster_analysis.aggregate_data(data_frames)
+            cluster_analysis.apply_tsne(numeric_data)
+            cluster_analysis.plot_embeddings("tsne", pre)
+            print("\tPatient data plotted.")
     
     # Data stadarization and plotting
     print(f"Step {STEP}: Standardizing data...")
@@ -646,6 +672,16 @@ if __name__ == "__main__":
         cluster_analysis.plot_pairwise_relationships(data_frames, post)
         print("\tPatient data plotted.")
         STEP += 1
+        if clustering_cfg.USE_UMAP:
+            numeric_data = cluster_analysis.aggregate_data(data_frames)
+            cluster_analysis.apply_umap(numeric_data)
+            cluster_analysis.plot_embeddings("umap", post)
+            print("\tPatient data plotted.")
+        if clustering_cfg.USE_TSNE:
+            numeric_data = cluster_analysis.aggregate_data(data_frames)
+            cluster_analysis.apply_tsne(numeric_data)
+            cluster_analysis.plot_embeddings("tsne", post)
+            print("\tPatient data plotted.")
         
         
     # Definition of methods to be used in the clustering, multiple possible
@@ -656,13 +692,12 @@ if __name__ == "__main__":
         # "Hierarchical": ("perform_hierarchical_clustering, "clustering_hierarchical.png"),
     }
 
-    for method, (func, suffix) in tqdm(methods_and_suffixes.items(), desc="Clustering methods"):
+    for method, (func_name, suffix) in tqdm(methods_and_suffixes.items(), desc="Clustering methods"):
         print(f"Step {STEP}: Performing clustering method: {method}.")
-        getattr(cluster_analysis, func)()
+        func = getattr(cluster_analysis, func_name)()
+        func(data_frames)
         if len(np.unique(cluster_analysis.cluster_labels)) > 1:
-            score = cluster_analysis.evaluate_silhouette_score(
-                cluster_analysis.time_series_scaled, method
-            )
+            score = cluster_analysis.evaluate_silhouette_score(data_frames, method            )
             print(f"Silhouette score for {method}: {score}")
             cluster_analysis.save_metrics(method, score)
         else:
