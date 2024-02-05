@@ -88,6 +88,8 @@ class ClusterAnalysis:
         self.n_clusters = clustering_cfg.N_CLUSTERS
         self.kmeans_metric = clustering_cfg.KMEANS_METRIC
         self.kmeans_verbose = clustering_cfg.KMEANS_VERBOSE
+        self.ts_kmeans_model = None
+        self.ts_dbscan_model = None
         self.silhouette_scores = {}
         # Output
         self.output_path = clustering_cfg.PLOTS_OUTPUT_PATH
@@ -143,82 +145,44 @@ class ClusterAnalysis:
 
         return dfs
 
-    def align_and_interpolate_time_series(self, df, patient_id_column, features):
+    def align_and_interpolate_time_series(self, dfs, time_var="Age", features=None):
         """
-        Aligns and interpolates the time series data for each patient.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            The original DataFrame containing patient data.
-        patient_id_column : str
-            The column name for patient IDs.
-        features : list
-            List of feature columns to be interpolated.
-
-        Returns
-        -------
-        np.ndarray
-            Interpolated and aligned time series as a numpy array.
-        pd.DataFrame
-            Interpolated and aligned time series as a DataFrame.
-        """
-        max_length = max(df.groupby(patient_id_column).size())
-        aligned_data = []
-        interpolated_df = pd.DataFrame()
-
-        for patient_id in df[patient_id_column].unique():
-            patient_data = df[df[patient_id_column] == patient_id]
-
-            # Skip patients with entirely missing data series
-            if patient_data[features].isnull().all().all():
-                continue
-
-            patient_data = patient_data.set_index("Date").asfreq("D").reset_index()
-            patient_data[features] = patient_data[features].interpolate(method="linear")
-
-            # Padding the series to match the max_length
-            padding_length = max_length - len(patient_data)
-            padding_df = pd.DataFrame(
-                {patient_id_column: [patient_id] * padding_length, "Date": pd.NaT},
-                index=range(padding_length),
-            )
-            for feature in features:
-                padding_df[feature] = np.nan
-            patient_data = pd.concat([patient_data, padding_df], ignore_index=True)
-
-            # Retain Patient_ID for each series and ensure each series has the same length
-            patient_data[patient_id_column] = patient_id
-            patient_data = patient_data.reindex(
-                range(max_length)
-            )  # Ensuring the DataFrame has max_length rows
-
-            aligned_data.append(patient_data[features].to_numpy())
-            interpolated_df = pd.concat([interpolated_df, patient_data], ignore_index=True)
-
-        # Ensure all series have the same shape for stacking
-        aligned_data_arr = np.array([np.array(series) for series in aligned_data])
-
-        return aligned_data_arr, interpolated_df
-
-    def prepare_time_series_data(dfs, time_var="Age", features=None):
-        """
-        Prepares data for DTW-based clustering, focusing on time-dependent features.
-
+        Aligns, interpolates, and ensures uniform length for the list of DataFrames, focusing on selected time-dependent features.
+        
         Parameters:
-        - dfs: List of DataFrames, each representing a time series.
-        - time_var: String, the name of the column representing time.
-        - features: List of strings, the names of the time-dependent features to include.
-
+        - dfs: List of pandas DataFrames, each representing a patient's time series.
+        - time_var: The column name representing the time variable.
+        - features: List of feature columns to be included in the clustering.
+        
         Returns:
         - A 3D numpy array suitable for TimeSeriesKMeans with DTW metric.
         """
-        # Assuming dfs have been sorted by 'Age' and the index reset if necessary
-        # Extracting and stacking the relevant time-dependent features
-        data_array = np.stack([
-            df.sort_values(by=time_var)[features].to_numpy() for df in dfs
-        ], axis=0)
+        # Determine the maximum length across all series
+        max_length = max(df.shape[0] for df in dfs)
+        aligned_dfs = []
 
+        for df in dfs:
+            df = df.sort_values(by=time_var)
+            # Interpolate missing values if necessary
+            # Assuming interpolation is still relevant after standardization
+            df[features] = df[features].interpolate(method="linear", limit_direction='both')
+            # If after interpolation there are still NaNs (e.g., at the start or end), fill them
+            df[features] = df[features].fillna(method='bfill').fillna(method='ffill')
+            
+            # Handle uniform length: truncate or pad with NaNs (which should be minimal after interpolation)
+            if len(df) < max_length:
+                # Padding: Create a padding DataFrame and concatenate
+                padding = pd.DataFrame(np.NaN, index=range(max_length - len(df)), columns=features)
+                df = pd.concat([df, padding], ignore_index=True)
+            elif len(df) > max_length:
+                # Truncate
+                df = df.iloc[:max_length]
+
+            aligned_dfs.append(df[features].values)
+        
+        # Form the 3D array from the list of aligned, possibly padded arrays
+        data_array = np.stack(aligned_dfs, axis=0)
+        
         return data_array
 
     #############################
@@ -263,20 +227,15 @@ class ClusterAnalysis:
     ######################
     # CLUSTERING METHODS #
     ######################
-    def perform_time_series_kmeans(self, dfs):
+    def perform_time_series_kmeans(self, data):
         """
         Performs K-means clustering on the data.
-        """
-        if not dfs:
-            print("No data provided for clustering.")
-            return
-        data_array = np.stack([df.iloc[:, 0].values for df in dfs], axis=0)
-        data_array = data_array.reshape(data_array.shape[0], data_array.shape[1], 1)  # Reshape for univariate time series
-        
+        """        
         ts_kmeans = TimeSeriesKMeans(
             n_clusters=self.n_clusters, metric=self.kmeans_metric, verbose=self.kmeans_verbose
         )
-        self.cluster_labels = ts_kmeans.fit_predict(data_array)
+        self.cluster_labels = ts_kmeans.fit_predict(data)
+        self.ts_kmeans_model = ts_kmeans
 
     def perform_dbscan_clustering(self, data, eps=0.5, min_samples=5):
         """
@@ -642,7 +601,7 @@ if __name__ == "__main__":
     if clustering_cfg.PLOT_PATIENT_DATA_EDA:
         print(f"Step {STEP}: Plotting patient data for EDA...")
         pre="pre_scaling"
-        cluster_analysis.plot_patient_data(data_frames, pre)
+        #cluster_analysis.plot_patient_data(data_frames, pre)
         cluster_analysis.plot_avg_std_across_patients(data_frames, pre)
         cluster_analysis.plot_pairwise_relationships(data_frames, pre)
         print("\tPatient data plotted.")
@@ -667,7 +626,7 @@ if __name__ == "__main__":
     if clustering_cfg.PLOT_PATIENT_DATA_SCALING:
         print(f"Step {STEP}: Plotting patient data adter scaling...")
         post="post_scaling"
-        cluster_analysis.plot_patient_data(data_frames, post)
+        #cluster_analysis.plot_patient_data(data_frames, post)
         cluster_analysis.plot_avg_std_across_patients(data_frames, post)
         cluster_analysis.plot_pairwise_relationships(data_frames, post)
         print("\tPatient data plotted.")
@@ -683,6 +642,9 @@ if __name__ == "__main__":
             cluster_analysis.plot_embeddings("tsne", post)
             print("\tPatient data plotted.")
         
+    # Time series data preparation 
+    time_series_features = ["Normalized Volume", "Volume Growth[%]", "Volume Growth[%] Rate"]
+    prepared_data = cluster_analysis.align_and_interpolate_time_series(data_frames, time_var="Age", features=time_series_features)
         
     # Definition of methods to be used in the clustering, multiple possible
     methods_and_suffixes = {
@@ -694,10 +656,10 @@ if __name__ == "__main__":
 
     for method, (func_name, suffix) in tqdm(methods_and_suffixes.items(), desc="Clustering methods"):
         print(f"Step {STEP}: Performing clustering method: {method}.")
-        func = getattr(cluster_analysis, func_name)()
-        func(data_frames)
-        if len(np.unique(cluster_analysis.cluster_labels)) > 1:
-            score = cluster_analysis.evaluate_silhouette_score(data_frames, method            )
+        func = getattr(cluster_analysis, func_name)
+        func(prepared_data)
+        if len(np.unique(cluster_analysis.cluster_labels)) > 1 and prepared_data.shape[0] == 2:
+            score = cluster_analysis.evaluate_silhouette_score(prepared_data.reshape(-1, prepared_data.shape[-1]), method)
             print(f"Silhouette score for {method}: {score}")
             cluster_analysis.save_metrics(method, score)
         else:
@@ -710,6 +672,6 @@ if __name__ == "__main__":
             print(f"Step {STEP}: Plotting dimensionality reduction with boundaries...")
             cluster_analysis.plot_dr_clusters_with_boundaries(suffix)
         if clustering_cfg.PLOT_HEATMAP:
-            cluster_analysis.plot_heatmap(cluster_analysis.time_series_scaled, suffix)
+            cluster_analysis.plot_heatmap(prepared_data, suffix)
 
         STEP += 1

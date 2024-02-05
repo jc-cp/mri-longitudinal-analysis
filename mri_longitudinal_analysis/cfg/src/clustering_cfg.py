@@ -17,11 +17,11 @@ SELECTED_FEATURES = ["Age", "Normalized Volume", "Volume Growth[%]",
                      "Volume Growth[%] Rate", "Volume Growth[%] Avg",
                      "Volume Growth[%] Std"]
 COHORT = "CBTN"
-LIMIT_LOADING = 5
+LIMIT_LOADING = 30
 
 # Variables for the dimensionality reduction
-USE_UMAP = True
-USE_TSNE = True
+USE_UMAP = False
+USE_TSNE = False
 
 # Attributes to be used for clustering
 N_CLUSTERS = 3
