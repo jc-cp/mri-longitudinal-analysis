@@ -527,65 +527,51 @@ class ClusterAnalysis:
             plt.tight_layout()
             file_name = os.path.join(self.output_path, f"{prefix}_{patient_id}.png")
             plt.savefig(file_name)
+            plt.close()
 
-    def plot_avg_std_across_patients(self, dfs, prefix):
+    def plot_avg_std_across_patients(self, data, prefix, feature_names):
         """
         Plots the average and standard deviation of 'Normalized Volume', "Volume Growth" 
         and 'Volume Growth Rate' across all patients.
         """
-        # Initialize lists to store aggregated data
-        normalized_volumes = []
-        volume_growths = []
-        volume_growth_rates = []
+        if isinstance(data, list):  # Handling list of pandas DataFrames
+            # Aggregate data from each DataFrame
+            aggregated_data = {name: [df[name].mean() for df in data] for name in feature_names}
+        elif isinstance(data, np.ndarray):  # Handling NumPy ndarray
+            # Assuming ndarray shape is (n_patients, n_samples, n_features)
+            # and feature order matches `feature_names`
+            aggregated_data = {name: data[:, :, i].mean(axis=1) for i, name in enumerate(feature_names)}
+        else:
+            raise ValueError("Data must be either a list of pandas DataFrames or a NumPy ndarray.")
         
-        # Aggregate data from each DataFrame
-        for df in dfs:
-            normalized_volumes.append(df["Normalized Volume"].mean())
-            volume_growths.append(df["Volume Growth[%]"].mean())
-            volume_growth_rates.append(df["Volume Growth[%] Rate"].mean())
-        
-        # Calculate mean and standard deviation across patients
-        nv_avg = np.mean(normalized_volumes)
-        nv_std = np.std(normalized_volumes)
-        vol_g_avg = np.mean(volume_growths)
-        vol_g_std = np.std(volume_growths)
-        vol_gr_avg = np.mean(volume_growth_rates)
-        vol_gr_std = np.std(volume_growth_rates)
-        
-        # Plotting
         plt.figure(figsize=(14, 6))
-        
-        # Plot for Normalized Volume
-        plt.subplot(1, 3, 1)
-        plt.bar(["Normalized Volume"], [nv_avg], yerr=[nv_std], capsize=5)
-        plt.title("Average and Std Dev of Normalized Volume")
-        plt.ylabel("Normalized Volume")
-        
-        # Plot for Volume Growth
-        plt.subplot(1, 3, 2)
-        plt.bar(["Volume Growth"], [vol_g_avg], yerr=[vol_g_std], capsize=5)
-        plt.title("Average and Std Dev of Volume Growth")
-        plt.ylabel("Volume Growth [%]")
-        
-        # Plot for Volume Growth Rate
-        plt.subplot(1, 3, 3)
-        plt.bar(["Volume Growth Rate"], [vol_gr_avg], yerr=[vol_gr_std], capsize=5)
-        plt.title("Average and Std Dev of Volume Growth Rate")
-        plt.ylabel("Volume Growth Rate [%]")
+        for i, (name, values) in enumerate(aggregated_data.items(), start=1):
+            avg = np.mean(values)
+            std = np.std(values)
+            plt.subplot(1, len(aggregated_data), i)
+            plt.bar([name], [avg], yerr=[std], capsize=5)
+            plt.title(f"Average and Std Dev of {name}")
+            plt.ylabel(name)
         
         plt.tight_layout()
         file_name = os.path.join(self.output_path, f"{prefix}_avg_std_across_patients.png")
         plt.savefig(file_name)
-        plt.show()
+        plt.close()
 
-    def plot_pairwise_relationships(self, dfs, prefix):
+    def plot_pairwise_relationships(self, data, prefix, feature_names):
         """
         Pairplot of all features across all patients.        
         """
-        all_patient_data = pd.concat(dfs, ignore_index=True)
-        selected_features = clustering_cfg.SELECTED_FEATURES
-        sns.pairplot(all_patient_data[selected_features])
+        if isinstance(data, list):  # Handling list of pandas DataFrames
+            all_patient_data = pd.concat(data, ignore_index=True)
+        elif isinstance(data, np.ndarray):  # Handling NumPy ndarray
+            # Convert ndarray to DataFrame
+            all_patient_data = pd.DataFrame(data.reshape(-1, data.shape[-1]), columns=feature_names)
+        else:
+            raise ValueError("Data must be either a list of pandas DataFrames or a NumPy ndarray.")
+        sns.pairplot(all_patient_data, vars=feature_names)
         plt.savefig(os.path.join(self.output_path, f"{prefix}_pairplot_all_features.png"))
+        plt.close()
 
 
 if __name__ == "__main__":
@@ -596,14 +582,16 @@ if __name__ == "__main__":
     data_frames = cluster_analysis.load_data(clustering_cfg.INPUT_PATH, clustering_cfg.SELECTED_FEATURES, clustering_cfg.LIMIT_LOADING)
     print("\tCluster analysis class initialized. Data loaded.")
     STEP += 1
+    time_series_features = ["Age", "Normalized Volume", "Volume Growth[%]", "Volume Growth[%] Rate"]
 
     # Data analysis, embedding and plotting
+    # FIXME - This is printing wrongly the data
     if clustering_cfg.PLOT_PATIENT_DATA_EDA:
         print(f"Step {STEP}: Plotting patient data for EDA...")
         pre="pre_scaling"
         #cluster_analysis.plot_patient_data(data_frames, pre)
-        cluster_analysis.plot_avg_std_across_patients(data_frames, pre)
-        cluster_analysis.plot_pairwise_relationships(data_frames, pre)
+        cluster_analysis.plot_avg_std_across_patients(data_frames, pre, time_series_features)
+        cluster_analysis.plot_pairwise_relationships(data_frames, pre, time_series_features)
         print("\tPatient data plotted.")
         STEP += 1
         if clustering_cfg.USE_UMAP:
@@ -622,13 +610,15 @@ if __name__ == "__main__":
     data_frames = cluster_analysis.standardize_data(data_frames)
     print("\tData standardized.")
     STEP += 1
+    prepared_data = cluster_analysis.align_and_interpolate_time_series(data_frames, time_var="Age", features=time_series_features)
     
+    # FIXME - This is printing wrongly the data
     if clustering_cfg.PLOT_PATIENT_DATA_SCALING:
         print(f"Step {STEP}: Plotting patient data adter scaling...")
         post="post_scaling"
         #cluster_analysis.plot_patient_data(data_frames, post)
-        cluster_analysis.plot_avg_std_across_patients(data_frames, post)
-        cluster_analysis.plot_pairwise_relationships(data_frames, post)
+        cluster_analysis.plot_avg_std_across_patients(data_frames, post, time_series_features)
+        cluster_analysis.plot_pairwise_relationships(data_frames, post, time_series_features)
         print("\tPatient data plotted.")
         STEP += 1
         if clustering_cfg.USE_UMAP:
@@ -642,10 +632,6 @@ if __name__ == "__main__":
             cluster_analysis.plot_embeddings("tsne", post)
             print("\tPatient data plotted.")
         
-    # Time series data preparation 
-    time_series_features = ["Normalized Volume", "Volume Growth[%]", "Volume Growth[%] Rate"]
-    prepared_data = cluster_analysis.align_and_interpolate_time_series(data_frames, time_var="Age", features=time_series_features)
-        
     # Definition of methods to be used in the clustering, multiple possible
     methods_and_suffixes = {
         "K-means": ("perform_time_series_kmeans", "clustering_ts_kmeans.png"),
@@ -657,7 +643,13 @@ if __name__ == "__main__":
     for method, (func_name, suffix) in tqdm(methods_and_suffixes.items(), desc="Clustering methods"):
         print(f"Step {STEP}: Performing clustering method: {method}.")
         func = getattr(cluster_analysis, func_name)
-        func(prepared_data)
+        if func_name == "perform_dbscan_clustering":
+            n_samples, n_timesteps, n_features = prepared_data.shape
+            # FIXME - DBSCAN fails due to NaN in data
+            flattened_data = prepared_data.reshape(n_samples, n_timesteps * n_features)
+            func(flattened_data)
+        else:
+            func(prepared_data)
         if len(np.unique(cluster_analysis.cluster_labels)) > 1 and prepared_data.shape[0] == 2:
             score = cluster_analysis.evaluate_silhouette_score(prepared_data.reshape(-1, prepared_data.shape[-1]), method)
             print(f"Silhouette score for {method}: {score}")
