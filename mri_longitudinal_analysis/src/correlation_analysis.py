@@ -9,6 +9,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+import statsmodels.api as sm
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import classification_report
+from sklearn.preprocessing import StandardScaler
 from cfg.src import correlation_cfg
 from lifelines import KaplanMeierFitter
 from utils.helper_functions import (
@@ -57,7 +64,7 @@ class TumorAnalysis:
             clinical_data_file (str): Path to the clinical data CSV file.
             volumes_data_file (str): Path to the tumor volumes data CSV file.
         """
-
+        pd.options.display.float_format = '{:.3f}'.format
         self.merged_data = pd.DataFrame()
         self.clinical_data_reduced = pd.DataFrame()
         self.post_treatment_data = pd.DataFrame()
@@ -186,12 +193,14 @@ class TumorAnalysis:
             - self.clinical_data["Date of Birth"]
         ).dt.days / 365.25
 
-        self.clinical_data["Date First Progression"] = pd.to_datetime(
-            self.clinical_data["Date of First Progression"], dayfirst=True
-        )
-        self.clinical_data["Age at First Progression"] = (
-            self.clinical_data["Date First Progression"] - self.clinical_data["Date of Birth"]
-        ).dt.days / 365.25
+        # FIXME: progression from the clinical data removed
+        # self.clinical_data["Date First Progression"] = pd.to_datetime(
+        #     self.clinical_data["Date of First Progression"], dayfirst=True
+        # )
+        # self.clinical_data["Age at First Progression"] = (
+        #     self.clinical_data["Date First Progression"] - self.clinical_data["Date of Birth"]
+        # ).dt.days / 365.25
+        # self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"].fillna("No")
 
         self.clinical_data["Date First Treatment"] = pd.to_datetime(
             self.clinical_data["First Treatment"], dayfirst=True
@@ -218,8 +227,6 @@ class TumorAnalysis:
             ),
             0,
         )
-
-        self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"].fillna("No")
 
         # Apply the type conversions according to the dictionary
         for column, dtype in correlation_cfg.BCH_DTYPE_MAPPING.items():
@@ -362,7 +369,10 @@ class TumorAnalysis:
         # Patient IDs in volumes data
         patient_ids_volumes = set(self.volumes_data["Patient_ID"].unique())
 
-        self.volumes_data = self.volumes_data.rename(columns={"Volume Growth[%]": "Volume Change"})
+        self.volumes_data = self.volumes_data.rename(columns={"Volume Growth[%]": "Volume Change",
+                                                              "Volume Growth[%] Rate": "Volume Change Rate",
+                                                              "Volume Growth[%] Avg": "Volume Change Avg",
+                                                              "Volume Growth[%] Std": "Volume Change Std"})
 
         if self.volumes_data.isna().any().any():
             self.volumes_data.fillna(0.0, inplace=True)
@@ -421,9 +431,10 @@ class TumorAnalysis:
         self.clinical_data["Received Treatment"] = None
         self.clinical_data["Time to Treatment"] = None
         self.clinical_data["Age at First Treatment"] = None
-        self.clinical_data["Tumor Progression"] = None
-        self.clinical_data["Age at First Progression"] = None
-        self.clinical_data["Time to Progression"] = None
+        # FIXME: clinal progression removed
+        #self.clinical_data["Tumor Progression"] = None
+        #self.clinical_data["Age at First Progression"] = None
+        #self.clinical_data["Time to Progression"] = None
 
         # Loop through each patient in clinical_data
         for idx, row in self.clinical_data.iterrows():
@@ -437,9 +448,9 @@ class TumorAnalysis:
             efsur = int(efsur) if str(efsur).isnumeric() else float("inf")
             osur = int(osur) if str(osur).isnumeric() else float("inf")
 
-            # Progression
-            progression = "Yes" if efsur < osur else "No"
-            self.clinical_data.at[idx, "Tumor Progression"] = progression
+            # FIXME: Progression
+            # progression = "Yes" if efsur < osur else "No"
+            # self.clinical_data.at[idx, "Tumor Progression"] = progression
 
             # Age at First Diagnosis
             if surgery == "Yes":
@@ -490,23 +501,23 @@ class TumorAnalysis:
                     age_at_first_treatment - age_at_first_diagnosis
                 )
 
-            # Calculate Age at First Progression and Time to Progression
-            if pd.notna(efsur) and pd.notna(osur):
-                if efsur < osur:
-                    self.clinical_data.at[idx, "Tumor Progression"] = "Yes"
-                    if pd.notna(row["Age at First Treatment"]):
-                        age_at_first_progression = row["Age at First Treatment"] + efsur
-                    else:
-                        # Use Age at First Diagnosis + EFS if Age at First Treatment is not available
-                        age_at_first_progression = age_at_first_diagnosis + efsur
-                    self.clinical_data.at[
-                        idx, "Age at First Progression"
-                    ] = age_at_first_progression
-                    self.clinical_data.at[idx, "Time to Progression"] = (
-                        age_at_first_progression - age_at_first_diagnosis
-                    )
-                else:
-                    self.clinical_data.at[idx, "Progression"] = "No"
+            # FIXME: Calculate Age at First Progression and Time to Progression
+            # if pd.notna(efsur) and pd.notna(osur):
+            #     if efsur < osur:
+            #         self.clinical_data.at[idx, "Tumor Progression"] = "Yes"
+            #         if pd.notna(row["Age at First Treatment"]):
+            #             age_at_first_progression = row["Age at First Treatment"] + efsur
+            #         else:
+            #             # Use Age at First Diagnosis + EFS if Age at First Treatment is not available
+            #             age_at_first_progression = age_at_first_diagnosis + efsur
+            #         self.clinical_data.at[
+            #             idx, "Age at First Progression"
+            #         ] = age_at_first_progression
+            #         self.clinical_data.at[idx, "Time to Progression"] = (
+            #             age_at_first_progression - age_at_first_diagnosis
+            #         )
+            #     else:
+            #         self.clinical_data.at[idx, "Progression"] = "No"
 
         self.clinical_data["Age at First Diagnosis"] = pd.to_numeric(
             self.clinical_data["Age at First Diagnosis"], errors="coerce"
@@ -520,8 +531,9 @@ class TumorAnalysis:
             {
                 "Time to Treatment": 0,
                 "Age at First Treatment": age_at_first_diagnosis,
-                "Age at First Progression": 0,
-                "Time to Progression": 0,
+                #FIXME 
+                #"Age at First Progression": 0,
+                #"Time to Progression": 0,
             },
             inplace=True,
         )
@@ -588,9 +600,11 @@ class TumorAnalysis:
             self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
                 cumulative_stats, var
             )
+            self.merged_data.reset_index(drop=True, inplace=True)
             self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
                 rolling_stats, var
             )
+            self.merged_data.reset_index(drop=True, inplace=True)
 
         print("\tAdded rolling and accumulative summary statistics.")
 
@@ -693,29 +707,23 @@ class TumorAnalysis:
             "Sex",
             "BRAF Status",
             "Received Treatment",
-            "Tumor Progression",
+            #"Tumor Progression",
             "Tumor Classification",
             "Patient Classification",
         ]
         numerical_vars = [
             "Age",
+            "Age at First Diagnosis",
+            "Age at First Treatment",
+            "Age at Last Clinical Follow-Up",
+            "Days Between Scans"
             "Volume",
             "Normalized Volume",
             "Volume Change",
-            "Normalized Volume CumMean",
-            "Normalized Volume CumMedian",
-            "Normalized Volume CumStd",
-            "Normalized Volume RollMean",
-            "Normalized Volume RollMedian",
-            "Normalized Volume RollStd",
-            "Volume Change CumMean",
-            "Volume Change CumMedian",
-            "Volume Change CumStd",
-            "Volume Change RollMean",
-            "Volume Change RollMedian",
-            "Volume Change RollStd",
+            "Volume Change Rate",
             "Time to Treatment",
             "Baseline Volume",
+            "Follow-Up Time"
         ]
 
         for num_var in numerical_vars:
@@ -957,6 +965,15 @@ class TumorAnalysis:
             column="Volume Change",
             unit="%",
         )
+        volume_change_rate_trajectories_plot = os.path.join(
+            output_dir, f"{prefix}_volume_change_rate_trajectories_plot.png"
+        )
+        plot_individual_trajectories(
+            volume_change_rate_trajectories_plot,
+            plot_data=pre_treatment_data,
+            column="Volume Change Rate",
+            unit="% / day",
+        )
         normalized_volume_trajectories_plot = os.path.join(
             output_dir, f"{prefix}_normalized_volume_trajectories_plot.png"
         )
@@ -966,17 +983,32 @@ class TumorAnalysis:
             column="Normalized Volume",
             unit="mm^3",
         )
+        volume_trajectories_plot = os.path.join(
+            output_dir, f"{prefix}_normalized_volume_trajectories_plot.png"
+        )
+        plot_individual_trajectories(
+            volume_trajectories_plot,
+            plot_data=pre_treatment_data,
+            column="Volume",
+            unit="mm^3",
+        )
 
         category_list = [
             "Sex",
             "BRAF Status",
-            "Tumor Progression",
             "Received Treatment",
             "Location",
+            "Treatment Type",
+            "Symptoms",
+            "Histology",
         ]
+        
+        category_out = os.path.join(output_dir, "category_plots")
+        os.makedirs(category_out, exist_ok=True)
+        
         for cat in category_list:
             cat_volume_change_name = os.path.join(
-                output_dir, f"{prefix}_{cat}_volume_change_trajectories_plot.png"
+                category_out, f"{prefix}_{cat}_volume_change_trajectories_plot.png"
             )
             plot_individual_trajectories(
                 cat_volume_change_name,
@@ -986,7 +1018,7 @@ class TumorAnalysis:
                 unit="%",
             )
             cat_normalized_volume_name = os.path.join(
-                output_dir, f"{prefix}_{cat}_normalized_volume_trajectories_plot.png"
+                category_out, f"{prefix}_{cat}_normalized_volume_trajectories_plot.png"
             )
             plot_individual_trajectories(
                 cat_normalized_volume_name,
@@ -994,6 +1026,16 @@ class TumorAnalysis:
                 column="Normalized Volume",
                 category_column=cat,
                 unit="mm^3",
+            )
+            cat_volume_change_rate_trajectories_plot = os.path.join(
+            category_out, f"{prefix}_{cat}_volume_change_rate_trajectories_plot.png"
+            )
+            plot_individual_trajectories(
+                cat_volume_change_rate_trajectories_plot,
+                plot_data=pre_treatment_data,
+                column="Volume Change Rate",
+                category_column=cat,
+                unit="% / day",
             )
 
         # Trend analysis and classifciation of patients
@@ -1084,11 +1126,13 @@ class TumorAnalysis:
             for patient_id in patients_ids
         }
         data["Classification"] = data["Patient_ID"].map(patient_classifications)
+        data['Patient_Classification_Binary'] = pd.to_numeric(data['Classification'].apply(lambda x: 1 if x == 'Progressor' else 0), errors='coerce').fillna(0).astype(int)
         # Save to original dataframe
         classifications_series = pd.Series(patient_classifications)
         self.merged_data["Patient Classification"] = (
             self.merged_data["Patient_ID"].map(classifications_series).astype("category")
         )
+        self.merged_data["Patient_Classification_Binary"] = data['Patient_Classification_Binary']
 
         # Plots
         output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
@@ -1114,9 +1158,9 @@ class TumorAnalysis:
             median_age = self.merged_data["Age"].median()
             max_age = self.merged_data["Age"].max()
             min_age = self.merged_data["Age"].min()
-            write_stat(f"\t\tMedian Age: {median_age} years")
-            write_stat(f"\t\tMaximum Age: {max_age} years")
-            write_stat(f"\t\tMinimum Age: {min_age} years")
+            write_stat(f"\t\tMedian Age: {median_age} days")
+            write_stat(f"\t\tMaximum Age: {max_age} days")
+            write_stat(f"\t\tMinimum Age: {min_age} days")
 
             # Sex, Received Treatment, Progression, Symptoms, Location, Patient Classification, Treatment Type
             copy_df = self.merged_data.copy()
@@ -1184,6 +1228,63 @@ class TumorAnalysis:
             write_stat(f"\t\tMedian Follow-Up Time: {median_follow_up_months:.2f} months")
             write_stat(f"\t\tMaximum Follow-Up Time: {max_follow_up_months:.2f} months")
             write_stat(f"\t\tMinimum Follow-Up Time: {min_follow_up_months:.2f} months")
+
+    def univariate_analysis(self):
+        independent_vars = [
+            "Location", "Symptoms", "Sex", "BRAF Status", "Treatment Type",
+            "Received Treatment", "Time to Treatment", "Histology", "Age at First Diagnosis",
+            "Age at First Treatment", "Age at Last Clinical Follow-Up", "Age", "Days Between Scans",
+            "Normalized Volume", "Baseline Volume", "Volume Change", "Volume Growth[%] Rate",
+            "Volume Growth[%] Avg", "Volume Growth[%] Std", "Follow-Up Time", "Age Group",
+            "Time since First Scan"
+        ]
+        # Results storage
+        results_summary = []
+        if len(self.merged_data['Patient_Classification_Binary'].unique()) > 1:
+            for var in independent_vars:
+                if self.merged_data[var].dtype == object or self.merged_data[var].dtype.name == 'category':
+                    data = pd.get_dummies(self.merged_data[var], drop_first=True)
+                else:
+                    data = self.merged_data[[var]]
+
+                data = data.apply(pd.to_numeric, errors='coerce')  # Ensure all data is numeric
+                X = data.astype(float).fillna(data.mean())
+                y = self.merged_data['Patient_Classification_Binary'].astype(float)
+                if y.nunique() > 1 and not X.empty:
+                    # scaler = StandardScaler()
+                    #     X_scaled = scaler.fit_transform(X)
+
+                    #     # Split the data
+                    #     X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42, stratify=y)
+
+                    #     pipeline = make_pipeline(
+                    #     SimpleImputer(strategy='mean'),
+                    #     StandardScaler(),
+                    #     LogisticRegression(solver='liblinear')
+                    # )
+                    #     # Initialize and fit the logistic regression model
+                    #     pipeline.fit(X_train, y_train)
+
+                    #     predictions = pipeline.predict(X_test)
+                    p_values, coefs = self.calculate_p_values_and_coef(data, y)
+
+                    for p_value, coef in zip(p_values, coefs):
+                        odds_ratio = np.exp(coef)
+                        # Append results for each variable
+                        results_summary.append((var, p_value, coef, odds_ratio))
+
+            # Convert results to DataFrame
+            results_df = pd.DataFrame(results_summary, columns=['Variable', 'P-value', 'Coefficient', 'Odds Ratio'])
+            # Filter for significant results (e.g., p-value < 0.05)
+            significant_results = results_df[results_df['P-value'] < 0.05].sort_values(by='P-value')                    # print(f"Classification Report for {var}:\n", classification_report(y_test, predictions))
+            print("Significant variables correlated with 'Progressor':\n", significant_results)
+        else:
+            print("Target variable contains only one class. Analysis cannot proceed.")
+
+    def calculate_p_values_and_coef(self, X, y):
+        X_with_const = sm.add_constant(X)
+        model = sm.Logit(y, X_with_const).fit(disp=0)
+        return model.pvalues[1:], model.params[1:]
 
     ##########################################
     # EFS RELATED ANALYSIS AND VISUALIZATION #
@@ -1313,18 +1414,21 @@ class TumorAnalysis:
         if correlation_cfg.ANALYSIS_PRE_TREATMENT:
             prefix = f"{self.cohort}_pre_treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
+            
+            if self.merged_data.isnull().values.any():
+                self.merged_data.replace(np.nan, np.inf, inplace=True)
             # Survival analysis
-            stratify_by_list = [
-                "Location",
-                "Sex",
-                "BRAF Status",
-                "Age Group",
-                "Symptoms",
-                "Histology",
-            ]
-            for element in stratify_by_list:
-                self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
-
+            # stratify_by_list = [
+            #     "Location",
+            #     "Sex",
+            #     "BRAF Status",
+            #     "Age Group",
+            #     "Symptoms",
+            #     "Histology",
+            # ]
+            # for element in stratify_by_list:
+            #     self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=element)
+            
             # Trajectories & Trend analysis
             self.trajectories(prefix, output_dir=output_stats)
 
@@ -1337,14 +1441,22 @@ class TumorAnalysis:
                 change_threshold=correlation_cfg.CHANGE_THRESHOLD,
             )
 
-            # Descriptive statistics for table1 in paper
-            self.printout_stats(prefix=prefix, output_file_path=output_stats)
+            print(self.merged_data.head(10))
+            print(self.merged_data.dtypes)
+            if self.merged_data.isnull().values.any():
+                print(self.merged_data.isnull().sum())
+                #self.merged_data.replace(np.nan, np.inf, inplace=True)
+                
 
-            # Correlations between variables
-            self.analyze_pre_treatment(
-                prefix=prefix,
-                output_dir=output_correlations,
-            )
+            self.univariate_analysis()
+            # # Descriptive statistics for table1 in paper
+            # self.printout_stats(prefix=prefix, output_file_path=output_stats)
+
+            # # Correlations between variables
+            # self.analyze_pre_treatment(
+            #     prefix=prefix,
+            #     output_dir=output_correlations,
+            # )
 
             # Last consistency check
             consistency_check(self.merged_data)
