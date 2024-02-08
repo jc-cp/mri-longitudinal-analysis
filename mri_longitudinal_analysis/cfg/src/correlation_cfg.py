@@ -104,7 +104,8 @@ BCH_LOCATION = {
     "frontal": "Cortical",
     "parietal": "Cortical",
     "sylvian": "Cortical",
-    "suprasellar": "Meninges / Suprasellar",
+    # "suprasellar": "Meninges / Suprasellar", # grouping for regression
+    "suprasellar": "Other",
     "thalamic": "Basal Ganglia / Thalamus",
     "thalamus": "Basal Ganglia / Thalamus",
     "basal": "Basal Ganglia / Thalamus",
@@ -150,8 +151,11 @@ BCH_GLIOMA_TYPES = {
     "neo": "Glial-neuronal glioma",
     "pseudo": "Other",
     "oligodendroglioma": "Other",
-    "low": "Plain Low Grade Glioma",
-    "tectal": "Plain Low Grade Glioma",
+    # "low": "Plain Low Grade Glioma",
+    # "tectal": "Plain Low Grade Glioma",
+    "low": "Other",
+    "tectal": "Other",
+
 }
 
 CBTN_GLIOMA_TYPES = {
@@ -169,7 +173,7 @@ BCH_DTYPE_MAPPING = {
     "Sex": "category",
     "BRAF Status": "category",
     "Treatment Type": "category",
-    "Tumor Progression": "category",
+    #"Tumor Progression": "category",
     "Received Treatment": "category",
     "Follow-Up Time": "int",
     "Time to Treatment": "int",
@@ -179,7 +183,7 @@ BCH_DTYPE_MAPPING = {
 BCH_DATETIME_COLUMNS = [
     "Age at First Diagnosis",
     "Age at First Treatment",
-    "Age at First Progression",
+    #"Age at First Progression",
     "Age at Last Clinical Follow-Up",
 ]
 
@@ -190,7 +194,7 @@ CBTN_DTYPE_MAPPING = {
     "Sex": "category",
     "BRAF Status": "category",
     "Treatment Type": "category",
-    "Tumor Progression": "category",
+    #"Tumor Progression": "category",
     "Received Treatment": "category",
     # "Follow-up Time": "int",          # provided through the volume data csv's and the ages
     "Time to Treatment": "int",
@@ -200,6 +204,6 @@ CBTN_DTYPE_MAPPING = {
 CBTN_DATETIME_COLUMNS = [
     "Age at First Diagnosis",
     "Age at First Treatment",
-    "Age at First Progression",
+    #"Age at First Progression",
     "Age at Last Clinical Follow-Up",
 ]

@@ -9,20 +9,14 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
 import statsmodels.api as sm
-from sklearn.impute import SimpleImputer
-from sklearn.pipeline import make_pipeline
-from sklearn.metrics import classification_report
-from sklearn.preprocessing import StandardScaler
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 from cfg.src import correlation_cfg
 from lifelines import KaplanMeierFitter
 from utils.helper_functions import (
     bonferroni_correction,
     chi_squared_test,
     f_one,
-    pearson_correlation,
     point_bi_serial,
     perform_propensity_score_matching,
     calculate_propensity_scores,
@@ -402,7 +396,9 @@ class TumorAnalysis:
             if row["Radiation as part of initial treatment"] == "Yes":
                 treatments.append("Radiation")
 
-            if len(treatments) == 0:
+            if len(treatments) == 1 and treatments[0] == "Radiation":
+                treatment_list.append("Surgery and Radiation")
+            elif len(treatments) == 0:
                 treatment_list.append("No Treatment")
             elif len(treatments) == 1:
                 treatment_list.append(f"{treatments[0]} Only")
@@ -410,7 +406,7 @@ class TumorAnalysis:
                 treatment_list.append(f"{treatments[0]} and {treatments[1]}")
             elif len(treatments) == 3:
                 treatment_list.append("All Treatments")
-
+        
         return treatment_list
 
     def extract_treatment_info_cbtn(self):
@@ -626,63 +622,47 @@ class TumorAnalysis:
 
         Updates the class attributes with the results of the test and prints the outcome.
         """
-        test_result = None  # Initialize test_result
+        test_result, coef, p_val = None, None, None  # Initialize test_result
         test_type = ""
         x_dtype = data[x_val].dtype
         y_dtype = data[y_val].dtype
 
         if pd.api.types.is_numeric_dtype(x_dtype) and pd.api.types.is_numeric_dtype(y_dtype):
-            if method == "pearson":
-                coef, p_val = pearson_correlation(data[x_val], data[y_val])
-            elif method == "spearman":
-                coef, p_val = spearman_correlation(data[x_val], data[y_val])
-            print(
-                f"\t\t{x_val} and {y_val} - {method.title()} Correlation Coefficient: {coef},"
-                f" P-value: {p_val}"
-            )
+            coef, p_val = spearman_correlation(data[x_val], data[y_val])
             test_result = (coef, p_val)
-            test_type = "correlation"
+            test_type = f"correlation {method}"
         elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_numeric_dtype(y_dtype):
             categories = data[x_val].nunique()
             if categories == 2 and method == "t-test":
                 t_stat, p_val = ttest(data, x_val, y_val)
-                print(
-                    f"\t\tT-test for {x_val} and {y_val} - t-statistic: {t_stat}, P-value: {p_val}"
-                )
                 test_result = (t_stat, p_val)
                 test_type = "t-test"
             elif categories == 2 and method == "point-biserial":
                 coef, p_val = point_bi_serial(data, x_val, y_val)
-                print(
-                    f"\t\tPoint-Biserial Correlation for {x_val} and {y_val} - Coefficient:"
-                    f" {coef}, P-value: {p_val}"
-                )
                 test_result = (coef, p_val)
                 test_type = "point-biserial"
             else:
-                # For more than two categories, use ANOVA
                 f_stat, p_val = f_one(data, x_val, y_val)
-                print(
-                    f"\t\tANOVA for {x_val} and {y_val} - F-statistic: {f_stat}, P-value: {p_val}"
-                )
                 test_result = (f_stat, p_val)
                 test_type = "ANOVA"
         elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_categorical_dtype(
             y_dtype
         ):
             chi2, p_val, _, _ = chi_squared_test(data, x_val, y_val)
-            print(f"\t\tChi-Squared test for {x_val} and {y_val} - Chi2: {chi2}, P-value: {p_val}")
             test_result = (chi2, p_val)
             test_type = "chi-squared"
 
         if test_result:
-            # Visualize the statistical test
+            print(
+                f"\t\t{x_val} and {y_val} - {test_type.title()} Test: Statistic={test_result[0]},"
+                f" P-value={test_result[1]}"
+            )
             self.visualize_statistical_test(
                 x_val, y_val, data, test_result, prefix, output_dir, test_type, method=method
             )
 
             self.p_values.append(p_val)
-            if test_type == "correlation":
+            if coef is not None:
                 self.coef_values.append(coef)
         else:
             print(
@@ -704,94 +684,211 @@ class TumorAnalysis:
             "Histology",
             "Treatment Type",
             "Age Group",
-            "Sex",
             "BRAF Status",
-            "Received Treatment",
-            #"Tumor Progression",
+            "Sex",
             "Tumor Classification",
-            "Patient Classification",
+            "Received Treatment",
+
         ]
         numerical_vars = [
             "Age",
-            "Age at First Diagnosis",
-            "Age at First Treatment",
-            "Age at Last Clinical Follow-Up",
-            "Days Between Scans"
+            "Age at First Diagnosis", 
+            "Age at Last Clinical Follow-Up", 
+            "Days Between Scans",
             "Volume",
             "Normalized Volume",
             "Volume Change",
             "Volume Change Rate",
-            "Time to Treatment",
             "Baseline Volume",
             "Follow-Up Time"
         ]
+        outcome_var = "Patient Classification Binary"
+                
+        # for full blown out comparison uncomment the following lines
+        # for num_var in numerical_vars:
+        #     for cat_var in categorical_vars:
+        #         if self.merged_data[cat_var].nunique() == 2:
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 output_dir,
+        #                 method="t-test",
+        #             )
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 output_dir,
+        #                 method="point-biserial",
+        #             )
+        #         else:
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 output_dir,
+        #                 method="ANOVA",
+        #             )
+        #     filtered_vars = [
+        #         var
+        #         for var in numerical_vars
+        #         if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
+        #     ]
+        #     for other_num_var in filtered_vars:
+        #         if other_num_var != num_var:
+        #             self.analyze_correlation(
+        #                 num_var,
+        #                 other_num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 output_dir,
+        #                 method="spearman",
+        #             )
+        #             self.analyze_correlation(
+        #                 num_var,
+        #                 other_num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 output_dir,
+        #                 method="pearson",
+        #             )
+        # aggregated_data = (
+        #     self.merged_data.sort_values("Date").groupby("Patient_ID", as_index=False).last()
+        # )
+        # for cat_var in categorical_vars:
+        #     for other_cat_var in categorical_vars:
+        #         if cat_var != other_cat_var:
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 other_cat_var,
+        #                 aggregated_data,
+        #                 prefix,
+        #                 output_dir,
+        #             )
+        
+        # Univariate analysis
+        patient_constant_vars = [
+            "Location", "Symptoms", "Histology", "Treatment Type", "BRAF Status",
+            "Sex", "Received Treatment", "Age at First Diagnosis",
+            "Age at Last Clinical Follow-Up", "Baseline Volume"
+        ]
+        time_varying_vars = [
+            "Age", "Age Group", "Days Between Scans", "Volume", "Normalized Volume",
+            "Volume Change", "Volume Change Rate", "Follow-Up Time"
+        ]
+        all_vars = patient_constant_vars + time_varying_vars
+        
+        for variable in all_vars:
+            print(f"\t\tAnalyzing {variable}...")
+            self.univariate_analysis(variable, outcome_var)
+        
+    def univariate_analysis(self, variable, outcome_var):
+        """
+        Perform univariate logistic regression analysis for a given variable.
+        """
+        data, y = self.prepare_data_for_univariate_analysis(variable, outcome_var)        
+        if data is not None and not data.empty:
+            X = data.drop(columns=[outcome_var], errors='ignore')
+            try:
+                self.logistic_regression_analysis(y, X)
+                print(f"\t\t\tModel fitted successfully with {variable}.")
+            except ExceptionGroup as e:
+                print(f"\t\tError fitting model with {variable}: {e}")
+        else:
+            print(f"\t\tNo data available for {variable}.")
+        
+    def prepare_data_for_univariate_analysis(self, variable, outcome_var):
+        """
+        Prepare the data for univariate logistic regression analysis.
+        This function handles patient-constant and time-varying variables differently.
+        """
+        # Handling patient-constant variables
+        if variable in ["Location", "Symptoms", "Histology", "Treatment Type", 
+                        "BRAF Status", "Sex", 
+                        "Received Treatment", "Age at First Diagnosis", 
+                        "Age at Last Clinical Follow-Up", "Baseline Volume"]:
+            data_agg = self.merged_data.groupby('Patient_ID').agg({variable: 'first', outcome_var: 'first'}).reset_index()
+        else:
+            # Handling time-varying variables
+            data_agg = self.merged_data[[variable, outcome_var]].dropna()
+        
+        # For categorical variables, convert them to dummy variables
+        if variable in ["Location", "Symptoms", "Histology", "Treatment Type", "BRAF Status", "Sex", "Received Treatment", "Age Group"]:
+            if variable in data_agg.columns:
+                data_agg[variable] = data_agg[variable].astype(str)
+                data_agg = pd.get_dummies(data_agg, columns=[variable], drop_first=True)
+                for col in data_agg.columns:
+                    data_agg[col] = pd.to_numeric(data_agg[col], errors='coerce')
+        
+        # Ensure outcome_var is binary numeric
+        data_agg[outcome_var] = pd.to_numeric(data_agg[outcome_var], errors='coerce').fillna(0).astype(int)
+        relevant_columns = [col for col in data_agg.columns if col == outcome_var or col.startswith(variable+'_') or col == 'const']
+        data_agg = data_agg[relevant_columns].dropna()
+        if data_agg.isnull().values.any():
+            print(f"\t\tWarning: Missing values detected for {variable}. Dropping missing values.")
+            data_agg.fillna(0, inplace=True)
+        data_agg = data_agg.drop(columns=['Patient_ID'], errors='ignore')
+        
+        if 'const' not in data_agg.columns:
+            data_agg = sm.add_constant(data_agg)
+        
+        if outcome_var in data_agg:
+            y = data_agg[outcome_var]
+            X = data_agg.drop(columns=[outcome_var], errors='ignore')
+            for col in X.columns:
+                if X[col].dtype == bool:
+                    X[col] = X[col].astype(int)
+            #     if "Histology" in col:
+            #         print(f"{col}:")
+            #         print(X[col].value_counts())
+            # numerical_vars = ["Age", "Age at First Diagnosis", "Age at Last Clinical Follow-Up", "Days Between Scans", "Volume", "Normalized Volume", "Volume Change", "Volume Change Rate", "Baseline Volume", "Follow-Up Time"]
+            # numerical_vars_to_standardize = [var for var in numerical_vars if var in X.columns]
 
-        for num_var in numerical_vars:
-            for cat_var in categorical_vars:
-                if self.merged_data[cat_var].nunique() == 2:
-                    self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.merged_data,
-                        prefix,
-                        output_dir,
-                        method="t-test",
-                    )
-                    self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.merged_data,
-                        prefix,
-                        output_dir,
-                        method="point-biserial",
-                    )
-                else:
-                    self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.merged_data,
-                        prefix,
-                        output_dir,
-                        method="ANOVA",
-                    )
-            filtered_vars = [
-                var
-                for var in numerical_vars
-                if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
-            ]
-            for other_num_var in filtered_vars:
-                if other_num_var != num_var:
-                    self.analyze_correlation(
-                        num_var,
-                        other_num_var,
-                        self.merged_data,
-                        prefix,
-                        output_dir,
-                        method="spearman",
-                    )
-                    self.analyze_correlation(
-                        num_var,
-                        other_num_var,
-                        self.merged_data,
-                        prefix,
-                        output_dir,
-                        method="pearson",
-                    )
+            # if numerical_vars_to_standardize:
+            #     scaler = StandardScaler()
+            #     X[numerical_vars_to_standardize] = scaler.fit_transform(X[numerical_vars_to_standardize])
+            # print(X.shape, y.shape)
+            # print(X.dtypes)
+            # print(y.dtypes)
+            # for col in X.columns:
+            #     if not np.issubdtype(X[col].dtype, np.number):
+            #         print(f"Non-numeric data found in column: {col}")
+            # print(X.isnull().all())  # This checks if any column has all NaN values
+            #self.calculate_vif(X)
+            return X, y
+        else:
+            return None, None
+        
+    @staticmethod
+    def logistic_regression_analysis(y, x):
+        """
+        Perform logistic regression to analyze the impact of various factors on tumor progression.
+        """
+        model = sm.Logit(y, x).fit(disp=0, maxiter=100, method='lbfgs')        
+        #print(model.summary2())
 
-        aggregated_data = (
-            self.merged_data.sort_values("Date").groupby("Patient_ID", as_index=False).last()
-        )
+        return model
 
-        for cat_var in categorical_vars:
-            for other_cat_var in categorical_vars:
-                if cat_var != other_cat_var:
-                    self.analyze_correlation(
-                        cat_var,
-                        other_cat_var,
-                        aggregated_data,
-                        prefix,
-                        output_dir,
-                    )
+    def calculate_vif(self, X):
+        """
+        Calculate Variance Inflation Factor (VIF) for each variable in the DataFrame X.
+        X should already have dummy variables for categorical features and should not contain the outcome variable.
+        """
+        # Add constant term for intercept
+        X = sm.add_constant(X)
+
+        # Calculate VIF
+        vif_data = pd.DataFrame({
+            'Variable': X.columns,
+            'VIF': [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+        })
+
+        print("\nVIF Calculation Results:")
+        print(vif_data)
 
     def visualize_statistical_test(
         self,
@@ -934,10 +1031,12 @@ class TumorAnalysis:
         pre_treatment_data["Time since First Scan"] = pre_treatment_data.groupby("Patient_ID")[
             "Age"
         ].transform(lambda x: (x - x.iloc[0]))
-
+        pre_treatment_data.reset_index(drop=True, inplace=True)
+        
         self.merged_data.sort_values(by=["Patient_ID", "Age"], inplace=True)
         self.merged_data["Time since First Scan"] = pre_treatment_data["Time since First Scan"]
-
+        self.merged_data.reset_index(drop=True, inplace=True)
+        
         # Error handling for sample size
         sample_size = self.sample_size_plots
         if sample_size:
@@ -1041,6 +1140,43 @@ class TumorAnalysis:
         # Trend analysis and classifciation of patients
         self.trend_analysis(pre_treatment_data, output_dir, prefix)
 
+    def trend_analysis(self, data, output_dir, prefix):
+        """
+        Classify patients based on their tumor growth trajectories
+        into progressors, stable or regressors.
+        """
+        patients_ids = data["Patient_ID"].unique()
+        # Edit this to have other plots
+        # column_name = "Volume Change"
+        column_name = "Normalized Volume"
+
+        print("\tStarting Trend Analysis:")
+        patient_classifications = {
+            patient_id: classify_patient(
+                data,
+                patient_id,
+                column_name,
+                self.progression_threshold,
+                self.stability_threshold,
+                self.high_risk_threshold,
+                angle=self.angle,
+            )
+            for patient_id in patients_ids
+        }
+        data["Classification"] = data["Patient_ID"].map(patient_classifications)
+        data['Patient Classification Binary'] = pd.to_numeric(data['Classification'].apply(lambda x: 1 if x == 'Progressor' else 0), errors='coerce').fillna(0).astype(int)
+        # Save to original dataframe
+        classifications_series = pd.Series(patient_classifications)
+        self.merged_data["Patient Classification"] = (
+            self.merged_data["Patient_ID"].map(classifications_series).astype("category")
+        )
+        self.merged_data["Patient Classification Binary"] = data['Patient Classification Binary']
+
+        # Plots
+        output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
+        plot_trend_trajectories(data, output_filename, column_name, unit="mm^3")
+        print("\t\tSaved trend analysis plot.")
+
     def analyze_tumor_stability(
         self, data, output_dir, volume_weight=0.5, growth_weight=0.5, change_threshold=20
     ):
@@ -1093,51 +1229,15 @@ class TumorAnalysis:
         # self.merged_data using the maps
         m_data = pd.merge(
             self.merged_data,
-            data[["Patient_ID", "Age", "Stability Index", "Tumor Classification"]],
+            data[["Patient_ID", "Age", "Stability Index", "Tumor Classification", "Overall Volume Change"]],
             on=["Patient_ID", "Age"],
             how="left",
         )
 
         self.merged_data = m_data
+        self.merged_data.reset_index(drop=True, inplace=True)
         visualize_tumor_stability(data, output_dir, stability_threshold, change_threshold)
         print("\t\tSaved tumor stability plots.")
-
-    def trend_analysis(self, data, output_dir, prefix):
-        """
-        Classify patients based on their tumor growth trajectories
-        into progressors, stable or regressors.
-        """
-        patients_ids = data["Patient_ID"].unique()
-        # Edit this to have other plots
-        # column_name = "Volume Change"
-        column_name = "Normalized Volume"
-
-        print("\tStarting Trend Analysis:")
-        patient_classifications = {
-            patient_id: classify_patient(
-                data,
-                patient_id,
-                column_name,
-                self.progression_threshold,
-                self.stability_threshold,
-                self.high_risk_threshold,
-                angle=self.angle,
-            )
-            for patient_id in patients_ids
-        }
-        data["Classification"] = data["Patient_ID"].map(patient_classifications)
-        data['Patient_Classification_Binary'] = pd.to_numeric(data['Classification'].apply(lambda x: 1 if x == 'Progressor' else 0), errors='coerce').fillna(0).astype(int)
-        # Save to original dataframe
-        classifications_series = pd.Series(patient_classifications)
-        self.merged_data["Patient Classification"] = (
-            self.merged_data["Patient_ID"].map(classifications_series).astype("category")
-        )
-        self.merged_data["Patient_Classification_Binary"] = data['Patient_Classification_Binary']
-
-        # Plots
-        output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
-        plot_trend_trajectories(data, output_filename, column_name, unit="mm^3")
-        print("\t\tSaved trend analysis plot.")
 
     def printout_stats(self, output_file_path, prefix):
         """
@@ -1162,11 +1262,11 @@ class TumorAnalysis:
             write_stat(f"\t\tMaximum Age: {max_age} days")
             write_stat(f"\t\tMinimum Age: {min_age} days")
 
-            # Sex, Received Treatment, Progression, Symptoms, Location, Patient Classification, Treatment Type
+            # Sex, Received Treatment, Progression, Symptoms, Location,
+            # Patient Classification, Treatment Type
             copy_df = self.merged_data.copy()
             unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
             counts_sex = unique_pat["Sex"].value_counts()
-            counts_progression = unique_pat["Tumor Progression"].value_counts()
             counts_received_treatment = unique_pat["Received Treatment"].value_counts()
             counts_symptoms = unique_pat["Symptoms"].value_counts()
             counts_histology = unique_pat["Histology"].value_counts()
@@ -1179,7 +1279,6 @@ class TumorAnalysis:
             write_stat(f"\t\tHistology: {counts_histology}")
             write_stat(f"\t\tLocation: {counts_location}")
             write_stat(f"\t\tSex: {counts_sex}")
-            write_stat(f"\t\tProgression: {counts_progression}")
             write_stat(f"\t\tPatient Classification: {counts_patient_classification}")
             write_stat(f"\t\tTreatment Type: {counts_treatment_type}")
 
@@ -1228,64 +1327,8 @@ class TumorAnalysis:
             write_stat(f"\t\tMedian Follow-Up Time: {median_follow_up_months:.2f} months")
             write_stat(f"\t\tMaximum Follow-Up Time: {max_follow_up_months:.2f} months")
             write_stat(f"\t\tMinimum Follow-Up Time: {min_follow_up_months:.2f} months")
-
-    def univariate_analysis(self):
-        independent_vars = [
-            "Location", "Symptoms", "Sex", "BRAF Status", "Treatment Type",
-            "Received Treatment", "Time to Treatment", "Histology", "Age at First Diagnosis",
-            "Age at First Treatment", "Age at Last Clinical Follow-Up", "Age", "Days Between Scans",
-            "Normalized Volume", "Baseline Volume", "Volume Change", "Volume Growth[%] Rate",
-            "Volume Growth[%] Avg", "Volume Growth[%] Std", "Follow-Up Time", "Age Group",
-            "Time since First Scan"
-        ]
-        # Results storage
-        results_summary = []
-        if len(self.merged_data['Patient_Classification_Binary'].unique()) > 1:
-            for var in independent_vars:
-                if self.merged_data[var].dtype == object or self.merged_data[var].dtype.name == 'category':
-                    data = pd.get_dummies(self.merged_data[var], drop_first=True)
-                else:
-                    data = self.merged_data[[var]]
-
-                data = data.apply(pd.to_numeric, errors='coerce')  # Ensure all data is numeric
-                X = data.astype(float).fillna(data.mean())
-                y = self.merged_data['Patient_Classification_Binary'].astype(float)
-                if y.nunique() > 1 and not X.empty:
-                    # scaler = StandardScaler()
-                    #     X_scaled = scaler.fit_transform(X)
-
-                    #     # Split the data
-                    #     X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42, stratify=y)
-
-                    #     pipeline = make_pipeline(
-                    #     SimpleImputer(strategy='mean'),
-                    #     StandardScaler(),
-                    #     LogisticRegression(solver='liblinear')
-                    # )
-                    #     # Initialize and fit the logistic regression model
-                    #     pipeline.fit(X_train, y_train)
-
-                    #     predictions = pipeline.predict(X_test)
-                    p_values, coefs = self.calculate_p_values_and_coef(data, y)
-
-                    for p_value, coef in zip(p_values, coefs):
-                        odds_ratio = np.exp(coef)
-                        # Append results for each variable
-                        results_summary.append((var, p_value, coef, odds_ratio))
-
-            # Convert results to DataFrame
-            results_df = pd.DataFrame(results_summary, columns=['Variable', 'P-value', 'Coefficient', 'Odds Ratio'])
-            # Filter for significant results (e.g., p-value < 0.05)
-            significant_results = results_df[results_df['P-value'] < 0.05].sort_values(by='P-value')                    # print(f"Classification Report for {var}:\n", classification_report(y_test, predictions))
-            print("Significant variables correlated with 'Progressor':\n", significant_results)
-        else:
-            print("Target variable contains only one class. Analysis cannot proceed.")
-
-    def calculate_p_values_and_coef(self, X, y):
-        X_with_const = sm.add_constant(X)
-        model = sm.Logit(y, X_with_const).fit(disp=0)
-        return model.pvalues[1:], model.params[1:]
-
+        print(f"\t\tSaved summary statistics to {file_path}.")
+    
     ##########################################
     # EFS RELATED ANALYSIS AND VISUALIZATION #
     ##########################################
@@ -1441,22 +1484,19 @@ class TumorAnalysis:
                 change_threshold=correlation_cfg.CHANGE_THRESHOLD,
             )
 
-            print(self.merged_data.head(10))
-            print(self.merged_data.dtypes)
             if self.merged_data.isnull().values.any():
                 print(self.merged_data.isnull().sum())
                 #self.merged_data.replace(np.nan, np.inf, inplace=True)
                 
+            # Descriptive statistics for table1 in paper
+            self.printout_stats(prefix=prefix, output_file_path=output_stats)
 
-            self.univariate_analysis()
-            # # Descriptive statistics for table1 in paper
-            # self.printout_stats(prefix=prefix, output_file_path=output_stats)
-
-            # # Correlations between variables
-            # self.analyze_pre_treatment(
-            #     prefix=prefix,
-            #     output_dir=output_correlations,
-            # )
+            # Correlations between variables
+            self.analyze_pre_treatment(
+                prefix=prefix,
+                output_dir=output_correlations,
+            )
+            # self.perform_logistic_regression()
 
             # Last consistency check
             consistency_check(self.merged_data)
