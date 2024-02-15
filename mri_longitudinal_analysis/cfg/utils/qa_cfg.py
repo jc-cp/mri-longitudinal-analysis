@@ -1,45 +1,65 @@
 from pathlib import Path
 
+
+##########
+# PART 1 #
+##########
+# matches images and masks and moves them to the target folder for a joint review / qa from the clinician
+PART_1 = False
 IMAGES_FOLDER = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/output/T2W_brain_extraction"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/new_review/after_review_before_pp/output/T2W_brain_extraction"
 )
 
 MASKS_FOLDER = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/output/seg_predictions"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/new_review/after_review_before_pp/output/seg_predictions"
 )
 
-# Target directory for the consolidated files
 TARGET_FOLDER = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/qa"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event"
 )
+
+
+##########
+# PART 2 #
+##########
+# checks reviewed files according to the annotations.csv file and moves them to corresponding folders
+PART_2 = False
+ANNOTATIONS_CSV = TARGET_FOLDER / "annotations_jc.csv"
+MOVING_FILES = False
+
 REJECTED_FOLDER = TARGET_FOLDER / "rejected"
 REJECTED_MASKS_FOLDER = REJECTED_FOLDER / "old_masks"
 ACCEPTED_FOLDER = TARGET_FOLDER / "accepted"
 REVIEWS_FOLDER = TARGET_FOLDER / "reviews"
 REVIEW_IMAGES_FOLDER = REVIEWS_FOLDER / "images"
-REVIEW_IMAGES_EDITED_FOLDER = REVIEWS_FOLDER / "images_without_0000"
 REVIEW_OLD_MASKS_FOLDER = REVIEWS_FOLDER / "old_masks"
 REVIEW_NEW_MASKS_FOLDER = REVIEWS_FOLDER / "new_masks"
-ANNOTATIONS_CSV_MASKS = REVIEW_NEW_MASKS_FOLDER / "annotations.csv"
-ANNOTATIONS_CSV = TARGET_FOLDER / "annotations.csv"
+REVIEW_MASKS_EDITED_FOLDER = REVIEWS_FOLDER / "masks_edited"
 
-# matches images and masks and moves them to the target folder for a joint review
-PART_1 = True
-
-# checks reviewed files according to the annotations.csv file and moves them to corresponding folders
-PART_2 = False
-MOVING_FILES = False
-
+##########
+# PART 3 #
+##########
 # renaming files for second segmentation run by appending a suffix to the file name
 # after PART_3 run segmentation algorithm for new masks
 PART_3 = False
 
+##########
+# PART 4 #
+##########
 # analzing the new generated masks and marking them as acceptable or not
 PART_4 = False
+ANNOTATIONS_CSV_MASKS = REVIEW_NEW_MASKS_FOLDER / "annotations.csv"
 
+##########
+# PART 5 #
+##########
 # renaming files with a hash to original file names
 PART_5 = False
 
-# moving files to the final folder structure
-PART_6 = False
+##########
+# PART 6 #
+##########
+# moving files to the final folder structure,, images should have the _0000 suffix removed
+PART_6 = True
+SECOND_REVIEW = TARGET_FOLDER / "second_review"
 VOXEL_COUNT = 10

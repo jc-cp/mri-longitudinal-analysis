@@ -113,6 +113,7 @@ def analyze_nifti_files(directory, csv_file):
     :param directory: Directory containing NIfTI files.
     :param csv_file: Path to the CSV file to save the results.
     """
+    count = 0
     with open(csv_file, mode="w", newline="", encoding="utf-8") as archive:
         writer = csv.writer(archive)
         writer.writerow(["Filename", "Status", "Volume"])  # Writing the header
@@ -126,6 +127,7 @@ def analyze_nifti_files(directory, csv_file):
                 if np.any(data):  # Check if there is any non-zero voxel in the image
                     stats = "Tumor present"
                     volume = np.count_nonzero(data)  # Count non-zero voxels for volume
+                    count += 1
                 else:
                     stats = "Empty"
                     volume = 0
@@ -134,6 +136,7 @@ def analyze_nifti_files(directory, csv_file):
                 writer.writerow([file_name, stats, volume])
 
                 print(f"{file_name} - {stats} - {volume}")
+    print(f"Total files with useful masks: {count}")
 
 
 def move_tumor_files(annotations_csv, masks_folder, images_folder, accepted_folder, voxel_count=10):
@@ -150,23 +153,23 @@ def move_tumor_files(annotations_csv, masks_folder, images_folder, accepted_fold
         read = csv.DictReader(archive)
         for row_line in read:
             if row_line["Status"] == "Tumor present" and float(row_line["Volume"]) > voxel_count:
-                mask_name = row_line["Filename"]
-                image_name = mask_name.replace("_mask", "")
+                img_name = row_line["Filename"]
+                msk_name = img_name.replace(".nii.gz", "_mask.nii.gz")
 
                 try:
                     # Move the corresponding mask file
-                    mask_file = os.path.join(masks_folder, mask_name)
-                    new_mask_file = os.path.join(accepted_folder, mask_name)
+                    mask_file = os.path.join(masks_folder, msk_name)
+                    new_mask_file = os.path.join(accepted_folder, msk_name)
                     move_file(mask_file, new_mask_file)
 
                     # Move the corresponding image file
-                    image_file = os.path.join(images_folder, image_name)
-                    new_image_file = os.path.join(accepted_folder, image_name)
+                    image_file = os.path.join(images_folder, img_name)
+                    new_image_file = os.path.join(accepted_folder, img_name)
                     move_file(image_file, new_image_file)
 
                     # print(f"Moved '{mask_file}' to '{accepted_folder}'")
                     # print(f"Moved '{image_file}' to '{accepted_folder}'")
-                except Exception as e:
+                except ExceptionGroup as e:
                     print(f"Error moving files: {e}")
 
 
@@ -229,13 +232,14 @@ if qa_cfg.PART_2:
     accepted_images = []
     rejected_images = []
     special_case_images = []
+    masks_edited = []
     new_masks_images = []
     patient_acceptance_count = defaultdict(int)
 
     with open(qa_cfg.ANNOTATIONS_CSV, "r", encoding="utf-8") as file:
         reader = csv.reader(file)
         for row in tqdm(reader, desc="Processing CSV file"):
-            image_name, status = row[0], row[1]
+            image_name, status, mask_status = row[0], row[1], row[4]
             old_mask_name = row[3] if len(row) > 3 else None
 
             patient_id = image_name.split("_")[1]
@@ -245,6 +249,8 @@ if qa_cfg.PART_2:
                 patient_acceptance_count[patient_id] += 1
                 if new_mask_name:
                     new_masks_images.append((image_name, old_mask_name, new_mask_name))
+                elif mask_status == "Mask edited":
+                    masks_edited.append((image_name, old_mask_name))
                 else:
                     accepted_images.append((image_name, old_mask_name))
 
@@ -253,6 +259,8 @@ if qa_cfg.PART_2:
                 if new_mask_name:
                     new_masks_images.append((image_name, old_mask_name, new_mask_name))
                     patient_acceptance_count[patient_id] += 1
+                elif mask_status == "Mask edited":
+                    masks_edited.append((image_name, old_mask_name))
                 else:
                     if status == "Bad images" and patient_acceptance_count[patient_id] >= 4:
                         special_case_images.append((image_name, old_mask_name))
@@ -264,6 +272,7 @@ if qa_cfg.PART_2:
     print("Rejected Images:", len(rejected_images))
     print("Special Case Images:", len(special_case_images))
     print("New masks Images:", len(new_masks_images))
+    print("Masks edited:", len(masks_edited))
 
     if qa_cfg.MOVING_FILES:
         os.makedirs(qa_cfg.REJECTED_FOLDER, exist_ok=True)
@@ -273,6 +282,7 @@ if qa_cfg.PART_2:
         os.makedirs(qa_cfg.REVIEW_OLD_MASKS_FOLDER, exist_ok=True)
         os.makedirs(qa_cfg.REVIEW_NEW_MASKS_FOLDER, exist_ok=True)
         os.makedirs(qa_cfg.REJECTED_MASKS_FOLDER, exist_ok=True)
+        os.makedirs(qa_cfg.REVIEW_MASKS_EDITED_FOLDER, exist_ok=True)
 
         # Move new mask images to the accepted folder
         for image_name, old_mask_name, new_mask_name in tqdm(
@@ -321,6 +331,16 @@ if qa_cfg.PART_2:
                 os.path.join(qa_cfg.REVIEW_OLD_MASKS_FOLDER, mask_name),
             )
 
+        for image_name, mask_name in tqdm(masks_edited, desc="Moving masks edited images"):
+            move_file(
+                os.path.join(image_directory, image_name),
+                os.path.join(qa_cfg.REVIEW_MASKS_EDITED_FOLDER, image_name),
+            )
+            move_file(
+                os.path.join(image_directory, mask_name),
+                os.path.join(qa_cfg.REVIEW_MASKS_EDITED_FOLDER, mask_name),
+            )
+
 if qa_cfg.PART_3:
     review_directory = qa_cfg.REVIEW_IMAGES_FOLDER
     rename_files_in_directory(review_directory)
@@ -332,10 +352,12 @@ if qa_cfg.PART_5:
     rename_mask_files(qa_cfg.REVIEW_NEW_MASKS_FOLDER)
 
 if qa_cfg.PART_6:
+    os.makedirs(qa_cfg.SECOND_REVIEW, exist_ok=True)
+    
     move_tumor_files(
         qa_cfg.ANNOTATIONS_CSV_MASKS,
         qa_cfg.REVIEW_NEW_MASKS_FOLDER,
-        qa_cfg.REVIEW_IMAGES_EDITED_FOLDER,
-        qa_cfg.ACCEPTED_FOLDER,
+        qa_cfg.REVIEW_IMAGES_FOLDER,
+        qa_cfg.SECOND_REVIEW,
         qa_cfg.VOXEL_COUNT,
     )
