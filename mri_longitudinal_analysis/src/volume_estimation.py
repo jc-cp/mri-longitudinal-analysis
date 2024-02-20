@@ -23,8 +23,11 @@ from utils.helper_functions import (
     weighted_median,
     prefix_zeros_to_six_digit_ids,
     compute_95_ci,
+    exponential_func
 )
 
+from scipy.optimize import curve_fit
+from sklearn.metrics import r2_score
 
 class VolumeEstimator:
     """
@@ -55,6 +58,8 @@ class VolumeEstimator:
         self.kernel_smoothing_data = defaultdict(list)
         self.window_smoothing_data = defaultdict(list)
         self.volume_growth_rate = defaultdict(list)
+        self.volume_growth_pattern = defaultdict(list)
+        self.volume_growth_type = defaultdict(list)
 
         os.makedirs(volume_est_cfg.OUTPUT_DIR, exist_ok=True)
         os.makedirs(volume_est_cfg.PLOTS_DIR, exist_ok=True)
@@ -535,7 +540,7 @@ class VolumeEstimator:
         # Calculate mean and standard deviation
         print(f"\t95% CI for volume growth rate: {lower:.2f}, {upper:.2f}")
 
-    def calculate_volume_growth_rate(self, scans) -> defaultdict(list):
+    def calculate_volume_growth_rate(self, scans):
         """
         Calculates the rate of volume change (normalized by time span) for each patient.
 
@@ -618,14 +623,23 @@ class VolumeEstimator:
 
             # Calculate additional columns
             df["Normalized Volume"] = df["Volume"] / initial_volume if initial_volume else 0
+            
             df["Volume Growth[%]"] = df["Volume"].diff()
+            df["Volume Growth[%] Avg"] = df["Volume Growth[%]"].mean()
+            df["Volume Growth[%] Std"] = df["Volume Growth[%]"].std()
+
             df["Volume Growth[%] Rate"] = df["Age"].map(
                 lambda age, pid=patient_id: next(
                     (x[1] for x in self.volume_growth_rate[pid] if x[0] == age), None
                 )
             )
-            df["Volume Growth[%] Avg"] = df["Volume Growth[%]"].mean()
-            df["Volume Growth[%] Std"] = df["Volume Growth[%]"].std()
+            df["Volume Growth[%] Rate Avg"] = df["Volume Growth[%] Rate"].mean()
+            df["Volume Growth[%] Rate Std"] = df["Volume Growth[%] Rate"].std()
+
+            growth_pattern = self.calculate_growth_pattern(df)
+            growth_type = self.calculate_growth_type(df)
+            df["Growth Pattern"] = growth_pattern
+            df["Growth Type"] = growth_type
 
             if not volume_est_cfg.TEST_DATA:
                 df["Days Between Scans"] = df["Age"].diff()
@@ -644,9 +658,14 @@ class VolumeEstimator:
                     "Normalized Volume",
                     "Baseline Volume",
                     "Volume Growth[%]",
-                    "Volume Growth[%] Rate",
                     "Volume Growth[%] Avg",
                     "Volume Growth[%] Std",
+                    "Volume Growth[%] Rate",
+                    "Volume Growth[%] Rate Avg", 
+                    "Volume Growth[%] Rate Std",
+                    "Growth Pattern",
+                    "Growth Type",
+
                 ]
                 if not volume_est_cfg.TEST_DATA
                 else [
@@ -655,9 +674,13 @@ class VolumeEstimator:
                     "Normalized Volume",
                     "Baseline Volume",
                     "Volume Growth[%]",
-                    "Volume Growth[%] Rate",
                     "Volume Growth[%] Avg",
                     "Volume Growth[%] Std",
+                    "Volume Growth[%] Rate",
+                    "Volume Growth[%] Rate Avg",
+                    "Volume Growth[%] Rate Std",
+                    "Growth Pattern",
+                    "Growth Type",
                 ]
             )
             df = df[columns_order]
@@ -665,6 +688,59 @@ class VolumeEstimator:
             # Export to CSV
             df.to_csv(csv_file_path, index=False)
 
+    @staticmethod
+    def calculate_growth_pattern(df):
+        """Classify the growth pattern based on the average volume growth rate."""
+            
+        avg_growth_rate = df["Volume Growth[%] Rate Avg"].iloc[0]
+        
+        if avg_growth_rate > volume_est_cfg.RAPID_GROWTH:
+            growth_pattern = 'rapid'
+        elif avg_growth_rate > volume_est_cfg.MODERATE_GROWTH:
+            growth_pattern = 'moderate'
+        else:
+            growth_pattern = 'slow'
+            
+        return growth_pattern
+
+    @staticmethod
+    def calculate_growth_type(df):
+        """
+        Calculate the growth type for a given patient based on the variability and pattern of volume growth rates.
+        """
+        df_clean = df.dropna(subset=["Age", "Volume Growth[%] Rate"])
+        
+        x = df_clean['Age'].values
+        y = df_clean['Volume Growth[%] Rate'].values
+        std_dev_growth_rate = np.std(y)
+        avg_growth_rate = np.mean(y)
+        
+        # Linear fit
+        linear_model = np.polyfit(x, y, 1)
+        linear_pred = np.polyval(linear_model, x)
+        linear_r2 = r2_score(y, linear_pred)
+
+        # Exponential fit
+        try:
+            initial_guesses = [avg_growth_rate, 1, 0]
+            bounds = ([0.001, 0.001, 0], [np.inf, 1, np.inf])
+            popt, _ = curve_fit(exponential_func, x, y,  bounds=bounds, p0=initial_guesses, maxfev=10000)
+            exponential_pred = exponential_func(x, *popt)
+            exponential_r2 = r2_score(y, exponential_pred)
+
+        except (RuntimeError, OverflowError, ValueError):
+            exponential_r2 = -1        
+        
+        # Classify based on best fit
+        if std_dev_growth_rate >= volume_est_cfg.HIGH_VAR:
+            return 'sporadic'
+        elif linear_r2 > exponential_r2 and linear_r2 >= volume_est_cfg.R2_THRESHOLD:
+            return 'linear'
+        elif exponential_r2 > linear_r2 and exponential_r2 >= volume_est_cfg.R2_THRESHOLD:
+            return 'exponential'
+        else:
+            return 'sporadic'
+        
     ############################
     # Plotting-related methods #
     ############################

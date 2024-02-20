@@ -20,11 +20,13 @@ CLINICAL_DATA_FILE = Path(
 )
 # If test data is being used or not
 TEST_DATA = False
+# Current dataset being used
 BCH_DATA = False
 CBTN_DATA = True
 NUMBER_TOTAL_CBTN_PATIENTS = 115
 NUMBER_TOTAL_BCH_PATIENTS = 85
 
+# Filtering options
 RAW = True
 FILTERED = True
 POLY_SMOOTHING = True
@@ -35,3 +37,11 @@ PLOT_COMPARISON = True
 
 # Other options
 CONFIDENCE_INTERVAL = True
+
+# Growth pattern output
+RAPID_GROWTH = 20
+MODERATE_GROWTH = 10
+
+# Growth type 
+R2_THRESHOLD = 0.5
+HIGH_VAR = 10
