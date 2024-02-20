@@ -902,34 +902,40 @@ class VolumeEstimator:
         self, data_type, output_path, patient_id, dates, volumes, ages=None, has_dates=True
     ):
         """
-        Plots and saves the normalized volume data for a single patient.
-        Args:
-            data_type (str): The type of data ('raw', 'filtered', etc.)
-            output_path (str): The directory where plots should be saved.
-            patient_id (str): The ID of the patient.
-            dates (list): List of dates.
-            volumes (list): List of normalized volumes.
-            ages (list, optional): List of ages. Defaults to None.
-            has_dates (bool): Indicates whether date data is available.
+        Plots and saves the normalized volume data for a single patient, signifying 25% growth and shrinkage.
         """
         fig, ax1 = self.setup_plot_base(normalize=True)
 
-        # Normalize volumes
         initial_volume = volumes[0] if volumes[0] not in [0, np.nan] else 1
         normalized_volumes = [v / initial_volume for v in volumes]
 
-        # Plot data
+        target_growth_volume = 1.25  # 25% increase
+        target_shrink_volume = 0.75  # 25% decrease
+        growth_index = next((i for i, v in enumerate(normalized_volumes) if v >= target_growth_volume), None)
+        shrink_index = next((i for i, v in enumerate(normalized_volumes) if v <= target_shrink_volume), None)
+        
         if has_dates:
             dates, normalized_volumes, ages = zip(*sorted(zip(dates, normalized_volumes, ages), key=lambda x: x[2]))
-            ax1.plot(ages, normalized_volumes, color="tab:blue", marker="o", linestyle="-")
-            self.add_volume_change_to_plot(ax1, ages, normalized_volumes)
-            self.add_date_to_plot(ax1, dates, ages)
-
+            
         else:
-            # Handle CBTN data without dates
             normalized_volumes, ages = zip(*sorted(zip(normalized_volumes, ages), key=lambda x: x[1]))
-            ax1.plot(ages, normalized_volumes, color="tab:blue", marker="o", linestyle="-")
-            self.add_volume_change_to_plot(ax1, ages, normalized_volumes)
+
+        ax1.plot(ages, normalized_volumes, color="tab:blue", marker="o", linestyle="-")
+        self.add_volume_change_to_plot(ax1, ages, normalized_volumes)
+
+        if growth_index is not None:
+            growth_age = ages[growth_index]
+            ax1.axvline(x=growth_age, color="black", linestyle="--", label="25% Growth")
+            ax1.plot(ages[growth_index:], normalized_volumes[growth_index:], color="tab:red", marker="o", linestyle="-")
+        
+        if shrink_index is not None:
+            shrink_age = ages[shrink_index]
+            ax1.axvline(x=shrink_age, color="red", linestyle="--", label="25% Shrink")
+            ax1.plot(ages[shrink_index:], normalized_volumes[shrink_index:], color="tab:green", marker="o", linestyle="-")
+
+
+        if has_dates:
+            self.add_date_to_plot(ax1, dates, ages)
 
         age_range = f"{min(ages)}_{max(ages)}"
         plt.title(f"Patient ID: {patient_id} - Normalized Volume {data_type}")
@@ -938,7 +944,7 @@ class VolumeEstimator:
             os.path.join(output_path, f"normalized_volume_{data_type}_{patient_id}_{age_range}.png")
         )
         plt.close(fig)
-
+        
     def plot_normalized_data_old(
         self, data_type, output_path, patient_id, dates, volumes, ages=None, has_dates=True
     ):
