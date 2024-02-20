@@ -74,6 +74,10 @@ def normalize_data(data):
     return [(x - min_val) / (max_val - min_val) for x in data]
 
 
+def exponential_func(x, a, b, c):
+    """ Describe an exponential function."""
+    return a * np.exp(b * x) + c
+
 ######################################
 # STATISTICAL TESTS and CORRELATIONS #
 ######################################

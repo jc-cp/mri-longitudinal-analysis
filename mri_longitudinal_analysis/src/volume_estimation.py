@@ -5,7 +5,6 @@ This script initializes the VolumeEstimator with appropriate configuration setti
 processes provided segmentation files, visualizes the volume estimations, and 
 exports the results to specified directories.
 """
-import csv
 import glob
 import os
 from collections import defaultdict
@@ -148,7 +147,7 @@ class VolumeEstimator:
             segmentation_array = sitk.GetArrayFromImage(segmentation)
             num_voxels = (segmentation_array > 0).sum()
             total_volume = num_voxels * voxel_volume
-        except Exception as error:
+        except ExceptionGroup as error:
             print(f"Error estimating volume for {segmentation_path}: {error}")
 
         return total_volume
@@ -249,7 +248,7 @@ class VolumeEstimator:
         self.volume_growth_rate = self.calculate_volume_growth_rate(self.filtered_data)
         print("\tAdded volume rate data!")
 
-    def process_scans(self, all_scans) -> defaultdict(list):
+    def process_scans(self, all_scans):
         """
         Processes scan information to calculate volumes and optionally age.
 
@@ -288,7 +287,7 @@ class VolumeEstimator:
 
         return scan_dict
 
-    def apply_filtering(self, all_scans, zero_volume_scans, minimum_days=365) -> defaultdict(list):
+    def apply_filtering(self, all_scans, zero_volume_scans, minimum_days=365):
         """
         Applies filtering to exclude scans with less than a certain number of points.
 
