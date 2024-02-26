@@ -1,3 +1,6 @@
+"""
+Config file for the qa process.
+"""
 from pathlib import Path
 
 
@@ -15,9 +18,10 @@ MASKS_FOLDER = Path(
 )
 
 TARGET_FOLDER = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event"
+    "/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/qa_second_time/qa"
 )
 
+SEG_REVIEWS_FOLDER = Path("/mnt/kannlab_rfa/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/second_review")
 
 ##########
 # PART 2 #
@@ -60,6 +64,15 @@ PART_5 = False
 # PART 6 #
 ##########
 # moving files to the final folder structure,, images should have the _0000 suffix removed
-PART_6 = True
+PART_6 = False
 SECOND_REVIEW = TARGET_FOLDER / "second_review"
 VOXEL_COUNT = 10
+
+
+##########
+# PART 7 #
+##########
+# moving files to the final folder structure after segemntation qa
+PART_7 = False
+ANNOTATIONS_FINAL = SEG_REVIEWS_FOLDER / "annotations_jc.csv"
+FINAL_MOVE = False

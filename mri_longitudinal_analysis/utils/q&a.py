@@ -349,7 +349,7 @@ if qa_cfg.PART_4:
     analyze_nifti_files(qa_cfg.REVIEW_NEW_MASKS_FOLDER, qa_cfg.ANNOTATIONS_CSV_MASKS)
 
 if qa_cfg.PART_5:
-    rename_mask_files(qa_cfg.REVIEW_NEW_MASKS_FOLDER)
+    rename_mask_files(qa_cfg.ACCEPTED_FOLDER)
 
 if qa_cfg.PART_6:
     os.makedirs(qa_cfg.SECOND_REVIEW, exist_ok=True)
@@ -361,3 +361,77 @@ if qa_cfg.PART_6:
         qa_cfg.SECOND_REVIEW,
         qa_cfg.VOXEL_COUNT,
     )
+
+if qa_cfg.PART_7:  
+    image_directory = qa_cfg.SEG_REVIEWS_FOLDER
+    # Read the CSV file
+    accepted_images = []
+    rejected_images = []
+    new_masks_images = []
+    patient_acceptance_count = defaultdict(int)
+
+    with open(qa_cfg.ANNOTATIONS_FINAL, "r", encoding="utf-8") as file:
+        reader = csv.reader(file)
+        for row in tqdm(reader, desc="Processing CSV file"):
+            image_name, status, mask_status = row[0], row[1], row[4]
+            old_mask_name = row[3] if len(row) > 3 else None
+
+            patient_id = image_name.split("_")[1]
+            new_mask_name = new_mask_exists(image_name, image_directory)
+
+            if status.startswith("Acceptable"):
+                patient_acceptance_count[patient_id] += 1
+                if new_mask_name:
+                    new_masks_images.append((image_name, old_mask_name, new_mask_name))
+                else:
+                    accepted_images.append((image_name, old_mask_name))
+
+            # Handling rejected images
+            elif status.startswith("Unacceptable") or status == "Bad images":
+                if new_mask_name:
+                    new_masks_images.append((image_name, old_mask_name, new_mask_name))
+                    patient_acceptance_count[patient_id] += 1
+                else:
+                    rejected_images.append((image_name, old_mask_name))
+
+    # Output results
+    print("Accepted Images:", len(accepted_images))
+    print("Rejected Images:", len(rejected_images))
+    print("New masks Images:", len(new_masks_images))
+
+    if qa_cfg.FINAL_MOVE:
+        for image_name, old_mask_name, new_mask_name in tqdm(
+            new_masks_images, desc="Moving new mask images"
+        ):
+            move_file(
+                os.path.join(image_directory, image_name),
+                os.path.join(qa_cfg.ACCEPTED_FOLDER, image_name),
+            )
+            move_file(
+                os.path.join(image_directory, new_mask_name),
+                os.path.join(qa_cfg.ACCEPTED_FOLDER, new_mask_name),
+            )
+            move_file(
+                os.path.join(image_directory, old_mask_name),
+                os.path.join(qa_cfg.REJECTED_MASKS_FOLDER, old_mask_name),
+            )
+        # Move the rest of the rejected images to the rejected folder
+        for image_name, mask_name in tqdm(rejected_images, desc="Moving rejected images"):
+            move_file(
+                os.path.join(image_directory, image_name),
+                os.path.join(qa_cfg.REJECTED_FOLDER, image_name),
+            )
+            move_file(
+                os.path.join(image_directory, mask_name),
+                os.path.join(qa_cfg.REJECTED_FOLDER, mask_name),
+            )
+        # Move the rest of the accepted images to the accepted folder
+        for image_name, mask_name in tqdm(accepted_images, desc="Moving accepted images"):
+            move_file(
+                os.path.join(image_directory, image_name),
+                os.path.join(qa_cfg.ACCEPTED_FOLDER, image_name),
+            )
+            move_file(
+                os.path.join(image_directory, mask_name),
+                os.path.join(qa_cfg.ACCEPTED_FOLDER, mask_name),
+            )
