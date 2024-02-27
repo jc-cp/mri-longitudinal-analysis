@@ -4,15 +4,17 @@ from pathlib import Path
 
 # Directories and files
 SEG_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/qa"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/accepted"
 )
 OUTPUT_DIR = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/output"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/accepted/output/"
 )
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series_csv_kernel_smoothed"
 ZERO_VOLUME_FILE = OUTPUT_DIR / "zero_volume_segmentations.txt"
 FEW_SCANS_FILE = OUTPUT_DIR / "few_scans_patients.txt"
+HIGH_VOLUME_FILE = OUTPUT_DIR / "high_volume_segmentations.txt"
+VOLUME_THRESHOLD = 14000 
 
 # Clinical data files
 CLINICAL_DATA_FILE = Path(
@@ -23,7 +25,7 @@ TEST_DATA = False
 # Current dataset being used
 BCH_DATA = False
 CBTN_DATA = True
-NUMBER_TOTAL_CBTN_PATIENTS = 115
+NUMBER_TOTAL_CBTN_PATIENTS = 101
 NUMBER_TOTAL_BCH_PATIENTS = 85
 
 # Filtering options
@@ -32,7 +34,7 @@ FILTERED = True
 POLY_SMOOTHING = True
 KERNEL_SMOOTHING = True
 WINDOW_SMOOTHING = True
-BANDWIDTH = 200
+BANDWIDTH = 300
 PLOT_COMPARISON = True
 
 # Other options

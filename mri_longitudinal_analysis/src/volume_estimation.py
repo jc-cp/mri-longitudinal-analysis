@@ -308,6 +308,7 @@ class VolumeEstimator:
         total_scans_removed = 0
         few_scans_file_path = volume_est_cfg.FEW_SCANS_FILE
         zero_volume_file_path = volume_est_cfg.ZERO_VOLUME_FILE
+        high_volume_file_path = volume_est_cfg.HIGH_VOLUME_FILE
 
         with open(zero_volume_file_path, "w", encoding="utf-8") as file:
             for patient_id, scans in zero_volume_scans.items():
@@ -321,17 +322,32 @@ class VolumeEstimator:
         for patient_id in all_scans:
             all_scans[patient_id] = [scan for scan in all_scans[patient_id] if scan[1] != 0]
 
+        with open(high_volume_file_path, "w", encoding="utf-8") as high_vol_file:
+            for patient_id, scans in all_scans.items():
+                patient_id_written = False
+                for scan in scans:
+                    _, volume, scan_id = scan
+                    if volume > volume_est_cfg.VOLUME_THRESHOLD:  
+                        if not patient_id_written:
+                            high_vol_file.write(f"{patient_id}\n")
+                            patient_id_written = True
+                        high_vol_file.write(f"---- {scan_id}: {volume}\n")
+
+
         with open(few_scans_file_path, "w", encoding="utf-8") as file:
             for patient_id, scans in all_scans.items():
                 if len(scans) >= 3:
                     # Sort scans by age to calculate the age range
-                    sorted_scans = sorted(scans, key=lambda x: x[-1])
+                    sorted_scans = sorted(scans, key=lambda x: int(x[-1]))
                     age_range = int(sorted_scans[-1][-1]) - int(sorted_scans[0][-1])
                     if age_range >= minimum_days:
                         filtered_data[patient_id] = scans
                     else:
                         total_patients_with_short_follow_up += 1
                         total_scans_removed += len(scans)
+                        file.write(f"{patient_id} - Short Follow-up: {len(scans)}\n")
+                        for _, _, scan_id in scans:
+                            file.write(f"---- {scan_id}\n")
                 else:
                     total_patients_with_few_scans += 1  # Increment the patient counter
                     total_scans_few_scans += len(scans)  # Increment the scan counter
@@ -346,6 +362,9 @@ class VolumeEstimator:
             )
             file.write(f"Total scans with too few scans: {total_scans_few_scans}\n")
             file.write(f"Total scans removed: {total_scans_removed}\n")
+        
+        
+        
         return filtered_data
 
     def apply_polysmoothing(
