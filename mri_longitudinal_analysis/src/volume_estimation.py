@@ -44,7 +44,7 @@ class VolumeEstimator:
         volumes (dict): Dictionary storing volume data for each patient.
     """
 
-    def __init__(self, segmentations_path, clinical_data_file):
+    def __init__(self, segmentations_path):
         """
         Initialize the VolumeEstimator with given paths.
 
@@ -82,51 +82,97 @@ class VolumeEstimator:
                     patient_id, _ = self.get_identifier(file_name)
                     identifiers_in_dir.add(patient_id)
 
-            clinical_data = pd.read_csv(clinical_data_file, sep=",", encoding="utf-8")
+            if volume_est_cfg.JOINT_DATA:
+                # join both datasets by merging dataframes
+                clinical_data_file_bch = volume_est_cfg.CLINICAL_DATA_FILE_BCH
+                clinical_data_file_cbtn = volume_est_cfg.CLINICAL_DATA_FILE_CBTN
+                clinical_data_bch = pd.read_csv(clinical_data_file_bch, sep=",", encoding="utf-8")
+                clinical_data_cbtn = pd.read_csv(clinical_data_file_cbtn, sep=",", encoding="utf-8")
 
-            if volume_est_cfg.CBTN_DATA:
                 # Process the .csv with clinical data
-                clinical_data["CBTN Subject ID"] = clinical_data["CBTN Subject ID"].astype(str)
-                final_clinical_data = clinical_data[
-                    clinical_data["CBTN Subject ID"].isin(identifiers_in_dir)
-                ]
-                mismatch_ids = len(clinical_data) - len(final_clinical_data)
-                print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data)}")
+                clinical_data_bch["BCH MRN"] = clinical_data_bch["BCH MRN"].astype(str)
+                clinical_data_bch["BCH MRN"] = clinical_data_bch["BCH MRN"].apply(prefix_zeros_to_six_digit_ids)
+                clinical_data_cbtn["CBTN Subject ID"] = clinical_data_cbtn["CBTN Subject ID"].astype(str)
+                
+                # merge both dataframe by given columns
+                final_clinical_data = pd.merge(
+                    clinical_data_bch,
+                    clinical_data_cbtn,
+                    left_on="BCH MRN",
+                    right_on="CBTN Subject ID",
+                    how="outer",
+                ) 
+                
+                
+                final_clinical_data['Patient_ID'] = final_clinical_data['BCH MRN'].fillna(final_clinical_data['CBTN Subject ID'])
+                final_clinical_data = final_clinical_data.drop(columns=['BCH MRN', 'CBTN Subject ID'])
+                final_clinical_data = final_clinical_data[final_clinical_data["Patient_ID"].isin(identifiers_in_dir)]
+                mismatch_ids_bch = len(clinical_data_bch) - len(final_clinical_data)
+                mismatch_ids_cbtn = len(clinical_data_cbtn) - len(final_clinical_data)
+                mismatch_ids = identifiers_in_dir - set(final_clinical_data["Patient_ID"].values)
+                print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data_bch)}")
+                print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data_cbtn)}")
                 print(f"\tNumber of unique patient IDs in the directory: {len(identifiers_in_dir)}")
                 print(
                     f"\tNumber of unique patient IDs in the final CSV: {len(final_clinical_data)}"
                 )
-                print(f"\tNumber of reduced patient IDs: {mismatch_ids}")
-
+                print(f"\tNumber of reduced patient IDs: {mismatch_ids_bch + mismatch_ids_cbtn}")
+                print(f"\tNumber of mismatched patient IDs: {len(mismatch_ids)}")
                 assert (
-                    len(final_clinical_data) == volume_est_cfg.NUMBER_TOTAL_CBTN_PATIENTS
-                ), "Warning: The length of the filtered dataset is not 115. Check the csv again."
-
+                    len(final_clinical_data) == volume_est_cfg.NUMBER_TOTAL_JOINT_PATIENTS
+                ), "Warning: The length of the filtered dataset is not 111. Check the csv again."
+                
                 self.clinical_data = final_clinical_data
+            
+            else:
 
-            if volume_est_cfg.BCH_DATA:
-                clinical_data["BCH MRN"] = (
-                    clinical_data["BCH MRN"].astype(str).apply(prefix_zeros_to_six_digit_ids)
-                )
-                final_clinical_data = clinical_data[
-                    clinical_data["BCH MRN"].isin(identifiers_in_dir)
-                ]
-                mismatch_ids = len(clinical_data) - len(final_clinical_data)
-                print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data)}")
-                print(f"\tNumber of unique patient IDs in the directory: {len(identifiers_in_dir)}")
-                print(
-                    f"\tNumber of unique patient IDs in the final CSV: {len(final_clinical_data)}"
-                )
-                print(f"\tNumber of reduced patient IDs: {mismatch_ids}")
+                if volume_est_cfg.CBTN_DATA:
+                    clinical_data_file = volume_est_cfg.CLINICAL_DATA_FILE_CBTN
+                    clinical_data = pd.read_csv(clinical_data_file, sep=",", encoding="utf-8")
+                    # Process the .csv with clinical data
+                    clinical_data["CBTN Subject ID"] = clinical_data["CBTN Subject ID"].astype(str)
+                    final_clinical_data = clinical_data[
+                        clinical_data["CBTN Subject ID"].isin(identifiers_in_dir)
+                    ]
+                    mismatch_ids = len(clinical_data) - len(final_clinical_data)
+                    print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data)}")
+                    print(f"\tNumber of unique patient IDs in the directory: {len(identifiers_in_dir)}")
+                    print(
+                        f"\tNumber of unique patient IDs in the final CSV: {len(final_clinical_data)}"
+                    )
+                    print(f"\tNumber of reduced patient IDs: {mismatch_ids}")
 
-                assert (
-                    len(final_clinical_data) == volume_est_cfg.NUMBER_TOTAL_BCH_PATIENTS
-                ), "Warning: The length of the filtered dataset is not 85. Check the csv again."
+                    assert (
+                        len(final_clinical_data) == volume_est_cfg.NUMBER_TOTAL_CBTN_PATIENTS
+                    ), "Warning: The length of the filtered dataset is not 115. Check the csv again."
 
-                clinical_data["Date of Birth"] = pd.to_datetime(
-                    clinical_data["Date of Birth"], format="%d/%m/%Y"
-                )
-                self.clinical_data = final_clinical_data
+                    self.clinical_data = final_clinical_data
+
+                if volume_est_cfg.BCH_DATA:
+                    clinical_data_file = volume_est_cfg.CLINICAL_DATA_FILE_BCH
+                    clinical_data = pd.read_csv(clinical_data_file, sep=",", encoding="utf-8")
+                    clinical_data["BCH MRN"] = (
+                        clinical_data["BCH MRN"].astype(str).apply(prefix_zeros_to_six_digit_ids)
+                    )
+                    final_clinical_data = clinical_data[
+                        clinical_data["BCH MRN"].isin(identifiers_in_dir)
+                    ]
+                    mismatch_ids = len(clinical_data) - len(final_clinical_data)
+                    print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data)}")
+                    print(f"\tNumber of unique patient IDs in the directory: {len(identifiers_in_dir)}")
+                    print(
+                        f"\tNumber of unique patient IDs in the final CSV: {len(final_clinical_data)}"
+                    )
+                    print(f"\tNumber of reduced patient IDs: {mismatch_ids}")
+
+                    assert (
+                        len(final_clinical_data) == volume_est_cfg.NUMBER_TOTAL_BCH_PATIENTS
+                    ), "Warning: The length of the filtered dataset is not 85. Check the csv again."
+
+                    clinical_data["Date of Birth"] = pd.to_datetime(
+                        clinical_data["Date of Birth"], format="%d/%m/%Y"
+                    )
+                    self.clinical_data = final_clinical_data
 
     @staticmethod
     def estimate_volume(segmentation_path):
@@ -260,8 +306,10 @@ class VolumeEstimator:
             volume, and optionally age.
         """
         scan_dict = defaultdict(list)
-
         for patient_id, scans in all_scans.items():
+            #print(patient_id)
+            #print(scans)
+            
             if volume_est_cfg.BCH_DATA:
                 # Handling for BCH data
                 patient_id = prefix_zeros_to_six_digit_ids(patient_id)
@@ -279,7 +327,26 @@ class VolumeEstimator:
                 for _, volume, scan_id in scans:
                     age = int(scan_id)
                     scan_dict[patient_id].append((volume, age))
-
+                    
+            elif volume_est_cfg.JOINT_DATA:                        
+                for _, volume, scan_id in scans:
+                    #print(patient_id)
+                    #print(scan_id)
+                    if len(scan_id) == 8:
+                        date = datetime.strptime(scan_id, "%Y%m%d")
+                        #print(date)
+                        #print(self.clinical_data.loc[self.clinical_data["Patient_ID"] == patient_id].head(10))
+                        dob = self.clinical_data.loc[
+                            self.clinical_data["Patient_ID"] == patient_id, "Date of Birth"
+                        ].iloc[0]
+                        #print(dob)
+                        dob = datetime.strptime(dob, "%d/%m/%Y")
+                        age = (date - dob).days
+                        scan_dict[patient_id].append((volume, age))
+                    else:
+                        age = int(scan_id)
+                        scan_dict[patient_id].append((volume, age))
+            
             else:
                 # Default handling for other data formats
                 for scan in scans:
@@ -386,7 +453,7 @@ class VolumeEstimator:
             num_points = 25  # Number of points for interpolation
             scans.sort(key=lambda x: x[-1])  # Sort by age
 
-            if volume_est_cfg.CBTN_DATA:
+            if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                 volumes, ages = zip(*scans)
             else:
                 dates, volumes, ages = zip(*scans)
@@ -401,7 +468,7 @@ class VolumeEstimator:
             smoothed_volumes = poly_interp(interpolated_ages)
             smoothed_volumes = np.maximum(smoothed_volumes, 0)
 
-            if volume_est_cfg.CBTN_DATA:
+            if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                 polysmoothed_data[patient_id] = list(zip(smoothed_volumes, ages))
             else:
                 polysmoothed_data[patient_id] = list(zip(dates, smoothed_volumes, ages))
@@ -440,7 +507,7 @@ class VolumeEstimator:
 
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[-1])  # Sort by age
-            if volume_est_cfg.CBTN_DATA:
+            if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                 volumes, ages = zip(*scans)
             else:
                 dates, volumes, ages = zip(*scans)
@@ -449,7 +516,7 @@ class VolumeEstimator:
             smoothed_volumes = np.zeros(len(volumes))
 
             # Apply kernel smoothing to volumes based on age
-            if volume_est_cfg.CBTN_DATA:
+            if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                 for i, (age, _) in enumerate(scans):
                     weights = np.array(
                         [gaussian_kernel(age, age_i, bandwidth) for age_i in age_numbers]
@@ -472,7 +539,7 @@ class VolumeEstimator:
                     else:
                         smoothed_volumes[i] = volumes[i]
 
-            if volume_est_cfg.CBTN_DATA:
+            if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                 kernelsmoothed_data[patient_id] = list(zip(smoothed_volumes, ages))
             else:
                 kernelsmoothed_data[patient_id] = list(zip(dates, smoothed_volumes, ages))
@@ -504,7 +571,7 @@ class VolumeEstimator:
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[-1])  # Sort by age
 
-            if volume_est_cfg.CBTN_DATA:
+            if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                 volumes, ages = zip(*scans)
             else:
                 # BCH data: (date, volume, age)
@@ -518,7 +585,7 @@ class VolumeEstimator:
                 weights = np.ones(len(window_volumes)) / len(window_volumes)
                 weighted_vol = weighted_median(window_volumes, weights)
 
-                if volume_est_cfg.CBTN_DATA:
+                if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                     interpolated_data[patient_id].append((weighted_vol, ages[i]))
                 else:
                     interpolated_data[patient_id].append((dates[i], weighted_vol, ages[i]))
@@ -578,7 +645,7 @@ class VolumeEstimator:
             prev_volume = None
             prev_time_point = None
 
-            if volume_est_cfg.CBTN_DATA:
+            if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                 for volume, time_point in sorted_scans:
                     if prev_time_point is not None:
                         days_diff = float(time_point) - float(prev_time_point)
@@ -627,7 +694,7 @@ class VolumeEstimator:
 
             # Creating DataFrame from volume data
             df_columns = (
-                ["Date", "Volume", "Age"] if not volume_est_cfg.CBTN_DATA else ["Volume", "Age"]
+                ["Volume", "Age"] if (volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA) else ["Date", "Volume", "Age"]
             )
             df = pd.DataFrame(volume_data, columns=df_columns)
 
@@ -661,7 +728,7 @@ class VolumeEstimator:
 
             if not volume_est_cfg.TEST_DATA:
                 df["Days Between Scans"] = df["Age"].diff()
-                if volume_est_cfg.CBTN_DATA:
+                if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                     df["Date"] = "N/A"
                 else:
                     df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d/%m/%Y")
@@ -851,7 +918,7 @@ class VolumeEstimator:
         for patient_id, volumes_data in data.items():
             volumes_data.sort(key=lambda x: x[-1])  # sort by age
 
-            if volume_est_cfg.CBTN_DATA:
+            if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                 # CBTN data: (volume, age)
                 volumes, ages = zip(*volumes_data)
                 self.plot_data(
@@ -1087,13 +1154,15 @@ class VolumeEstimator:
 
 if __name__ == "__main__":
     print("Initializing Volume Estimator:")
-    ve = VolumeEstimator(volume_est_cfg.SEG_DIR, volume_est_cfg.CLINICAL_DATA_FILE)
+    ve = VolumeEstimator(volume_est_cfg.SEG_DIR)
     print("\tAdjusted the clinical data.")
     print("Processing files:")
     if volume_est_cfg.BCH_DATA:
         ve.process_files(max_patients=volume_est_cfg.NUMBER_TOTAL_BCH_PATIENTS)
     elif volume_est_cfg.CBTN_DATA:
         ve.process_files(max_patients=volume_est_cfg.NUMBER_TOTAL_CBTN_PATIENTS)
+    elif volume_est_cfg.JOINT_DATA:
+        ve.process_files(max_patients=volume_est_cfg.NUMBER_TOTAL_JOINT_PATIENTS)
     else:
         ve.process_files()
     print("\tAll files processed.")
