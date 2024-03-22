@@ -1,13 +1,16 @@
 """Script containing some additonal functions used thorughout the other main scripts."""
+import warnings
 from math import isfinite
 import os
 import numpy as np
 import pandas as pd
+from scipy.optimize import curve_fit
 from scipy.stats import norm, zscore
 from scipy.stats import pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.metrics import r2_score
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
 import matplotlib.lines as lines
@@ -17,6 +20,56 @@ from cfg.utils import helper_functions_cfg
 #####################################
 # SMOOTHIN and FILTERING OPERATIONS #
 #####################################
+
+def fit_linear(x, y):
+    """
+    Fit a linear model to the data.
+    """
+    model = LinearRegression()
+    model.fit(x.reshape(-1, 1), y)
+    predictions = model.predict(x.reshape(-1, 1))
+    return r2_score(y, predictions)
+
+
+def exponential_model(x, a, b, c):
+    """Description of an exponential model."""
+    return a * np.exp(b * x) + c
+
+
+def fit_exponential(x, y):
+    """
+    Fit the data to an exponential model and return the goodness of fit (R-squared value).
+
+    Parameters:
+        x (array-like): Independent variable data.
+        y (array-like): Dependent variable data (growth rates).
+
+    Returns:
+        float: R-squared value indicating the goodness of fit.
+    """
+    warnings.filterwarnings("ignore")
+    # Scale x to reduce the range and potentially avoid overflow
+    x_scaled = x / np.max(x)
+
+    # Use data-driven initial guesses if possible
+    a_initial = max(y)
+    b_initial = 0  # Start with a flat exponential curve
+    c_initial = min(y)
+    initial_guesses = [a_initial, b_initial, c_initial]
+
+    # Set more conservative bounds to avoid extreme values
+    a_bounds = (0, max(y) * 10)  # Allow a to vary within an order of magnitude
+    b_bounds = (-1, 1)  # Restrict the rate of exponential growth/decay
+    c_bounds = (min(y) * 0.5, max(y) * 2)  # Allow some variation for baseline shift
+    bounds = ([a_bounds[0], b_bounds[0], c_bounds[0]], [a_bounds[1], b_bounds[1], c_bounds[1]])
+
+    try:
+        params, _ = curve_fit(exponential_model, x_scaled, y, p0=initial_guesses, bounds=bounds, maxfev=10000)
+        predictions = exponential_model(x, *params)
+        r2 = r2_score(y, predictions)
+        return r2
+    except (RuntimeError, OverflowError, ValueError):
+        return -1
 
 
 def gaussian_kernel(x_var, x_i, bandwidth):

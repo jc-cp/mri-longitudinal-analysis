@@ -18,15 +18,14 @@ import SimpleITK as sitk
 
 from cfg.src import volume_est_cfg
 from utils.helper_functions import (
-    gaussian_kernel,
     weighted_median,
     prefix_zeros_to_six_digit_ids,
     compute_95_ci,
-    exponential_func
+    fit_exponential, 
+    fit_linear,
 )
+from scipy.stats import shapiro, norm
 
-from scipy.optimize import curve_fit
-from sklearn.metrics import r2_score
 
 class VolumeEstimator:
     """
@@ -56,6 +55,7 @@ class VolumeEstimator:
         self.poly_smoothing_data = defaultdict(list)
         self.kernel_smoothing_data = defaultdict(list)
         self.window_smoothing_data = defaultdict(list)
+        self.moving_average_data = defaultdict(list)
         self.volume_growth_rate = defaultdict(list)
         self.volume_growth_pattern = defaultdict(list)
         self.volume_growth_type = defaultdict(list)
@@ -70,6 +70,7 @@ class VolumeEstimator:
             "poly_smoothing": {},
             "kernel_smoothing": {},
             "window_smoothing": {},
+            "moving_average": {},
         }
 
         self.segmentations_path = segmentations_path
@@ -280,15 +281,14 @@ class VolumeEstimator:
             self.data_sources["poly_smoothing"] = self.poly_smoothing_data
             print("\tAdded polynomial smoothing data!")
         if volume_est_cfg.KERNEL_SMOOTHING:
-            self.kernel_smoothing_data = self.apply_kernel_smoothing(
-                bandwidth=volume_est_cfg.BANDWIDTH
-            )
+            self.kernel_smoothing_data = self.apply_kernel_smoothing()
             self.data_sources["kernel_smoothing"] = self.kernel_smoothing_data
             print("\tAdded kernel smoothing data!")
         if volume_est_cfg.WINDOW_SMOOTHING:
-            self.window_smoothing_data = self.apply_sliding_window_interpolation()
+            self.window_smoothing_data, self.moving_average_data = self.apply_sliding_window_interpolation()
             self.data_sources["window_smoothing"] = self.window_smoothing_data
-            print("\tAdded sliding window smoothing data!")
+            self.data_sources["moving_average"] = self.moving_average_data
+            print("\tAdded sliding window smoothing and moving average data!")
 
         # Additionally, process the volume rate data
         self.volume_growth_rate = self.calculate_volume_growth_rate(self.filtered_data)
@@ -436,7 +436,7 @@ class VolumeEstimator:
 
     def apply_polysmoothing(
         self,
-        poly_degree=3,
+        max_poly_degree=7,
     ):
         """
         Applies polynomial smoothing to the volume data, dynamically selecting
@@ -449,7 +449,7 @@ class VolumeEstimator:
         polysmoothed_data = defaultdict(list)
         for patient_id, scans in self.filtered_data.items():
             n_scans = len(scans)
-            poly_degree = min(max(1, n_scans - 1), 5)
+            poly_degree = min(max(1, n_scans - 1), max_poly_degree)
             num_points = 25  # Number of points for interpolation
             scans.sort(key=lambda x: x[-1])  # Sort by age
 
@@ -475,7 +475,7 @@ class VolumeEstimator:
 
         return polysmoothed_data
 
-    def apply_kernel_smoothing(self, bandwidth=None):
+    def apply_kernel_smoothing(self, bandwidth_factor=0.1):
         """
         Applies kernel smoothing to the volume data.
 
@@ -487,24 +487,6 @@ class VolumeEstimator:
         """
         kernelsmoothed_data = defaultdict(list)
 
-        if bandwidth is None:
-            if volume_est_cfg.CBTN_DATA:
-                # Extract volumes from (volume, age) structure
-                all_volumes = [
-                    volume for scans in self.filtered_data.values() for volume, _ in scans
-                ]
-            else:
-                # Extract volumes from (date, volume, age) structure
-                all_volumes = [
-                    volume for scans in self.filtered_data.values() for _, volume, _ in scans
-                ]
-            max_volume = max(
-                all_volumes, default=0
-            )  # Added default to avoid errors if all_volumes is empty
-            bandwidth = (
-                0.2 * max_volume if max_volume > 0 else 1
-            )  # Avoid division by zero or extremely small bandwidth
-
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[-1])  # Sort by age
             if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
@@ -512,32 +494,21 @@ class VolumeEstimator:
             else:
                 dates, volumes, ages = zip(*scans)
 
-            age_numbers = [float(age) for age in ages]
+            age_numbers = np.array([float(age) for age in ages])
             smoothed_volumes = np.zeros(len(volumes))
-
+            volume_array = np.array(volumes)
+            volume_iqr = np.subtract(*np.percentile(volume_array, [75, 25]))
+            bandwidth = max(volume_iqr * bandwidth_factor, 1) 
+            
             # Apply kernel smoothing to volumes based on age
-            if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
-                for i, (age, _) in enumerate(scans):
-                    weights = np.array(
-                        [gaussian_kernel(age, age_i, bandwidth) for age_i in age_numbers]
-                    )
-                    weights_sum = np.sum(weights)
-                    if weights_sum > 0:
-                        weights /= weights_sum
-                        smoothed_volumes[i] = np.sum(weights * volumes)
-                    else:
-                        smoothed_volumes[i] = volumes[i]
-            else:
-                for i, (_, _, age) in enumerate(scans):
-                    weights = np.array(
-                        [gaussian_kernel(age, age_i, bandwidth) for age_i in age_numbers]
-                    )
-                    weights_sum = np.sum(weights)
-                    if weights_sum > 0:
-                        weights /= weights_sum
-                        smoothed_volumes[i] = np.sum(weights * volumes)
-                    else:
-                        smoothed_volumes[i] = volumes[i]
+            for i, age in enumerate(age_numbers):
+                age_diff = age_numbers - age
+                weights = np.exp(-0.5 * (age_diff / bandwidth) ** 2)
+                weighted_sum = np.sum(weights * volume_array)
+                weight_total = np.sum(weights)
+
+                smoothed_volume = weighted_sum / weight_total if weight_total != 0 else volume_array[i]
+                smoothed_volumes[i] = smoothed_volume
 
             if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                 kernelsmoothed_data[patient_id] = list(zip(smoothed_volumes, ages))
@@ -546,7 +517,7 @@ class VolumeEstimator:
 
         return kernelsmoothed_data
 
-    def apply_sliding_window_interpolation(self, window_size=3):
+    def apply_sliding_window_interpolation(self, window_size=None):
         """
         Apply sliding window interpolation to smooth volumetric data of patients.
 
@@ -557,16 +528,14 @@ class VolumeEstimator:
         Parameters:
             window_size (int): Size of the window used to calculate the weighted
                             median. Should be an odd number for balanced
-                            calculation. Default is 3.
+                            calculation. Default is None.
 
         Returns:
             dict: A dictionary containing the interpolated scan data for each
                 patient, sorted by scan date.
-
-        Example:
-            interpolated_data = self.apply_sliding_window_interpolation(window_size=5)
         """
-        interpolated_data = defaultdict(list)
+        weighted_median_data = defaultdict(list)
+        moving_average_data = defaultdict(list)
 
         for patient_id, scans in self.filtered_data.items():
             scans.sort(key=lambda x: x[-1])  # Sort by age
@@ -577,20 +546,30 @@ class VolumeEstimator:
                 # BCH data: (date, volume, age)
                 dates, volumes, ages = zip(*scans)
 
+            num_scans = len(volumes)
+            window_size = window_size if window_size else max(3, num_scans // 2)
+            volumes_series = pd.Series(volumes)
+            smoothed_volumes = volumes_series.rolling(window=window_size, min_periods=1, center=True).mean()
+            
             for i in range(len(volumes)):
                 # Define the window boundaries
                 left = max(0, i - window_size // 2)
-                right = min(len(volumes), i + window_size // 2 + 1)
+                right = min(num_scans, i + window_size // 2 + 1)
                 window_volumes = volumes[left:right]
-                weights = np.ones(len(window_volumes)) / len(window_volumes)
+                
+                distances = np.abs(np.arange(left, right) - i)
+                weights = 1 / (1+distances)
                 weighted_vol = weighted_median(window_volumes, weights)
 
                 if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
-                    interpolated_data[patient_id].append((weighted_vol, ages[i]))
+                    weighted_median_data[patient_id].append((weighted_vol, ages[i]))
+                    moving_average_data[patient_id].append((smoothed_volumes[i], ages[i]))
                 else:
-                    interpolated_data[patient_id].append((dates[i], weighted_vol, ages[i]))
+                    weighted_median_data[patient_id].append((dates[i], weighted_vol, ages[i]))
+                    moving_average_data[patient_id].append((dates[i],smoothed_volumes[i], ages[i]))
 
-        return interpolated_data
+
+        return weighted_median_data, moving_average_data
 
     #############################
     # Output related functions  #
@@ -686,110 +665,122 @@ class VolumeEstimator:
             output_folder (str): Path to the directory where CSV files should be saved.
         """
 
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
+        os.makedirs(output_folder, exist_ok=True)
+        ts_poly = os.path.join(output_folder, "polynomial")
+        ts_kernel = os.path.join(output_folder, "kernel")
+        ts_window = os.path.join(output_folder, "window")
+        ts_moving_average = os.path.join(output_folder, "moving_average")
+        os.makedirs(ts_poly, exist_ok=True)
+        os.makedirs(ts_kernel, exist_ok=True)
+        os.makedirs(ts_window, exist_ok=True)
+        os.makedirs(ts_moving_average, exist_ok=True)
 
-        for patient_id, volume_data in self.kernel_smoothing_data.items():
-            csv_file_path = os.path.join(output_folder, f"{patient_id}.csv")
+        mapping = {
+            'polynomial': (self.poly_smoothing_data, ts_poly),
+            'kernel': (self.kernel_smoothing_data, ts_kernel),
+            'window': (self.window_smoothing_data, ts_window),
+            'moving_average': (self.moving_average_data, ts_moving_average),
+        }
+        for method, (data, folder) in mapping.items():
+            for patient_id, volume_data in data.items():
+                csv_file_path = os.path.join(folder, f"{patient_id}_{method}.csv")
 
-            # Creating DataFrame from volume data
-            df_columns = (
-                ["Volume", "Age"] if (volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA) else ["Date", "Volume", "Age"]
-            )
-            df = pd.DataFrame(volume_data, columns=df_columns)
-
-            # Calculate baseline volume
-            initial_volume = df["Volume"].iloc[0] if not df.empty else None
-            df["Baseline Volume"] = initial_volume
-
-            # Sorting by Age or Date
-            sort_column = "Age" if not volume_est_cfg.TEST_DATA else "Date"
-            df.sort_values(by=sort_column)
-
-            # Calculate additional columns
-            df["Normalized Volume"] = df["Volume"] / initial_volume if initial_volume else 0
-            
-            df["Volume Growth[%]"] = df["Volume"].diff()
-            df["Volume Growth[%] Avg"] = df["Volume Growth[%]"].mean()
-            df["Volume Growth[%] Std"] = df["Volume Growth[%]"].std()
-
-            df["Volume Growth[%] Rate"] = df["Age"].map(
-                lambda age, pid=patient_id: next(
-                    (x[1] for x in self.volume_growth_rate[pid] if x[0] == age), None
+                # Creating DataFrame from volume data
+                df_columns = (
+                    ["Volume", "Age"] if (volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA) else ["Date", "Volume", "Age"]
                 )
-            )
-            df["Volume Growth[%] Rate Avg"] = df["Volume Growth[%] Rate"].mean()
-            df["Volume Growth[%] Rate Std"] = df["Volume Growth[%] Rate"].std()
+                df = pd.DataFrame(volume_data, columns=df_columns)
 
-            growth_pattern = self.calculate_growth_pattern(df)
-            growth_type = self.calculate_growth_type(df)
-            df["Growth Pattern"] = growth_pattern
-            df["Growth Type"] = growth_type
+                # Calculate baseline volume
+                initial_volume = df["Volume"].iloc[0] if not df.empty else None
+                df["Baseline Volume"] = initial_volume
 
-            if not volume_est_cfg.TEST_DATA:
-                df["Days Between Scans"] = df["Age"].diff()
-                if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
-                    df["Date"] = "N/A"
-                else:
-                    df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d/%m/%Y")
+                # Sorting by Age or Date
+                sort_column = "Age" if not volume_est_cfg.TEST_DATA else "Date"
+                df.sort_values(by=sort_column)
 
-            # Reordering columns based on data type
-            columns_order = (
-                [
-                    "Date",
-                    "Age",
-                    "Days Between Scans",
-                    "Volume",
-                    "Normalized Volume",
-                    "Baseline Volume",
-                    "Volume Growth[%]",
-                    "Volume Growth[%] Avg",
-                    "Volume Growth[%] Std",
-                    "Volume Growth[%] Rate",
-                    "Volume Growth[%] Rate Avg", 
-                    "Volume Growth[%] Rate Std",
-                    "Growth Pattern",
-                    "Growth Type",
+                # Calculate additional columns
+                df["Normalized Volume"] = df["Volume"] / initial_volume if initial_volume else 0
+                
+                df["Volume Growth[%]"] = df["Volume"].diff()
+                df["Volume Growth[%] Avg"] = df["Volume Growth[%]"].mean()
+                df["Volume Growth[%] Std"] = df["Volume Growth[%]"].std()
 
-                ]
-                if not volume_est_cfg.TEST_DATA
-                else [
-                    "Date",
-                    "Volume",
-                    "Normalized Volume",
-                    "Baseline Volume",
-                    "Volume Growth[%]",
-                    "Volume Growth[%] Avg",
-                    "Volume Growth[%] Std",
-                    "Volume Growth[%] Rate",
-                    "Volume Growth[%] Rate Avg",
-                    "Volume Growth[%] Rate Std",
-                    "Growth Pattern",
-                    "Growth Type",
-                ]
-            )
-            df = df[columns_order]
+                df["Volume Growth[%] Rate"] = df["Age"].map(
+                    lambda age, pid=patient_id: next(
+                        (x[1] for x in self.volume_growth_rate[pid] if x[0] == age), None
+                    )
+                )
+                df["Volume Growth[%] Rate Avg"] = df["Volume Growth[%] Rate"].mean()
+                df["Volume Growth[%] Rate Std"] = df["Volume Growth[%] Rate"].std()
 
-            # Export to CSV
-            df.to_csv(csv_file_path, index=False)
+                analysis_results = self.analyze_growth_rates(df)
+                growth_pattern = self.calculate_growth_pattern(df, analysis_results['thresholds'])
+                growth_type = self.calculate_growth_type(df, analysis_results['thresholds'])
+                df["Growth Pattern"] = growth_pattern
+                df["Growth Type"] = growth_type
+
+                if not volume_est_cfg.TEST_DATA:
+                    df["Days Between Scans"] = df["Age"].diff()
+                    if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
+                        df["Date"] = "N/A"
+                    else:
+                        df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d/%m/%Y")
+
+                # Reordering columns based on data type
+                columns_order = (
+                    [
+                        "Date",
+                        "Age",
+                        "Days Between Scans",
+                        "Volume",
+                        "Normalized Volume",
+                        "Baseline Volume",
+                        "Volume Growth[%]",
+                        "Volume Growth[%] Avg",
+                        "Volume Growth[%] Std",
+                        "Volume Growth[%] Rate",
+                        "Volume Growth[%] Rate Avg", 
+                        "Volume Growth[%] Rate Std",
+                        "Growth Pattern",
+                        "Growth Type",
+
+                    ]
+                    if not volume_est_cfg.TEST_DATA
+                    else [
+                        "Date",
+                        "Volume",
+                        "Normalized Volume",
+                        "Baseline Volume",
+                        "Volume Growth[%]",
+                        "Volume Growth[%] Avg",
+                        "Volume Growth[%] Std",
+                        "Volume Growth[%] Rate",
+                        "Volume Growth[%] Rate Avg",
+                        "Volume Growth[%] Rate Std",
+                        "Growth Pattern",
+                        "Growth Type",
+                    ]
+                )
+                df = df[columns_order]
+
+                # Export to CSV
+                df.to_csv(csv_file_path, index=False)
 
     @staticmethod
-    def calculate_growth_pattern(df):
+    def calculate_growth_pattern(df, thresholds):
         """Classify the growth pattern based on the average volume growth rate."""
             
         avg_growth_rate = df["Volume Growth[%] Rate Avg"].iloc[0]
         
-        if avg_growth_rate > volume_est_cfg.RAPID_GROWTH:
-            growth_pattern = 'rapid'
-        elif avg_growth_rate > volume_est_cfg.MODERATE_GROWTH:
-            growth_pattern = 'moderate'
-        else:
-            growth_pattern = 'slow'
+        if avg_growth_rate > thresholds['rapid']:
+            return 'rapid'
+        elif avg_growth_rate > thresholds['moderate']:
+            return 'moderate'
+        return'slow'
             
-        return growth_pattern
-
     @staticmethod
-    def calculate_growth_type(df):
+    def calculate_growth_type(df, thresholds):
         """
         Calculate the growth type for a given patient based on the variability and pattern of volume growth rates.
         """
@@ -798,34 +789,70 @@ class VolumeEstimator:
         x = df_clean['Age'].values
         y = df_clean['Volume Growth[%] Rate'].values
         std_dev_growth_rate = np.std(y)
-        avg_growth_rate = np.mean(y)
         
-        # Linear fit
-        linear_model = np.polyfit(x, y, 1)
-        linear_pred = np.polyval(linear_model, x)
-        linear_r2 = r2_score(y, linear_pred)
-
-        # Exponential fit
-        try:
-            initial_guesses = [avg_growth_rate, 1, 0]
-            bounds = ([0.001, 0.001, 0], [np.inf, 1, np.inf])
-            popt, _ = curve_fit(exponential_func, x, y,  bounds=bounds, p0=initial_guesses, maxfev=10000)
-            exponential_pred = exponential_func(x, *popt)
-            exponential_r2 = r2_score(y, exponential_pred)
-
-        except (RuntimeError, OverflowError, ValueError):
-            exponential_r2 = -1        
+        # Linear and exponential fit
+        linear_r2 = fit_linear(x, y)
+        exponential_r2 = fit_exponential(x, y)
         
         # Classify based on best fit
-        if std_dev_growth_rate >= volume_est_cfg.HIGH_VAR:
+        if std_dev_growth_rate >= thresholds['high_var']:
             return 'sporadic'
-        elif linear_r2 > exponential_r2 and linear_r2 >= volume_est_cfg.R2_THRESHOLD:
+        elif linear_r2 > exponential_r2 and linear_r2 >= thresholds['r2']:
             return 'linear'
-        elif exponential_r2 > linear_r2 and exponential_r2 >= volume_est_cfg.R2_THRESHOLD:
+        elif exponential_r2 > linear_r2 and exponential_r2 >= thresholds['r2']:
             return 'exponential'
         else:
-            return 'sporadic'
-        
+            return 'unclassified'
+    
+    @staticmethod
+    def analyze_growth_rates(df):
+        """
+        Analyze the growth rates for normality and statistical properties and use
+        the distribution to automate threshold setting for growth pattern categorization.
+
+        Parameters:
+            df (pandas.DataFrame): DataFrame containing the growth rate data.
+
+        Returns:
+            dict: Statistical analysis results including normality test, descriptive statistics,
+                and dynamically calculated thresholds for growth pattern categorization.
+        """
+        rates = df["Volume Growth[%] Rate"].dropna()
+        stats = rates.describe()
+
+        # Normality test
+        if len(rates) >= 3:
+            _, p_value = shapiro(rates)
+            normality = 'normal' if p_value > 0.05 else 'not normal'
+        else:
+            normality = 'not normal'
+            p_value = None
+
+        if normality == 'normal':
+            # Use mean and standard deviation for normal distribution
+            thresholds = {
+                'rapid': norm.ppf(0.75, loc=stats['mean'], scale=stats['std']),
+                'moderate': norm.ppf(0.50, loc=stats['mean'], scale=stats['std']),
+                'high_var': stats['std'] * 2,
+                'r2' : 0.8
+            }
+        else:
+            # Use percentiles for non-normal distribution
+            thresholds = {
+                'rapid': stats['75%'],
+                'moderate': stats['50%'],
+                'high_var': stats['std'] * 2,
+                'r2' : 0.8}
+
+        analysis_results = {
+            'normality': normality,
+            'p_value': p_value,
+            'statistics': stats,
+            'thresholds': thresholds
+        }
+
+        return analysis_results
+    
     ############################
     # Plotting-related methods #
     ############################
@@ -914,7 +941,10 @@ class VolumeEstimator:
             output_path (str): The directory where plots should be saved.
             data_type (str): The type of data ('raw', 'filtered', etc.)
         """
+        type_output_path = os.path.join(output_path, data_type)
+        os.makedirs(type_output_path, exist_ok=True)
         os.makedirs(output_path, exist_ok=True)
+        
         for patient_id, volumes_data in data.items():
             volumes_data.sort(key=lambda x: x[-1])  # sort by age
 
@@ -923,7 +953,7 @@ class VolumeEstimator:
                 volumes, ages = zip(*volumes_data)
                 self.plot_data(
                     data_type,
-                    output_path,
+                    type_output_path,
                     patient_id,
                     None,
                     volumes,
@@ -932,7 +962,7 @@ class VolumeEstimator:
                 )
                 self.plot_normalized_data(
                     data_type,
-                    output_path,
+                    type_output_path,
                     patient_id,
                     None,
                     volumes,
@@ -943,10 +973,10 @@ class VolumeEstimator:
                 # BCH data: (date, volume, age)
                 dates, volumes, ages = zip(*volumes_data)
                 self.plot_data(
-                    data_type, output_path, patient_id, dates, volumes, ages, has_dates=True
+                    data_type, type_output_path, patient_id, dates, volumes, ages, has_dates=True
                 )
                 self.plot_normalized_data(
-                    data_type, output_path, patient_id, dates, volumes, ages, has_dates=True
+                    data_type, type_output_path, patient_id, dates, volumes, ages, has_dates=True
                 )
 
     def plot_data(
@@ -1123,7 +1153,7 @@ class VolumeEstimator:
         unique_patient_ids = set(self.data_sources["filtered"].keys())
 
         for patient_id in unique_patient_ids:
-            fig, axs = plt.subplots(1, len(self.data_sources), figsize=(20, 5))
+            fig, axs = plt.subplots(1, len(self.data_sources), figsize=(24, 8))
 
             for i, (key, data) in enumerate(self.data_sources.items()):
                 a_x = axs[i]
