@@ -25,8 +25,7 @@ from utils.helper_functions import (
     fit_linear,
 )
 from scipy.stats import shapiro, norm
-
-
+import ruptures as rpt
 class VolumeEstimator:
     """
     Class to estimate and visualize volumes based on segmentation files.
@@ -1015,7 +1014,7 @@ class VolumeEstimator:
         plt.close(fig)
 
     def plot_normalized_data(
-        self, data_type, output_path, patient_id, dates, volumes, ages=None, has_dates=True
+        self, data_type, output_path, patient_id, dates, volumes, ages=None, has_dates=True, window_size=None
     ):
         """
         Plots and saves the normalized volume data for a single patient, signifying 25% growth and shrinkage.
@@ -1025,11 +1024,6 @@ class VolumeEstimator:
         initial_volume = volumes[0] if volumes[0] not in [0, np.nan] else 1
         normalized_volumes = [v / initial_volume for v in volumes]
 
-        target_growth_volume = 1.25  # 25% increase
-        target_shrink_volume = 0.75  # 25% decrease
-        growth_index = next((i for i, v in enumerate(normalized_volumes) if v >= target_growth_volume), None)
-        shrink_index = next((i for i, v in enumerate(normalized_volumes) if v <= target_shrink_volume), None)
-        
         if has_dates:
             dates, normalized_volumes, ages = zip(*sorted(zip(dates, normalized_volumes, ages), key=lambda x: x[2]))
             
@@ -1039,21 +1033,24 @@ class VolumeEstimator:
         ax1.plot(ages, normalized_volumes, color="tab:blue", marker="o", linestyle="-")
         self.add_volume_change_to_plot(ax1, ages, normalized_volumes)
 
-        if growth_index is not None:
-            growth_age = ages[growth_index]
-            ax1.axvline(x=growth_age, color="black", linestyle="--", label="25% Growth")
-            ax1.plot(ages[growth_index:], normalized_volumes[growth_index:], color="tab:red", marker="o", linestyle="-")
-        
-        if shrink_index is not None:
-            shrink_age = ages[shrink_index]
-            ax1.axvline(x=shrink_age, color="red", linestyle="--", label="25% Shrink")
-            ax1.plot(ages[shrink_index:], normalized_volumes[shrink_index:], color="tab:green", marker="o", linestyle="-")
+        num_scans = len(normalized_volumes)
+        window_size = window_size if window_size else max(3, num_scans // 2)
+        moving_average = pd.Series(normalized_volumes).rolling(window=window_size, min_periods=1).mean()
+        ax1.plot(ages, moving_average, color="tab:orange", linestyle="-", label='Moving Average')
 
+        algo = rpt.detection.Pelt(model="rbf").fit(np.array(normalized_volumes))
+        result = algo.predict(pen=10)
+
+        # Plot detected change points
+        for cp in result:
+            if cp < len(ages):
+                ax1.axvline(x=ages[cp], color='red', linestyle='--')
 
         if has_dates:
             self.add_date_to_plot(ax1, dates, ages)
 
         age_range = f"{min(ages)}_{max(ages)}"
+        plt.legend(loc="best")
         plt.title(f"Patient ID: {patient_id} - Normalized Volume {data_type}")
         fig.set_tight_layout(True)
         plt.savefig(
