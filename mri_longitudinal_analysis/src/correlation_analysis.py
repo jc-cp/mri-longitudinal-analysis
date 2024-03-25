@@ -4,13 +4,13 @@ This script initializes the TumorAnalysis class with clinical and volumetric dat
 then performs various analyses including correlations, stability and trend analysis.
 """
 import os
-
+import warnings
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import numpy as np
 import statsmodels.api as sm
-from statsmodels.stats.outliers_influence import variance_inflation_factor
+from scipy.stats import shapiro
 from cfg.src import correlation_cfg
 from lifelines import KaplanMeierFitter
 from utils.helper_functions import (
@@ -38,7 +38,11 @@ from utils.helper_functions import (
     calculate_percentage_change,
     visualize_tumor_stability,
     consistency_check,
-)
+    kruskal_wallis_test,
+    fisher_exact_test,
+    logistic_regression_analysis,
+    # calculate_vif,
+)   
 
 
 class TumorAnalysis:
@@ -593,6 +597,7 @@ class TumorAnalysis:
             "Normalized Volume",
             "Volume Change",
         ]:
+            grouped = self.merged_data.groupby("Patient_ID", as_index=False)
             self.merged_data = self.merged_data.groupby("Patient_ID", as_index=False).apply(
                 cumulative_stats, var
             )
@@ -607,69 +612,6 @@ class TumorAnalysis:
     ###################################
     # DATA ANALYSIS AND VISUALIZATION #
     ###################################
-
-    def analyze_correlation(self, x_val, y_val, data, prefix, output_dir, method="spearman"):
-        """
-        Perform and print the results of a statistical test to analyze the correlation
-        between two variables.
-
-        Parameters:
-        - x_val (str): The name of the first variable.
-        - y_val (str): The name of the second variable.
-        - data (DataFrame): The data containing the variables.
-        - prefix (str): The prefix to be used for naming visualizations.
-        - method (str): The statistical method to be used (default is "spearman").
-
-        Updates the class attributes with the results of the test and prints the outcome.
-        """
-        test_result, coef, p_val = None, None, None  # Initialize test_result
-        test_type = ""
-        x_dtype = data[x_val].dtype
-        y_dtype = data[y_val].dtype
-
-        if pd.api.types.is_numeric_dtype(x_dtype) and pd.api.types.is_numeric_dtype(y_dtype):
-            coef, p_val = spearman_correlation(data[x_val], data[y_val])
-            test_result = (coef, p_val)
-            test_type = f"correlation {method}"
-        elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_numeric_dtype(y_dtype):
-            categories = data[x_val].nunique()
-            if categories == 2 and method == "t-test":
-                t_stat, p_val = ttest(data, x_val, y_val)
-                test_result = (t_stat, p_val)
-                test_type = "t-test"
-            elif categories == 2 and method == "point-biserial":
-                coef, p_val = point_bi_serial(data, x_val, y_val)
-                test_result = (coef, p_val)
-                test_type = "point-biserial"
-            else:
-                f_stat, p_val = f_one(data, x_val, y_val)
-                test_result = (f_stat, p_val)
-                test_type = "ANOVA"
-        elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_categorical_dtype(
-            y_dtype
-        ):
-            chi2, p_val, _, _ = chi_squared_test(data, x_val, y_val)
-            test_result = (chi2, p_val)
-            test_type = "chi-squared"
-
-        if test_result:
-            print(
-                f"\t\t{x_val} and {y_val} - {test_type.title()} Test: Statistic={test_result[0]},"
-                f" P-value={test_result[1]}"
-            )
-            self.visualize_statistical_test(
-                x_val, y_val, data, test_result, prefix, output_dir, test_type, method=method
-            )
-
-            self.p_values.append(p_val)
-            if coef is not None:
-                self.coef_values.append(coef)
-        else:
-            print(
-                f"\t\tCould not perform analysis on {x_val} and {y_val} due to incompatible data"
-                " types."
-            )
-
     def analyze_pre_treatment(self, prefix, output_dir):
         """
         Analyze data for pre-treatment cases. This involves finding correlations
@@ -772,35 +714,118 @@ class TumorAnalysis:
         
         # Univariate analysis
         patient_constant_vars = [
-            "Location", "Symptoms", "Histology", "Treatment Type", "BRAF Status",
+            "Location", "Symptoms", "Histology", "BRAF Status",
             "Sex", "Received Treatment", "Age at First Diagnosis",
-            "Age at Last Clinical Follow-Up", "Baseline Volume"
+            "Age at Last Clinical Follow-Up", "Baseline Volume", # "Treatment Type" #TODO: fix the Nan here!
         ]
         time_varying_vars = [
             "Age", "Age Group", "Days Between Scans", "Volume", "Normalized Volume",
             "Volume Change", "Volume Change Rate", "Follow-Up Time"
         ]
         all_vars = patient_constant_vars + time_varying_vars
-        
+        pooled_results = pd.DataFrame(columns=['Main Category', 'Subcategory', 'HR', 'Lower', 'Upper', 'p'])
         for variable in all_vars:
             print(f"\t\tAnalyzing {variable}...")
-            self.univariate_analysis(variable, outcome_var)
+            pooled_results = self.univariate_analysis(variable, outcome_var, output_dir, pooled_results)
+        self.plot_forest_plot(pooled_results, output_dir)
+
+    def analyze_correlation(self, x_val, y_val, data, prefix, output_dir, method="spearman"):
+        """
+        Perform and print the results of a statistical test to analyze the correlation
+        between two variables.
+
+        Parameters:
+        - x_val (str): The name of the first variable.
+        - y_val (str): The name of the second variable.
+        - data (DataFrame): The data containing the variables.
+        - prefix (str): The prefix to be used for naming visualizations.
+        - method (str): The statistical method to be used (default is "spearman").
+
+        Updates the class attributes with the results of the test and prints the outcome.
+        """
+        test_result, coef, p_val = None, None, None  # Initialize test_result
+        test_type = ""
+        x_dtype = data[x_val].dtype
+        y_dtype = data[y_val].dtype
+
+        if pd.api.types.is_numeric_dtype(x_dtype) and pd.api.types.is_numeric_dtype(y_dtype):
+            coef, p_val = spearman_correlation(data[x_val], data[y_val])
+            test_result = (coef, p_val)
+            test_type = f"correlation {method}"
+        elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_numeric_dtype(y_dtype):
+            categories = data[x_val].nunique()
+            if categories == 2:
+                if method == "t-test":
+                    t_stat, p_val = ttest(data, x_val, y_val)
+                    test_result = (t_stat, p_val)
+                    test_type = "t-test"
+                if method == "point-biserial":
+                    coef, p_val = point_bi_serial(data, x_val, y_val)
+                    test_result = (coef, p_val)
+                    test_type = "point-biserial"
+            else:
+                groups = [group[y_val].dropna() for name, group in data.groupby(x_val)]
+                normality_tests = [shapiro(group)[1] for group in groups]
+                if all(p > 0.05 for p in normality_tests):  # If all groups pass normality test
+                    f_stat, p_val = f_one(data, x_val, y_val)
+                    test_result = (f_stat, p_val)
+                    test_type = "ANOVA"
+                else:
+                    test_stat, p_val = kruskal_wallis_test(data, x_val, y_val)
+                    test_result = (test_stat, p_val)
+                    test_type = "Kruskal-Wallis"
         
-    def univariate_analysis(self, variable, outcome_var):
+        elif pd.api.types.is_categorical_dtype(x_dtype) and pd.api.types.is_categorical_dtype(
+            y_dtype
+        ):
+            if data[x_val].nunique() == 2 and data[y_val].nunique() == 2:
+                odds_ratio, p_val = fisher_exact_test(data, x_val, y_val)
+                test_result = (odds_ratio, p_val)
+                test_type = "Fisher's Exact"
+            else:
+                chi2, p_val, _, _ = chi_squared_test(data, x_val, y_val)
+                test_result = (chi2, p_val)
+                test_type = "chi-squared"
+
+        if test_result:
+            print(
+                f"\t\t{x_val} and {y_val} - {test_type.title()} Test: Statistic={test_result[0]},"
+                f" P-value={test_result[1]}"
+            )
+            self.visualize_statistical_test(
+                x_val, y_val, data, test_result, prefix, output_dir, test_type, method=method
+            )
+
+            self.p_values.append(p_val)
+            if coef is not None:
+                self.coef_values.append(coef)
+        else:
+            print(
+                f"\t\tCould not perform analysis on {x_val} and {y_val} due to incompatible data"
+                " types."
+            )
+
+    def univariate_analysis(self, variable, outcome_var, output_dir, pooled_results):
         """
         Perform univariate logistic regression analysis for a given variable.
         """
         data, y = self.prepare_data_for_univariate_analysis(variable, outcome_var)        
+        
         if data is not None and not data.empty:
             X = data.drop(columns=[outcome_var], errors='ignore')
             try:
-                self.logistic_regression_analysis(y, X)
+                result = logistic_regression_analysis(y, X)
+                #print(result.summary2())
+                self.visualize_univariate_analysis_alternative(result, variable, output_dir)
+                pooled_results = self.pool_results(result, variable, pooled_results)
                 print(f"\t\t\tModel fitted successfully with {variable}.")
             except ExceptionGroup as e:
                 print(f"\t\tError fitting model with {variable}: {e}")
         else:
             print(f"\t\tNo data available for {variable}.")
-        
+
+        return pooled_results
+
     def prepare_data_for_univariate_analysis(self, variable, outcome_var):
         """
         Prepare the data for univariate logistic regression analysis.
@@ -842,15 +867,12 @@ class TumorAnalysis:
             for col in X.columns:
                 if X[col].dtype == bool:
                     X[col] = X[col].astype(int)
-            #     if "Histology" in col:
-            #         print(f"{col}:")
-            #         print(X[col].value_counts())
-            # numerical_vars = ["Age", "Age at First Diagnosis", "Age at Last Clinical Follow-Up", "Days Between Scans", "Volume", "Normalized Volume", "Volume Change", "Volume Change Rate", "Baseline Volume", "Follow-Up Time"]
-            # numerical_vars_to_standardize = [var for var in numerical_vars if var in X.columns]
+                # if "Treatment Type" in col:
+                #     print(f"{col}:")
+                #     print(X[col].value_counts())
+                #     print(X[col].min())
+                #     print(X[col].max())
 
-            # if numerical_vars_to_standardize:
-            #     scaler = StandardScaler()
-            #     X[numerical_vars_to_standardize] = scaler.fit_transform(X[numerical_vars_to_standardize])
             # print(X.shape, y.shape)
             # print(X.dtypes)
             # print(y.dtypes)
@@ -858,37 +880,194 @@ class TumorAnalysis:
             #     if not np.issubdtype(X[col].dtype, np.number):
             #         print(f"Non-numeric data found in column: {col}")
             # print(X.isnull().all())  # This checks if any column has all NaN values
-            #self.calculate_vif(X)
+            
+            #calculate_vif(X)
             return X, y
         else:
             return None, None
         
-    @staticmethod
-    def logistic_regression_analysis(y, x):
+    def visualize_univariate_analysis(self, model_result, variable_base_name, output_dir):
         """
-        Perform logistic regression to analyze the impact of various factors on tumor progression.
+        Visualize the results of univariate logistic regression analysis,
+        creating plots for both categorical and numerical variables that
+        display coefficients or odds ratios along with their confidence intervals.
+        
+        Args:
+        - result: The result object from logistic regression analysis.
+        - variable: The name of the variable being analyzed.
+        - output_dir: The directory where the plot images will be saved.
         """
-        model = sm.Logit(y, x).fit(disp=0, maxiter=100, method='lbfgs')        
-        #print(model.summary2())
+        
+        coeffs = model_result.params.drop('const', errors='ignore')
+        conf = model_result.conf_int().drop('const', errors='ignore')
+        p_values = model_result.pvalues.drop('const', errors='ignore')
 
-        return model
+        if variable_base_name in ["Location", "Symptoms", "Histology", "Treatment Type", 
+                              "BRAF Status", "Sex", "Received Treatment", "Age Group"]:
+            values_to_plot = np.exp(coeffs)
+            lower_error = values_to_plot - np.exp(conf[0])
+            upper_error = np.exp(conf[1]) - values_to_plot
+        else:
+            values_to_plot = coeffs
+            lower_error = coeffs - conf[0]
+            upper_error = conf[1] - coeffs
 
-    def calculate_vif(self, X):
+        error_bars = np.vstack([lower_error, upper_error])
+        
+        plt.figure(figsize=(10, 6))
+        ax = plt.subplot(111)
+        
+        categories = values_to_plot.index
+        ax.bar(categories, values_to_plot, yerr=error_bars, color='skyblue', align='center', alpha=0.7, capsize=4)
+        ax.set_ylabel('Odds Ratio' if variable_base_name in ["Location", "Symptoms", "Histology", "Treatment Type", 
+                                                            "BRAF Status", "Sex", "Received Treatment", "Age Group"] 
+                    else 'Log Odds')
+
+        ax.set_title(f'{variable_base_name} Effect Size with 95% CI')
+        ax.axhline(1 if variable_base_name in ["Location", "Symptoms", "Histology", "Treatment Type", 
+                                            "BRAF Status", "Sex", "Received Treatment", "Age Group"] else 0, 
+                color='red', linestyle='--')
+        
+        # Annotate p-values
+        for i, p_value in enumerate(p_values):
+            ax.text(i, ax.get_ylim()[1], f'p={p_value:.2e}', ha='center', va='bottom')
+
+        plt.xticks(rotation=45)
+        plt.xlabel('Categories' if variable_base_name in ["Location", "Symptoms", "Histology", "Treatment Type", 
+                                                        "BRAF Status", "Sex", "Received Treatment", "Age Group"] else 'Variable')
+        plt.tight_layout()
+        
+        file_name = f"{variable_base_name}_univariate_analysis.png"
+        plt.savefig(os.path.join(output_dir, file_name))
+        plt.close()
+
+    def visualize_univariate_analysis_alternative(self, model_result, variable_base_name, output_dir):
+            """
+            Visualize the results of univariate logistic regression analysis,
+            creating plots for both categorical and numerical variables that
+            display coefficients or odds ratios along with their confidence intervals.
+            
+            Args:
+            - result: The result object from logistic regression analysis.
+            - variable: The name of the variable being analyzed.
+            - output_dir: The directory where the plot images will be saved.
+            """
+            coeffs = model_result.params
+            conf = model_result.conf_int()
+            odds_ratios = np.exp(coeffs)  # Convert coefficients to odds ratios for interpretation
+            
+            # Calculate error bars from confidence intervals
+            error_bars = [odds_ratios - np.exp(conf[0]), np.exp(conf[1]) - odds_ratios]
+
+
+            if variable_base_name in ["Location", "Symptoms", "Histology", "Treatment Type", 
+                            "BRAF Status", "Sex", "Received Treatment", "Age Group"]:
+                # Categorical variable: Plot as Odds Ratios
+                plt.figure(figsize=(8, 4))
+                plt.errorbar(x=odds_ratios.index, y=odds_ratios, yerr=error_bars, fmt='o', color='black',
+                            ecolor='lightgray', elinewidth=3, capsize=0)
+                plt.xticks(rotation=45)
+                plt.title(f'Odds Ratios with 95% CI for {variable_base_name}')
+                plt.ylabel('Odds Ratio')
+                plt.xlabel('Categories')
+            else:
+                # Numerical variable: Plot as Coefficients
+                plt.figure(figsize=(8, 4))
+                plt.errorbar(x=coeffs.index, y=coeffs, yerr=[conf[1] - coeffs, coeffs - conf[0]], fmt='o', color='black',
+                            ecolor='lightgray', elinewidth=3, capsize=0)
+                plt.title(f'Coefficients with 95% CI for {variable_base_name}')
+                plt.ylabel('Log Odds')
+                plt.xlabel('Variable')
+
+            # Adjust layout and save the figure
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/{variable_base_name}_analysis_plots_alternative.png")
+            plt.close()
+
+    def plot_forest_plot(self, pooled_results, output_dir):
         """
-        Calculate Variance Inflation Factor (VIF) for each variable in the DataFrame X.
-        X should already have dummy variables for categorical features and should not contain the outcome variable.
+        Create a forest plot from the pooled results of univariate analyses.
+
+        Args:
+            pooled_results: DataFrame with columns 'Variable', 'HR', 'Lower', 'Upper', and 'p'.
+            output_file: File path to save the forest plot image.
         """
-        # Add constant term for intercept
-        X = sm.add_constant(X)
+        # Sort results by effect size or variable name
+        max_hr = pooled_results['Upper'].quantile(0.95)
+        min_hr = pooled_results['Lower'].quantile(0.05)
 
-        # Calculate VIF
-        vif_data = pd.DataFrame({
-            'Variable': X.columns,
-            'VIF': [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
-        })
+        # Check if the calculated quantiles are finite numbers
+        if not np.isfinite(max_hr):
+            max_hr = pooled_results['Upper'].max()  # Fallback to the max value
+        if not np.isfinite(min_hr):
+            min_hr = pooled_results['Lower'].min()
+        
+        # sort pooled results alphabetically
+        pooled_results = pooled_results.sort_values(by=['Main Category', 'Subcategory'])
 
-        print("\nVIF Calculation Results:")
-        print(vif_data)
+        fig, ax = plt.subplots(figsize=(10, 8))
+
+        unique_main_categories = pooled_results['Main Category'].unique()
+        colormap = plt.get_cmap('tab10')
+        colors = [colormap(i) for i in range(len(unique_main_categories))]
+        category_colors = {cat: color for cat, color in zip(unique_main_categories, colors)}
+
+        for i, row in pooled_results.iterrows():
+            main_category = row['Main Category']
+            ax.errorbar(row['HR'], i, xerr=[[row['HR'] - row['Lower']], [row['Upper'] - row['HR']]],
+                        fmt='o', color=category_colors[main_category], ecolor='gray', elinewidth=1, capsize=3)
+            # Annotate the p-value
+            ax.text(row['HR'], i, 'p={:.2g}'.format(row['p']), color='black', ha='left', va='center')
+
+        # Add labels for each point
+        ax.set_yticks(range(len(pooled_results)))
+        ax.set_yticklabels(['{}: {}'.format(row['Main Category'], row['Subcategory']) for _, row in pooled_results.iterrows()])
+        ax.set_xlabel('Hazard Ratio (95% CI)')
+        ax.set_ylabel('Variables')
+        ax.axvline(x=1, linestyle='--', color='red', lw=1)
+        ax.set_title('Univariate Analysis Forest Plot')
+        ax.set_xlim(min_hr, max_hr)
+        plt.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
+        plt.tight_layout()
+        
+        output_file = os.path.join(output_dir, 'forest_plot.png')
+        plt.savefig(output_file)
+        plt.close()
+
+    def pool_results(self, result, var_name, pooled_results=None):
+        """
+        Pool the results of univariate analysis to create a forest plot.
+
+        Args:
+            result: Result object from univariate analysis.
+            pooled_results: DataFrame to store pooled results.
+        """
+        if not isinstance(pooled_results, pd.DataFrame) or pooled_results is None:
+            pooled_results = pd.DataFrame(columns=['Main Category', 'Subcategory', 'HR', 'Lower', 'Upper', 'p'])
+        
+
+        if result is not None:
+            for variable in result.params.index[1:]:
+                coef = result.params[variable]
+                conf = result.conf_int().loc[variable].values
+                p_val = result.pvalues[variable]
+
+                var_split = variable.split('_')
+                main_category = var_name
+                subcategory = ' '.join(var_split[1:]) if len(var_split) > 1 else main_category
+
+                # Append the results to the pooled DataFrame
+                new_row = pd.DataFrame({
+                    'Main Category': var_name.replace('_', ' '),
+                    'Subcategory' : subcategory.replace('_', ' ').strip(),
+                    'HR': np.exp(coef),
+                    'Lower': np.exp(conf[0]),
+                    'Upper': np.exp(conf[1]),
+                    'p': p_val
+                }, index=[0])
+
+                pooled_results = pd.concat([pooled_results, new_row], ignore_index=True)
+        return pooled_results
 
     def visualize_statistical_test(
         self,
@@ -943,33 +1122,29 @@ class TumorAnalysis:
         y_unit = units.get(y_val, "")
 
         # Plot based on test type
-        if test_type == "correlation":
+        if test_type in ["t-test", "ANOVA", "Kruskal-Wallis"]:
+            means = data.groupby(x_val)[y_val].mean()
+            stds = data.groupby(x_val)[y_val].std()
+            se = stds / np.sqrt(data.groupby(x_val)[y_val].count())  # Standard error
+            plt.xticks(rotation=90, fontsize="small")
+            # Bar plot with error bars showing the standard error
+            _, ax = plt.subplots()
+            means.plot(kind="bar", yerr=se, capsize=4, ax=ax, color="skyblue", ecolor="black")
+            title += f"Statistic: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
+        elif test_type == "point-biserial":
+            sns.boxplot(x=x_val, y=y_val, data=data)
+            title += f"Correlation Coefficient: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
+        elif test_type == "Fisher's Exact":
+            contingency_table = pd.crosstab(data[y_val], data[x_val])
+            sns.heatmap(contingency_table, annot=True, cmap="coolwarm", fmt="g")
+            title += f"Odds Ratio: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"        
+        elif test_type == "correlation":
             sns.scatterplot(x=x_val, y=y_val, data=data)
             sns.regplot(x=x_val, y=y_val, data=data, scatter=False, color="blue")
             title += (
                 f"{method.title()} correlation coefficient: {stat:.2f}, P-value:"
                 f" {p_val:.3e} (N={num_patients})"
             )
-        elif test_type == "t-test":
-            # sns.barplot(x=x_val, y=y_val, data=data, ci="sd")
-            # Calculate group means and standard deviations
-            means = data.groupby(x_val)[y_val].mean()
-            stds = data.groupby(x_val)[y_val].std()
-
-            # Plotting
-            _, ax = plt.subplots()
-            means.plot(kind="bar", yerr=stds, capsize=4, ax=ax, color="skyblue", ecolor="black")
-            title += f"T-statistic: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
-        elif test_type == "point-biserial":
-            sns.boxplot(x=x_val, y=y_val, data=data)
-            title += (
-                f"Point-Biserial Correlation Coefficient: {stat:.2f}, P-value:"
-                f" {p_val:.3e} (N={num_patients})"
-            )
-        elif test_type == "ANOVA":
-            sns.boxplot(x=x_val, y=y_val, data=data)
-            plt.xticks(rotation=90, fontsize="small")
-            title += f"F-statistic: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
         elif test_type == "chi-squared":
             contingency_table = pd.crosstab(data[y_val], data[x_val])
             sns.heatmap(contingency_table, annot=True, cmap="coolwarm", fmt="g")
@@ -1083,7 +1258,7 @@ class TumorAnalysis:
             unit="mm^3",
         )
         volume_trajectories_plot = os.path.join(
-            output_dir, f"{prefix}_normalized_volume_trajectories_plot.png"
+            output_dir, f"{prefix}_volume_trajectories_plot.png"
         )
         plot_individual_trajectories(
             volume_trajectories_plot,
@@ -1290,6 +1465,17 @@ class TumorAnalysis:
             write_stat(f"\t\tMedian Volume Change: {median_volume_change} %")
             write_stat(f"\t\tMaximum Volume Change: {max_volume_change} %")
             write_stat(f"\t\tMinimum Volume Change: {min_volume_change} %")
+            
+            # Volume Change Rate
+            filtered_data = self.merged_data[self.merged_data["Volume Change Rate"] != 0]
+            median_volume_change_rate = filtered_data["Volume Change Rate"].median()
+            max_volume_change_rate = filtered_data["Volume Change Rate"].max()
+            min_volume_change_rate = filtered_data["Volume Change Rate"].min()
+            write_stat(f"\t\tMedian Volume Change Rate: {median_volume_change_rate} %/day")
+            write_stat(f"\t\tMaximum Volume Change Rate: {max_volume_change_rate} %/day")
+            write_stat(f"\t\tMinimum Volume Change Rate: {min_volume_change_rate} %/day")
+            
+            
 
             # Normalized Volume
             median_normalized_volume = self.merged_data["Normalized Volume"].median()
@@ -1489,6 +1675,7 @@ class TumorAnalysis:
                 #self.merged_data.replace(np.nan, np.inf, inplace=True)
                 
             # Descriptive statistics for table1 in paper
+            print(self.merged_data.dtypes)
             self.printout_stats(prefix=prefix, output_file_path=output_stats)
 
             # Correlations between variables
@@ -1531,6 +1718,7 @@ class TumorAnalysis:
 
 
 if __name__ == "__main__":
+    warnings.filterwarnings("ignore")
     analysis = TumorAnalysis(
         correlation_cfg.CLINICAL_CSV,
         [correlation_cfg.VOLUMES_CSV],

@@ -5,9 +5,10 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
-from scipy.stats import norm, zscore
-from scipy.stats import pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr
+from scipy.stats import norm, zscore, pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr, kruskal, fisher_exact
 from statsmodels.stats.multitest import multipletests
+import statsmodels.api as sm
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.metrics import r2_score
@@ -17,9 +18,9 @@ import matplotlib.lines as lines
 import seaborn as sns
 from cfg.utils import helper_functions_cfg
 
-#####################################
-# SMOOTHIN and FILTERING OPERATIONS #
-#####################################
+######################################
+# SMOOTHING and FILTERING OPERATIONS #
+######################################
 
 def fit_linear(x, y):
     """
@@ -64,6 +65,7 @@ def fit_exponential(x, y):
     bounds = ([a_bounds[0], b_bounds[0], c_bounds[0]], [a_bounds[1], b_bounds[1], c_bounds[1]])
 
     try:
+        #pylint: disable=unbalanced-tuple-unpacking
         params, _ = curve_fit(exponential_model, x_scaled, y, p0=initial_guesses, bounds=bounds, maxfev=10000)
         predictions = exponential_model(x, *params)
         r2 = r2_score(y, predictions)
@@ -458,6 +460,57 @@ def compute_95_ci(data):
     return lower_bound, upper_bound
 
 
+def kruskal_wallis_test(data, x_val, y_val):
+    """
+    Perform Kruskal-Wallis test for a given numerical variable across different groups.
+    """
+    groups = [group[y_val].dropna() for name, group in data.groupby(x_val)]
+    if len(groups) > 1:
+        test_stat, p_val = kruskal(*groups)
+        print(f"\t\tKruskal-Wallis Test on {y_val} across {x_val}: Statistic={test_stat}, P-value={p_val}")
+        return test_stat, p_val
+    else:
+        print("\t\tNot enough groups for Kruskal-Wallis Test.")
+        return None, None
+
+
+def fisher_exact_test(data, x_val, y_val):
+    """
+    Perform Fisher's Exact test for 2x2 contingency tables.
+    """
+    contingency_table = pd.crosstab(data[x_val], data[y_val])
+    if contingency_table.shape == (2, 2):  # Fisher's Exact test is applicable only for 2x2 tables
+        odds_ratio, p_val = fisher_exact(contingency_table)
+        print(f"\t\tFisher's Exact Test between {x_val} and {y_val}: P-value={p_val}")
+        return odds_ratio, p_val
+    else:
+        print("\t\tFisher's Exact Test requires a 2x2 contingency table.")
+        return None, None
+
+
+def logistic_regression_analysis(y, x):
+    """
+    Perform logistic regression to analyze the impact of various factors on tumor progression.
+    """
+    model_result = sm.Logit(y, x).fit(disp=0, maxiter=100, method='lbfgs')
+    return model_result
+
+def calculate_vif(X):
+    """
+    Calculate Variance Inflation Factor (VIF) for each variable in the DataFrame X.
+    X should already have dummy variables for categorical features and should not contain the outcome variable.
+    """
+    # Add constant term for intercept
+    X = sm.add_constant(X)
+
+    # Calculate VIF
+    vif_data = pd.DataFrame({
+        'Variable': X.columns,
+        'VIF': [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+    })
+
+    print("\nVIF Calculation Results:")
+    print(vif_data)
 #######################################
 # DATA HANDLING and SIMPLE OPERATIONS #
 #######################################
@@ -867,7 +920,7 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
                     pd.cut(
                         class_data["Time since First Scan"],
                         pd.interval_range(
-                            start=0, end=class_data["Time since First Scan"].max(), freq=273
+                            start=0, end=class_data["Time since First Scan"].max(), freq=273, 
                         ),
                     )
                 )[column_name]
@@ -929,7 +982,7 @@ def plot_individual_trajectories(
             pd.cut(
                 plot_data["Time since First Scan"],
                 pd.interval_range(
-                    start=0, end=plot_data["Time since First Scan"].max(), freq=median_freq
+                    start=0, end=plot_data["Time since First Scan"].max(), freq=median_freq,
                 ),
             )
         )[column]

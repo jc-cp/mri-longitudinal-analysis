@@ -2,15 +2,15 @@
 from pathlib import Path
 
 CLINICAL_CSV = Path(
-    "/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/bch_filtered_88.csv"
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/cbtn_filtered_pruned_treatment_513.csv"
 )
 
 VOLUMES_CSV = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/new_review/output/time_series_csv_kernel_smoothed"
+    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/accepted/pre_treatment/output/time_series_csv_kernel_smoothed"
 )
 
-COHORT = "BCH"  # "BCH" or "CBTN"
-SAMPLE_SIZE = 85  # for plotting growth trajectories, usually number of patients in cohort
+COHORT = "CBTN"  # "BCH" or "CBTN"
+SAMPLE_SIZE = 45  # BCH: 62, CBTN: 45 -> for plotting trajectories, number of cohort
 
 
 OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output")
@@ -104,8 +104,10 @@ BCH_LOCATION = {
     "frontal": "Cortical",
     "parietal": "Cortical",
     "sylvian": "Cortical",
+    "meninges": "Meninges / Suprasellar",
+    "suprasellar": "Meninges / Suprasellar",
     # "suprasellar": "Meninges / Suprasellar", # grouping for regression
-    "suprasellar": "Other",
+    # "suprasellar": "Other",
     "thalamic": "Basal Ganglia / Thalamus",
     "thalamus": "Basal Ganglia / Thalamus",
     "basal": "Basal Ganglia / Thalamus",
@@ -115,10 +117,10 @@ BCH_LOCATION = {
     "tectal": "Brainstem",
     "cervicomedullary": "Brainstem",
     "stem": "Brainstem",
-    "optic": "Optic Pathway",
-    "spinal": "Other",
     "ventricle": "Ventricles",
     "ventricular": "Ventricles",
+    "optic": "Other",
+    "spinal": "Other",
     "midline": "Other",
     "pineal": "Other",
 }
@@ -135,7 +137,7 @@ CBTN_LOCATION = {
     "Occipital Lobe": "Cortical",
     "Meninges": "Meninges / Suprasellar",
     "Suprasellar": "Meninges / Suprasellar",
-    "Optic": "Optic Pathway",
+    "Optic": "Other",
     "Spinal": "Other",
     "Other": "Other",
 }
@@ -164,8 +166,6 @@ CBTN_GLIOMA_TYPES = {
     "astro": "Astrocytoma",
 }
 
-
-# Mapping of BCH and CBTN columns
 BCH_DTYPE_MAPPING = {
     "BCH MRN": "string",
     "Location": "category",
