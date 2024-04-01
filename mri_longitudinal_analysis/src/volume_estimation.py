@@ -124,55 +124,53 @@ class VolumeEstimator:
                 
                 self.clinical_data = final_clinical_data
             
-            else:
+            elif volume_est_cfg.CBTN_DATA:
+                clinical_data_file = volume_est_cfg.CLINICAL_DATA_FILE_CBTN
+                clinical_data = pd.read_csv(clinical_data_file, sep=",", encoding="utf-8")
+                # Process the .csv with clinical data
+                clinical_data["CBTN Subject ID"] = clinical_data["CBTN Subject ID"].astype(str)
+                final_clinical_data = clinical_data[
+                    clinical_data["CBTN Subject ID"].isin(identifiers_in_dir)
+                ]
+                mismatch_ids = len(clinical_data) - len(final_clinical_data)
+                print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data)}")
+                print(f"\tNumber of unique patient IDs in the directory: {len(identifiers_in_dir)}")
+                print(
+                    f"\tNumber of unique patient IDs in the final CSV: {len(final_clinical_data)}"
+                )
+                print(f"\tNumber of reduced patient IDs: {mismatch_ids}")
 
-                if volume_est_cfg.CBTN_DATA:
-                    clinical_data_file = volume_est_cfg.CLINICAL_DATA_FILE_CBTN
-                    clinical_data = pd.read_csv(clinical_data_file, sep=",", encoding="utf-8")
-                    # Process the .csv with clinical data
-                    clinical_data["CBTN Subject ID"] = clinical_data["CBTN Subject ID"].astype(str)
-                    final_clinical_data = clinical_data[
-                        clinical_data["CBTN Subject ID"].isin(identifiers_in_dir)
-                    ]
-                    mismatch_ids = len(clinical_data) - len(final_clinical_data)
-                    print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data)}")
-                    print(f"\tNumber of unique patient IDs in the directory: {len(identifiers_in_dir)}")
-                    print(
-                        f"\tNumber of unique patient IDs in the final CSV: {len(final_clinical_data)}"
-                    )
-                    print(f"\tNumber of reduced patient IDs: {mismatch_ids}")
+                assert (
+                    len(final_clinical_data) == volume_est_cfg.NUMBER_TOTAL_CBTN_PATIENTS
+                ), "Warning: The length of the filtered dataset is not 115. Check the csv again."
 
-                    assert (
-                        len(final_clinical_data) == volume_est_cfg.NUMBER_TOTAL_CBTN_PATIENTS
-                    ), "Warning: The length of the filtered dataset is not 115. Check the csv again."
+                self.clinical_data = final_clinical_data
 
-                    self.clinical_data = final_clinical_data
+            elif volume_est_cfg.BCH_DATA:
+                clinical_data_file = volume_est_cfg.CLINICAL_DATA_FILE_BCH
+                clinical_data = pd.read_csv(clinical_data_file, sep=",", encoding="utf-8")
+                clinical_data["BCH MRN"] = (
+                    clinical_data["BCH MRN"].astype(str).apply(prefix_zeros_to_six_digit_ids)
+                )
+                final_clinical_data = clinical_data[
+                    clinical_data["BCH MRN"].isin(identifiers_in_dir)
+                ]
+                mismatch_ids = len(clinical_data) - len(final_clinical_data)
+                print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data)}")
+                print(f"\tNumber of unique patient IDs in the directory: {len(identifiers_in_dir)}")
+                print(
+                    f"\tNumber of unique patient IDs in the final CSV: {len(final_clinical_data)}"
+                )
+                print(f"\tNumber of reduced patient IDs: {mismatch_ids}")
 
-                if volume_est_cfg.BCH_DATA:
-                    clinical_data_file = volume_est_cfg.CLINICAL_DATA_FILE_BCH
-                    clinical_data = pd.read_csv(clinical_data_file, sep=",", encoding="utf-8")
-                    clinical_data["BCH MRN"] = (
-                        clinical_data["BCH MRN"].astype(str).apply(prefix_zeros_to_six_digit_ids)
-                    )
-                    final_clinical_data = clinical_data[
-                        clinical_data["BCH MRN"].isin(identifiers_in_dir)
-                    ]
-                    mismatch_ids = len(clinical_data) - len(final_clinical_data)
-                    print(f"\tNumber of unique patient IDs in the original CSV: {len(clinical_data)}")
-                    print(f"\tNumber of unique patient IDs in the directory: {len(identifiers_in_dir)}")
-                    print(
-                        f"\tNumber of unique patient IDs in the final CSV: {len(final_clinical_data)}"
-                    )
-                    print(f"\tNumber of reduced patient IDs: {mismatch_ids}")
+                assert (
+                    len(final_clinical_data) == volume_est_cfg.NUMBER_TOTAL_BCH_PATIENTS
+                ), "Warning: The length of the filtered dataset is not 61. Check the csv again."
 
-                    assert (
-                        len(final_clinical_data) == volume_est_cfg.NUMBER_TOTAL_BCH_PATIENTS
-                    ), "Warning: The length of the filtered dataset is not 85. Check the csv again."
-
-                    clinical_data["Date of Birth"] = pd.to_datetime(
-                        clinical_data["Date of Birth"], format="%d/%m/%Y"
-                    )
-                    self.clinical_data = final_clinical_data
+                clinical_data["Date of Birth"] = pd.to_datetime(
+                    clinical_data["Date of Birth"], format="%d/%m/%Y"
+                )
+                self.clinical_data = final_clinical_data
 
     @staticmethod
     def estimate_volume(segmentation_path):
@@ -669,16 +667,19 @@ class VolumeEstimator:
         ts_kernel = os.path.join(output_folder, "kernel")
         ts_window = os.path.join(output_folder, "window")
         ts_moving_average = os.path.join(output_folder, "moving_average")
+        ts_filtered = os.path.join(output_folder, "filtered")
         os.makedirs(ts_poly, exist_ok=True)
         os.makedirs(ts_kernel, exist_ok=True)
         os.makedirs(ts_window, exist_ok=True)
         os.makedirs(ts_moving_average, exist_ok=True)
+        os.makedirs(ts_filtered, exist_ok=True)
 
         mapping = {
             'polynomial': (self.poly_smoothing_data, ts_poly),
             'kernel': (self.kernel_smoothing_data, ts_kernel),
             'window': (self.window_smoothing_data, ts_window),
             'moving_average': (self.moving_average_data, ts_moving_average),
+            'filtered': (self.filtered_data, ts_filtered),
         }
         for method, (data, folder) in mapping.items():
             for patient_id, volume_data in data.items():
@@ -1050,7 +1051,9 @@ class VolumeEstimator:
             self.add_date_to_plot(ax1, dates, ages)
 
         age_range = f"{min(ages)}_{max(ages)}"
-        plt.legend(loc="best")
+        handles, labels = ax1.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        plt.legend(by_label.values(), by_label.keys(),loc="best")
         plt.title(f"Patient ID: {patient_id} - Normalized Volume {data_type}")
         fig.set_tight_layout(True)
         plt.savefig(

@@ -3,12 +3,21 @@
 from pathlib import Path
 
 # Directories and files
-BCH = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/final")
+BCH = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/final/pre_treatment")
 CBTN = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/accepted/pre_treatment")
 JOINT = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/final_dataset")
 
 # Outputs
-SEG_DIR = JOINT # change this line
+# If test data is being used or not
+TEST_DATA = False
+# Current dataset being used
+BCH_DATA = False
+CBTN_DATA = False
+JOINT_DATA = True
+NUMBER_TOTAL_CBTN_PATIENTS = 43
+NUMBER_TOTAL_BCH_PATIENTS = 61
+NUMBER_TOTAL_JOINT_PATIENTS = 104
+SEG_DIR = JOINT # CHANGE THIS LINE FOR CORRESPONDING DATASETS
 OUTPUT_DIR = SEG_DIR / "output"
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series"
@@ -23,16 +32,6 @@ CLINICAL_DATA_FILE_CBTN = Path(
 )
 CLINICAL_DATA_FILE_BCH = Path(
     "/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/bch_filtering_68_.csv")
-
-# If test data is being used or not
-TEST_DATA = False
-# Current dataset being used
-BCH_DATA = False
-CBTN_DATA = False
-JOINT_DATA = True
-NUMBER_TOTAL_CBTN_PATIENTS = 45
-NUMBER_TOTAL_BCH_PATIENTS = 66
-NUMBER_TOTAL_JOINT_PATIENTS = 111
 
 # Filtering options
 RAW = True
