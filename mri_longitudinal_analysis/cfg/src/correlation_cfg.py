@@ -1,16 +1,22 @@
 """Config file for the correlation analysis script."""
 from pathlib import Path
 
-CLINICAL_CSV = Path(
-    "/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/cbtn_filtered_pruned_treatment_513.csv"
+# Directories and files
+CLINICAL_CSV_BCH = Path(
+    "/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/bch_filtering_68_.csv"
 )
+CLINICAL_CSV_CBTN = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/cbtn_filtered_pruned_treatment_513.csv")
+CLINICAL_CSV = CLINICAL_CSV_BCH  # Change this according to cohort
 
-VOLUMES_CSV = Path(
-    "/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/accepted/pre_treatment/output/time_series_csv_kernel_smoothed"
-)
 
-COHORT = "CBTN"  # "BCH" or "CBTN"
-SAMPLE_SIZE = 45  # BCH: 62, CBTN: 45 -> for plotting trajectories, number of cohort
+BCH = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/final/pre_treatment/output/time_series/moving_average")
+CBTN = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/accepted/pre_treatment/output/time_series/moving_average")
+JOINT = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/final_dataset/output/time_series/moving_average")
+VOLUMES_CSV = BCH # Change this according to cohort
+
+
+COHORT = "BCH"    # "BCH" or "CBTN" or "JOINT"
+SAMPLE_SIZE = 61  # BCH: 61, CBTN: 43 -> for plotting trajectories, number of cohort
 
 
 OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output")
@@ -106,8 +112,6 @@ BCH_LOCATION = {
     "sylvian": "Cortical",
     "meninges": "Meninges / Suprasellar",
     "suprasellar": "Meninges / Suprasellar",
-    # "suprasellar": "Meninges / Suprasellar", # grouping for regression
-    # "suprasellar": "Other",
     "thalamic": "Basal Ganglia / Thalamus",
     "thalamus": "Basal Ganglia / Thalamus",
     "basal": "Basal Ganglia / Thalamus",

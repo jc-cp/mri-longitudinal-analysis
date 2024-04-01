@@ -80,7 +80,6 @@ class TumorAnalysis:
 
         self.validate_files(clinical_data_path, volumes_data_paths)
         patient_ids_volumes = self.load_volumes_data(volumes_data_paths)
-
         if self.cohort == "BCH":
             self.load_clinical_data_bch(clinical_data_path, patient_ids_volumes)
         else:
@@ -191,15 +190,6 @@ class TumorAnalysis:
             - self.clinical_data["Date of Birth"]
         ).dt.days / 365.25
 
-        # FIXME: progression from the clinical data removed
-        # self.clinical_data["Date First Progression"] = pd.to_datetime(
-        #     self.clinical_data["Date of First Progression"], dayfirst=True
-        # )
-        # self.clinical_data["Age at First Progression"] = (
-        #     self.clinical_data["Date First Progression"] - self.clinical_data["Date of Birth"]
-        # ).dt.days / 365.25
-        # self.clinical_data["Tumor Progression"] = self.clinical_data["Progression"].fillna("No")
-
         self.clinical_data["Date First Treatment"] = pd.to_datetime(
             self.clinical_data["First Treatment"], dayfirst=True
         )
@@ -214,8 +204,16 @@ class TumorAnalysis:
 
         self.clinical_data["Treatment Type"] = self.extract_treatment_types_bch()
 
+        self.clinical_data["Age Difference"] = (
+            self.clinical_data["Age at Last Clinical Follow-Up"] - self.clinical_data["Age at First Diagnosis"]
+        )
+
+        self.clinical_data["Follow-Up"] = self.clinical_data["Follow-Up"] / 365.25
+        print(f"\tFollow-Up: {self.clinical_data['Follow-Up'].max(), self.clinical_data['Follow-Up'].min(), self.clinical_data['Follow-Up'].median()}")
+        print(f"\tAge Difference: {self.clinical_data['Age Difference'].max(), self.clinical_data['Age Difference'].min(), self.clinical_data['Age Difference'].median()}")
+        
         self.clinical_data["Follow-Up Time"] = np.where(
-            self.clinical_data["Follow-Up"].notna(), self.clinical_data["Follow-Up"], 0
+            self.clinical_data["Follow-Up"].notna(), self.clinical_data["Follow-Up"], self.clinical_data["Age Difference"]
         )
         self.clinical_data["Time to Treatment"] = np.where(
             self.clinical_data["Age at First Treatment"].notna(),
@@ -223,7 +221,7 @@ class TumorAnalysis:
                 self.clinical_data["Age at First Treatment"]
                 - self.clinical_data["Age at First Diagnosis"]
             ),
-            0,
+            self.clinical_data["Age Difference"],
         )
 
         # Apply the type conversions according to the dictionary
@@ -335,7 +333,7 @@ class TumorAnalysis:
             print(f"\tVolume data found: {len(all_files)}.")
 
             for file in all_files:
-                patient_id = file.split(".")[0]
+                patient_id = file.split("_")[0]
 
                 patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
                 # Adjust patient id
@@ -716,14 +714,14 @@ class TumorAnalysis:
         patient_constant_vars = [
             "Location", "Symptoms", "Histology", "BRAF Status",
             "Sex", "Received Treatment", "Age at First Diagnosis",
-            "Age at Last Clinical Follow-Up", "Baseline Volume", # "Treatment Type" #TODO: fix the Nan here!
+            "Age at Last Clinical Follow-Up", "Baseline Volume", "Treatment Type"
         ]
         time_varying_vars = [
             "Age", "Age Group", "Days Between Scans", "Volume", "Normalized Volume",
             "Volume Change", "Volume Change Rate", "Follow-Up Time"
         ]
         all_vars = patient_constant_vars + time_varying_vars
-        pooled_results = pd.DataFrame(columns=['Main Category', 'Subcategory', 'HR', 'Lower', 'Upper', 'p'])
+        pooled_results = pd.DataFrame(columns=['Main Category', 'Subcategory', 'OR', 'Lower', 'Upper', 'p'])
         for variable in all_vars:
             print(f"\t\tAnalyzing {variable}...")
             pooled_results = self.univariate_analysis(variable, outcome_var, output_dir, pooled_results)
@@ -992,43 +990,100 @@ class TumorAnalysis:
             pooled_results: DataFrame with columns 'Variable', 'HR', 'Lower', 'Upper', and 'p'.
             output_file: File path to save the forest plot image.
         """
-        # Sort results by effect size or variable name
-        max_hr = pooled_results['Upper'].quantile(0.95)
-        min_hr = pooled_results['Lower'].quantile(0.05)
+        expected_columns = {'Main Category', 'Subcategory', 'OR', 'Lower', 'Upper', 'p'}
+        if not expected_columns.issubset(pooled_results.columns):
+            missing_cols = expected_columns - set(pooled_results.columns)
+            raise ValueError(f"The DataFrame is missing the following required columns: {missing_cols}")
 
-        # Check if the calculated quantiles are finite numbers
-        if not np.isfinite(max_hr):
-            max_hr = pooled_results['Upper'].max()  # Fallback to the max value
-        if not np.isfinite(min_hr):
-            min_hr = pooled_results['Lower'].min()
+
+        # sort pooled results alphabetically, then clear out non-positive and infinite values
+        pooled_results = pooled_results[(pooled_results['HR'] > 0) & (pooled_results['Lower'] > 0) & (pooled_results['Upper'] > 0)]
+        pooled_results.replace([np.inf, -np.inf], np.nan, inplace=True)
+        pooled_results.dropna(subset=['HR', 'Lower', 'Upper', 'p'], inplace=True)
+        pooled_results.sort_values(by=['Main Category', 'Subcategory'], ascending=[True, True])
+        pooled_results.reset_index(drop=True, inplace=True)
+
+        max_hr = np.percentile(pooled_results['Upper'], 90)
+        pooled_results = pooled_results[pooled_results['Upper'] <= max_hr]
         
-        # sort pooled results alphabetically
-        pooled_results = pooled_results.sort_values(by=['Main Category', 'Subcategory'])
-
+        # General plot settings + x parameters
         fig, ax = plt.subplots(figsize=(10, 8))
+        plt.subplots_adjust(left=0.3, right=0.7)
 
+        ax.set_xscale('log')
+        ax.set_xlim(left=0.01, right=100)
+        ax.set_xlabel('Odd Ratios')
+        ax.axvline(x=1, linestyle='--', color='red', lw=1)
+
+        # Categories handling and colors
         unique_main_categories = pooled_results['Main Category'].unique()
         colormap = plt.get_cmap('tab10')
         colors = [colormap(i) for i in range(len(unique_main_categories))]
         category_colors = {cat: color for cat, color in zip(unique_main_categories, colors)}
 
+        # Plot elements and error bars
         for i, row in pooled_results.iterrows():
             main_category = row['Main Category']
+            subcategory = row['Subcategory']
+            is_reference = 'Reference' in subcategory  # Replace with appropriate check for your reference category
+            
+            #fmt = 's' if is_reference else 'o'
             ax.errorbar(row['HR'], i, xerr=[[row['HR'] - row['Lower']], [row['Upper'] - row['HR']]],
                         fmt='o', color=category_colors[main_category], ecolor='gray', elinewidth=1, capsize=3)
-            # Annotate the p-value
-            ax.text(row['HR'], i, 'p={:.2g}'.format(row['p']), color='black', ha='left', va='center')
+           
 
-        # Add labels for each point
-        ax.set_yticks(range(len(pooled_results)))
-        ax.set_yticklabels(['{}: {}'.format(row['Main Category'], row['Subcategory']) for _, row in pooled_results.iterrows()])
-        ax.set_xlabel('Hazard Ratio (95% CI)')
-        ax.set_ylabel('Variables')
-        ax.axvline(x=1, linestyle='--', color='red', lw=1)
+        # annotations on the right
+        ax.margins(x=1)  # Add margin to the right side of the plot to make space for annotations
+        fig.canvas.draw()  # Need to draw the canvas to update axes positions
+
+        # Get the bounds of the axes in figure space
+        ax_bounds = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+
+        # Calculate the figure and axes widths in inches
+        fig_width_inches = fig.get_size_inches()[0]
+        axes_width_inches = ax_bounds.width
+        annotation_x_position = ax_bounds.x1 + 0.01 * fig_width_inches
+        
+        # Calculate the position for the annotations (a bit to the right of the axes)
+        annotation_x_position = ax_bounds.x1 + 0.01 * fig_width_inches
+        for i, row in pooled_results.iterrows():
+            if i == pooled_results.index[0]:
+                ax.text(annotation_x_position + (40 * axes_width_inches), 20, 'HR', ha='left', va='center', fontsize=10, fontweight='bold')
+                ax.text(annotation_x_position + (100 * axes_width_inches) , 20, '95% CI', ha='left', va='center', fontsize=10, fontweight='bold')
+                ax.text(annotation_x_position + (600 * axes_width_inches), 20, 'P-val', ha='left', va='center', fontsize=10, fontweight='bold')
+            
+            if 'Reference' not in row['Subcategory']:
+                ax.text(annotation_x_position+ (40 * axes_width_inches), i, f"{row['HR']:.2f}", ha='left', va='center', fontsize=8)
+                ax.text(annotation_x_position+ (100 * axes_width_inches) , i, f"({row['Lower']:.2f}-{row['Upper']:.2f})", ha='left', va='center', fontsize=8)
+                ax.text(annotation_x_position+ (600 * axes_width_inches), i, f"{row['p']:.3f}", ha='left', va='center', fontsize=8)
+            else:
+                ax.text(annotation_x_position + 5, i, 'Reference', ha='left', va='center', fontsize=8)
+        
+        
+        # Annotations on the left
+        subcategory_counts = pooled_results['Subcategory'].value_counts().to_dict()
+        y_tick_positions = []
+        copy_df = self.merged_data.copy()
+        unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
+
+        annotation_left_x_position = 0.01
+        for i, row in pooled_results.iterrows():
+            category = row['Main Category']
+            subcategory = row['Subcategory']
+            count = unique_pat[category].value_counts().get(subcategory, 0)
+            ax.text(annotation_left_x_position, i, f"{category} - {subcategory} - {count}", ha='right', va='center', fontsize=8, color='gray', transform=ax.transData)
+           
+        
+
+        #ax.set_yticks(y_tick_positions)
+        ax.set_yticklabels([])
+        ax.text(-0.35, 1.01, 'Variables and \n Subgroups', ha='right', va='center', fontsize=10, fontweight='bold', transform=ax.transAxes)
+        ax.text(-0.2, 1.01, 'Count (n)', ha='left', va='center', fontsize=10, fontweight='bold', transform=ax.transAxes)
+       
+        # Add title, grid, and layout
         ax.set_title('Univariate Analysis Forest Plot')
-        ax.set_xlim(min_hr, max_hr)
         plt.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 1, 0])
         
         output_file = os.path.join(output_dir, 'forest_plot.png')
         plt.savefig(output_file)
@@ -1060,7 +1115,7 @@ class TumorAnalysis:
                 new_row = pd.DataFrame({
                     'Main Category': var_name.replace('_', ' '),
                     'Subcategory' : subcategory.replace('_', ' ').strip(),
-                    'HR': np.exp(coef),
+                    'OR': np.exp(coef),
                     'Lower': np.exp(conf[0]),
                     'Upper': np.exp(conf[1]),
                     'p': p_val
@@ -1503,16 +1558,33 @@ class TumorAnalysis:
             write_stat(f"\t\tMinimum Baseline Volume: {min_baseline_volume / mm3_to_cm3} cm^3")
 
             # Follow-Up time
-            average_days_per_month = 30.44
             median_follow_up = self.merged_data["Follow-Up Time"].median()
             max_follow_up = self.merged_data["Follow-Up Time"].max()
             min_follow_up = self.merged_data["Follow-Up Time"].min()
-            median_follow_up_months = median_follow_up / average_days_per_month
-            max_follow_up_months = max_follow_up / average_days_per_month
-            min_follow_up_months = min_follow_up / average_days_per_month
-            write_stat(f"\t\tMedian Follow-Up Time: {median_follow_up_months:.2f} months")
-            write_stat(f"\t\tMaximum Follow-Up Time: {max_follow_up_months:.2f} months")
-            write_stat(f"\t\tMinimum Follow-Up Time: {min_follow_up_months:.2f} months")
+            median_follow_up_months = median_follow_up
+            max_follow_up_months = max_follow_up
+            min_follow_up_months = min_follow_up 
+            write_stat(f"\t\tMedian Follow-Up Time: {median_follow_up_months:.2f} years")
+            write_stat(f"\t\tMaximum Follow-Up Time: {max_follow_up_months:.2f} years")
+            write_stat(f"\t\tMinimum Follow-Up Time: {min_follow_up_months:.2f} years")
+            
+            
+            # get the ids of the patients with the three highest normalized volumes that do not repeat
+            top_normalized_volumes = self.merged_data.nlargest(3, "Normalized Volume")
+            top_volumes = self.merged_data.nlargest(3, "Volume")
+            self.merged_data['Absolute Volume Change'] = self.merged_data['Volume Change'].abs()
+            self.merged_data['Absolute Volume Change Rate'] = self.merged_data['Volume Change Rate'].abs()
+            top_volume_changes = self.merged_data.nlargest(3, 'Absolute Volume Change')
+            top_volume_change_rates = self.merged_data.nlargest(3, 'Absolute Volume Change Rate')
+            patient_ids_highest_norm_volumes = top_normalized_volumes["Patient_ID"].tolist()
+            patient_ids_highest_volumes = top_volumes["Patient_ID"].tolist()
+            patient_ids_highest_volume_changes = top_volume_changes["Patient_ID"].tolist()
+            patient_ids_highest_volume_change_rates = top_volume_change_rates["Patient_ID"].tolist()
+            write_stat(f"\t\tPatients with highest normalized volumes: {patient_ids_highest_norm_volumes}")
+            write_stat(f"\t\tPatients with highest volumes: {patient_ids_highest_volumes}")
+            write_stat(f"\t\tPatients with highest volume changes: {patient_ids_highest_volume_changes}")
+            write_stat(f"\t\tPatients with highest volume change rates: {patient_ids_highest_volume_change_rates}")
+            
         print(f"\t\tSaved summary statistics to {file_path}.")
     
     ##########################################
@@ -1675,7 +1747,7 @@ class TumorAnalysis:
                 #self.merged_data.replace(np.nan, np.inf, inplace=True)
                 
             # Descriptive statistics for table1 in paper
-            print(self.merged_data.dtypes)
+            #print(self.merged_data.dtypes)
             self.printout_stats(prefix=prefix, output_file_path=output_stats)
 
             # Correlations between variables
