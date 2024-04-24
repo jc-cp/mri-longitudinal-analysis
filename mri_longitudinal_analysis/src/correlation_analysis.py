@@ -912,10 +912,9 @@ class TumorAnalysis:
         """
         Perform univariate logistic regression analysis for a given variable.
         """
-        data, y = self.prepare_data_for_univariate_analysis(variable, outcome_var, pat_con_vars, cat_vars)
+        X, y = self.prepare_data_for_univariate_analysis(variable, outcome_var, pat_con_vars, cat_vars)
 
-        if data is not None and not data.empty:
-            X = data.drop(columns=[outcome_var], errors="ignore")
+        if X is not None and not X.empty:
             try:
                 result = logistic_regression_analysis(y, X)
                 # print(result.summary2())
@@ -926,7 +925,7 @@ class TumorAnalysis:
                     self.visualize_effect_size_distribution(
                         variable, result, output_dir
                     )
-                pooled_results = self.pool_results(result, variable, pooled_results, cat_vars)
+                pooled_results = self.pool_results(result, variable, pooled_results, cat_vars, num_vars)
                 print(f"\t\t\tModel fitted successfully with {variable}.")
             except ExceptionGroup as e:
                 print(f"\t\tError fitting model with {variable}: {e}")
@@ -954,14 +953,18 @@ class TumorAnalysis:
         # For categorical variables, convert them to dummy variables
         if variable in cat_vars:
             reference_category = data_agg[variable].mode()[0]
-            self.reference_categories[variable] = reference_category
-            if variable in data_agg.columns:
-                data_agg[variable] = data_agg[variable].astype(str)
-                data_agg = pd.get_dummies(data_agg, columns=[variable], drop_first=True)
-                for col in data_agg.columns:
-                    data_agg[col] = pd.to_numeric(data_agg[col], errors="coerce")
-
-        # Ensure outcome_var is binary numeric
+            ref_count = (data_agg[variable] == reference_category).sum()
+            print("\t\t\tReference category: ", reference_category)
+            self.reference_categories[variable] = (reference_category, ref_count)
+            data_agg[variable] = data_agg[variable].astype(str)
+            dummies = pd.get_dummies(data_agg[variable], prefix=variable, drop_first=False)
+            if f"{variable}_{reference_category}" in dummies.columns:
+                dummies.drop(columns=[f"{variable}_{reference_category}"], inplace=True)
+            data_agg = pd.concat([data_agg.drop(columns=[variable]), dummies], axis=1)
+            for col in dummies.columns:
+                data_agg[col] = data_agg[col].astype(int)
+        
+        # Ensure outcome_var is binary numeric, reduce to relevant columns, check for missing values
         data_agg[outcome_var] = (
             pd.to_numeric(data_agg[outcome_var], errors="coerce").fillna(0).astype(int)
         )
@@ -976,35 +979,20 @@ class TumorAnalysis:
                 f"\t\tWarning: Missing values detected for {variable}. Dropping missing values."
             )
             data_agg.fillna(0, inplace=True)
+        
+        # drop patient ID and assign constant for regression
         data_agg = data_agg.drop(columns=["Patient_ID"], errors="ignore")
-
         if "const" not in data_agg.columns:
             data_agg = sm.add_constant(data_agg)
 
-        if outcome_var in data_agg:
+        if data_agg.empty:
+            print(f"\t\tWarning: No data available for {variable}.")
+            return None, None
+        else:
             y = data_agg[outcome_var]
             X = data_agg.drop(columns=[outcome_var], errors="ignore")
-            for col in X.columns:
-                if X[col].dtype == bool:
-                    X[col] = X[col].astype(int)
-                # if "Treatment Type" in col:
-                #     print(f"{col}:")
-                #     print(X[col].value_counts())
-                #     print(X[col].min())
-                #     print(X[col].max())
-
-            # print(X.shape, y.shape)
-            # print(X.dtypes)
-            # print(y.dtypes)
-            # for col in X.columns:
-            #     if not np.issubdtype(X[col].dtype, np.number):
-            #         print(f"Non-numeric data found in column: {col}")
-            # print(X.isnull().all())  # This checks if any column has all NaN values
-
             # calculate_vif(X)
             return X, y
-        else:
-            return None, None
 
     def visualize_univariate_analysis(
         self, model_result, variable_base_name, output_dir
@@ -1232,7 +1220,6 @@ class TumorAnalysis:
 
         plt.title(f"{variable} Distribution and Effect Size")
         plt.tight_layout()
-
         file_name = f"{variable}_effect_size_distribution.png"
         plt.savefig(os.path.join(output_dir, file_name))
         plt.close()
@@ -1252,90 +1239,50 @@ class TumorAnalysis:
                 f"The DataFrame is missing the following required columns: {missing_cols}"
             )
 
+        # Exclude 'Reference' entries from calculations
+        reference_mask = pooled_results['Subcategory'].str.contains("Reference")
+        references = pooled_results[reference_mask]
+        filtered_results = pooled_results[~reference_mask]
+        
         # sort pooled results alphabetically, then clear out non-positive and infinite values
-        pooled_results = pooled_results[
-            (pooled_results["OR"] > 0)
-            & (pooled_results["Lower"] > 0)
-            & (pooled_results["Upper"] > 0)
+        filtered_results = filtered_results[
+            (filtered_results["OR"] > 0)
+            & (filtered_results["Lower"] > 0)
+            & (filtered_results["Upper"] > 0)
         ]
-        pooled_results.replace([np.inf, -np.inf], np.nan, inplace=True)
-        pooled_results.dropna(subset=["OR", "Lower", "Upper", "p"], inplace=True)
-        pooled_results.sort_values(
-            by=["MainCategory", "Subcategory"], ascending=[False, False], inplace=True
-        )
-        pooled_results.reset_index(drop=True, inplace=True)
 
-        max_hr = np.percentile(pooled_results["Upper"], 90)
-        pooled_results = pooled_results[pooled_results["Upper"] <= max_hr]
+        filtered_results.replace([np.inf, -np.inf], np.nan, inplace=True)
+        filtered_results.dropna(subset=["OR", "Lower", "Upper", "p"], inplace=True)
+        
+        if not filtered_results.empty:
+            max_hr = np.percentile(filtered_results["Upper"], 90)
+            filtered_results = filtered_results[filtered_results["Upper"] <= max_hr]
 
+        # Include 'Reference' entries for plotting without affecting calculations
+        final_results = pd.concat([filtered_results, references], ignore_index=True)
+        final_results.sort_values(by=["MainCategory", "Subcategory"], ascending=[False, False], inplace=True)
+        final_results.reset_index(drop=True, inplace=True)
+        
         # General plot settings + x parameters
         fig, ax = plt.subplots(figsize=(10, 8))
         plt.subplots_adjust(left=0.3, right=0.7)
-
         ax.set_xscale("log")
         ax.set_xlim(left=0.01, right=100)
         ax.set_xlabel("Odd Ratios")
-        ax.axvline(x=1, linestyle="--", color="red", lw=1)
+        ax.axvline(x=1, linestyle="--", color="blue", lw=1)
 
         # Categories handling and colors
-        unique_main_categories = pooled_results["MainCategory"].unique()
+        unique_main_categories = final_results["MainCategory"].unique()
         colormap = plt.get_cmap("tab10")
         colors = [colormap(i) for i in range(len(unique_main_categories))]
         category_colors = {
             cat: color for cat, color in zip(unique_main_categories, colors)
         }
         
-        # Annotations on the left
-        copy_df = self.merged_data.copy()
-        unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
-        y_labels = []
-        for index, row in pooled_results.iterrows():
-            main_category = row["MainCategory"]
-            subcategory = row["Subcategory"]
-            count = unique_pat[main_category].value_counts().get(subcategory, 0)
-            label = f"{main_category} - {subcategory} - {count}"
-            if "(Reference)" in subcategory:
-                label += "Reference"
-            y_labels.append(label)
-
-        # copy_df = self.merged_data.copy()
-        # unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
-
-        # annotation_left_x_position = 0.01
-        # for i, row in pooled_results.iterrows():
-        #     category = row["MainCategory"]
-        #     subcategory = row["Subcategory"]
-        #     count = unique_pat[category].value_counts().get(subcategory, 0)
-        #     ax.text(
-        #         annotation_left_x_position,
-        #         i,
-        #         f"{category} - {subcategory} - {count}",
-        #         ha="right",
-        #         va="center",
-        #         fontsize=8,
-        #         color="gray",
-        #         transform=ax.transData,
-        #     )
-            
-        # Plot elements and error bars    
-        for i, row in enumerate(pooled_results.itertuples()):
-            ax.errorbar(
-                row.OR,
-                i,
-                xerr=[[row.OR - row.Lower], [row.Upper - row.OR]],
-                fmt='o',
-                color=category_colors[main_category],
-                ecolor="blue",
-                elinewidth=1,
-                capsize=3,
-            )
-        
-        ax.set_yticks(range(len(y_labels)))
-        ax.set_yticklabels(y_labels, ha='right')
         # annotations on the right
         ax.margins(
             x=1
-        )  # Add margin to the right side of the plot to make space for annotations
+        )  
         fig.canvas.draw()  # Need to draw the canvas to update axes positions
 
         # Get the bounds of the axes in figure space
@@ -1345,8 +1292,33 @@ class TumorAnalysis:
         fig_width_inches = fig.get_size_inches()[0]
         axes_width_inches = ax_bounds.width
         annotation_x_position = ax_bounds.x1 + 0.01 * fig_width_inches
-        for i, row in enumerate(pooled_results.itertuples()):
-            if "Reference" not in row.Subcategory:
+        
+        # Annotations on the left
+        copy_df = self.merged_data.copy()
+        unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
+        y_labels = []
+        for i, row in enumerate(final_results.itertuples()):
+            main_category = row.MainCategory
+            subcategory = row.Subcategory
+            if "(Reference)" in subcategory:
+                _ , count = self.reference_categories.get(main_category, (None, 0))
+            else:
+                count = unique_pat[main_category].value_counts().get(subcategory, 0)
+            label = f"{main_category} - {subcategory} - {count}"
+            y_labels.append(label)
+            
+            # plotting
+            if "(Reference)" not in subcategory:
+                ax.errorbar(
+                    row.OR,
+                    i,
+                    xerr=[[row.OR - row.Lower], [row.Upper - row.OR]],
+                    fmt='o',
+                    color=category_colors[main_category],
+                    ecolor=category_colors[main_category],
+                    elinewidth=1,
+                    capsize=3,
+                )
                 ax.text(
                     annotation_x_position + (40 * axes_width_inches),
                     i,
@@ -1375,17 +1347,26 @@ class TumorAnalysis:
                     transform=ax.transData,
                 )
             else:
+                ax.errorbar(
+                    1.0,
+                    i,
+                    fmt='o',
+                    color=category_colors[main_category],
+                    capsize=3,
+                )
                 ax.text(
-                    annotation_x_position + 5,
+                    annotation_x_position + (40 * axes_width_inches),
                     i,
                     "Reference",
                     ha="left",
                     va="center",
                     fontsize=8,
                     transform=ax.transData,
-                )
-
-
+                )        
+        ax.set_yticks(range(len(y_labels)))
+        ax.set_yticklabels(y_labels, ha='right')
+        
+        # titles on the plot
         ax.text(
             -0.35,
             1.01,
@@ -1446,7 +1427,7 @@ class TumorAnalysis:
         plt.savefig(output_file)
         plt.close()
 
-    def pool_results(self, result, var_name, pooled_results, cat_vars):
+    def pool_results(self, result, var_name, pooled_results, cat_vars, num_vars):
         """
         Pool the results of univariate analysis to create a forest plot.
 
@@ -1463,17 +1444,17 @@ class TumorAnalysis:
             reference_category = self.reference_categories.get(var_name, None)
             if reference_category is None:
                 raise ValueError(f"No reference category set for {var_name}")
-            new_row = pd.DataFrame(
+            ref_row = pd.DataFrame(
                 {
-                    "MainCategory": [var_name],
-                    "Subcategory": [f"{reference_category} (Reference)"],
-                    "OR": [1.0],
-                    "Lower": [1.0],
-                    "Upper": [1.0],
-                    "p": [None],
-                }
+                    "MainCategory": var_name,
+                    "Subcategory": f"{reference_category} (Reference)",
+                    "OR": 1.0,
+                    "Lower": np.nan,
+                    "Upper": np.nan,
+                    "p": np.nan,
+                }, index=[0]
             )
-            pooled_results = pd.concat([pooled_results, new_row], ignore_index=True)
+            pooled_results = pd.concat([pooled_results, ref_row], ignore_index=True)
         
         if result is not None:
             for variable in result.params.index[1:]:
@@ -1501,6 +1482,7 @@ class TumorAnalysis:
                     pooled_results = pd.concat(
                         [pooled_results, new_row], ignore_index=True
                     )
+                    print(f"\t\t\tPooled results updated with {variable}.")
         return pooled_results
 
     def visualize_statistical_test(
