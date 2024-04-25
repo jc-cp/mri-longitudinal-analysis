@@ -495,15 +495,12 @@ def logistic_regression_analysis(y, x):
     model_result = sm.Logit(y, x).fit(disp=0, maxiter=100, method='lbfgs')
     return model_result
 
+
 def calculate_vif(X):
     """
     Calculate Variance Inflation Factor (VIF) for each variable in the DataFrame X.
     X should already have dummy variables for categorical features and should not contain the outcome variable.
     """
-    # Add constant term for intercept
-    X = sm.add_constant(X)
-
-    # Calculate VIF
     vif_data = pd.DataFrame({
         'Variable': X.columns,
         'VIF': [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
@@ -511,6 +508,7 @@ def calculate_vif(X):
 
     print("\nVIF Calculation Results:")
     print(vif_data)
+
 #######################################
 # DATA HANDLING and SIMPLE OPERATIONS #
 #######################################

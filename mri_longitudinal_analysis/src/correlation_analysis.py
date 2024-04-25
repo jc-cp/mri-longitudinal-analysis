@@ -10,6 +10,7 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 import statsmodels.api as sm
+import statsmodels.formula.api as smf
 from scipy.stats import shapiro
 from cfg.src import correlation_cfg
 from lifelines import KaplanMeierFitter
@@ -41,7 +42,7 @@ from utils.helper_functions import (
     kruskal_wallis_test,
     fisher_exact_test,
     logistic_regression_analysis,
-    # calculate_vif,
+    calculate_vif,
 )
 
 
@@ -87,6 +88,7 @@ class TumorAnalysis:
             self.load_clinical_data_cbtn(clinical_data_path, patient_ids_volumes)
         self.merge_data()
         self.aggregate_summary_statistics()
+        print(self.merged_data.dtypes)
 
     def validate_files(self, clinical_data_path, volumes_data_paths):
         """
@@ -414,7 +416,6 @@ class TumorAnalysis:
         This function is called within the `load_clinical_data` method.
         """
         treatment_list = []
-        # TODO: Adjust this to the other logic
         for _, row in self.clinical_data.iterrows():
             treatments = []
 
@@ -458,10 +459,6 @@ class TumorAnalysis:
         self.clinical_data["Received Treatment"] = None
         self.clinical_data["Time to Treatment"] = None
         self.clinical_data["Age at First Treatment"] = None
-        # FIXME: clinal progression removed
-        # self.clinical_data["Tumor Progression"] = None
-        # self.clinical_data["Age at First Progression"] = None
-        # self.clinical_data["Time to Progression"] = None
 
         # Loop through each patient in clinical_data
         for idx, row in self.clinical_data.iterrows():
@@ -474,10 +471,6 @@ class TumorAnalysis:
             osur = row["Overall Survival"]
             efsur = int(efsur) if str(efsur).isnumeric() else float("inf")
             osur = int(osur) if str(osur).isnumeric() else float("inf")
-
-            # FIXME: Progression
-            # progression = "Yes" if efsur < osur else "No"
-            # self.clinical_data.at[idx, "Tumor Progression"] = progression
 
             # Age at First Diagnosis
             if surgery == "Yes":
@@ -533,24 +526,6 @@ class TumorAnalysis:
                 self.clinical_data.at[idx, "Time to Treatment"] = (
                     age_at_first_treatment - age_at_first_diagnosis
                 )
-
-            # FIXME: Calculate Age at First Progression and Time to Progression
-            # if pd.notna(efsur) and pd.notna(osur):
-            #     if efsur < osur:
-            #         self.clinical_data.at[idx, "Tumor Progression"] = "Yes"
-            #         if pd.notna(row["Age at First Treatment"]):
-            #             age_at_first_progression = row["Age at First Treatment"] + efsur
-            #         else:
-            #             # Use Age at First Diagnosis + EFS if Age at First Treatment is not available
-            #             age_at_first_progression = age_at_first_diagnosis + efsur
-            #         self.clinical_data.at[
-            #             idx, "Age at First Progression"
-            #         ] = age_at_first_progression
-            #         self.clinical_data.at[idx, "Time to Progression"] = (
-            #             age_at_first_progression - age_at_first_diagnosis
-            #         )
-            #     else:
-            #         self.clinical_data.at[idx, "Progression"] = "No"
 
         self.clinical_data["Age at First Diagnosis"] = pd.to_numeric(
             self.clinical_data["Age at First Diagnosis"], errors="coerce"
@@ -639,15 +614,16 @@ class TumorAnalysis:
             "Volume Change Rate",
         ]:
             grouped = self.merged_data.groupby("Patient_ID", as_index=False)
-            self.merged_data = self.merged_data.groupby(
-                "Patient_ID", as_index=False
-            ).apply(cumulative_stats, var)
+            self.merged_data = grouped.apply(cumulative_stats, var)
             self.merged_data.reset_index(drop=True, inplace=True)
-            self.merged_data = self.merged_data.groupby(
-                "Patient_ID", as_index=False
-            ).apply(rolling_stats, var)
+            self.merged_data = grouped.apply(rolling_stats, var)
             self.merged_data.reset_index(drop=True, inplace=True)
 
+        time_varying_vars = [
+        "Age", "Days Between Scans", "Volume", "Volume Change", "Volume Change Rate", "Follow-Up Time"]
+        for var in time_varying_vars:
+            median_column = f"{var} Median"
+            self.merged_data[median_column] = self.merged_data.groupby("Patient_ID")[var].transform('median')
         print("\tAdded rolling and accumulative summary statistics.")
 
     ###################################
@@ -683,6 +659,13 @@ class TumorAnalysis:
             "Volume Change Rate",
             "Baseline Volume",
             "Follow-Up Time",
+            "Age Median",
+            "Volume Median",
+            "Volume Change Median",
+            "Volume Change Rate Median",
+            "Follow-Up Time Median",
+            "Age Group",
+            "Days Between Scans Median",
         ]
         outcome_var = "Patient Classification Binary"
 
@@ -752,7 +735,7 @@ class TumorAnalysis:
         #                 output_dir,
         #             )
 
-        # Univariate analysis
+        # Univariate analysis, logistic regression and forest plot 
         patient_constant_vars = [
             "Location",
             "Symptoms",
@@ -764,54 +747,27 @@ class TumorAnalysis:
             "Age at Last Clinical Follow-Up",
             "Baseline Volume",
             "Treatment Type",
-        ]
-        time_varying_vars = [
-            "Age",
-            "Age Group",
-            "Days Between Scans",
-            "Volume",
-            "Normalized Volume",
-            "Volume Change",
-            "Volume Change Rate",
-            "Follow-Up Time",
-        ]
-        categorical_vars = [
-            "Location",
-            "Symptoms",
-            "Histology",
-            "BRAF Status",
-            "Sex",
-            "Received Treatment",
-            "Treatment Type",
+            "Age Median",
+            "Volume Median",
+            "Volume Change Median",
+            "Volume Change Rate Median",
+            "Follow-Up Time Median",
+            "Days Between Scans Median",
             "Age Group",
         ]
-        numerical_vars = [
-            "Age",
-            "Days Between Scans",
-            "Volume",
-            "Normalized Volume",
-            "Volume Change",
-            "Volume Change Rate",
-            "Follow-Up Time",
-            "Age at First Diagnosis",
-            "Age at Last Clinical Follow-Up",
-            "Baseline Volume",
-        ]
-        all_vars = patient_constant_vars + time_varying_vars
+
         pooled_results = pd.DataFrame(
             columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]
         )
-        for variable in all_vars:
+        for variable in patient_constant_vars:
             print(f"\t\tAnalyzing {variable}...")
             pooled_results = self.univariate_analysis(
                 variable,
                 outcome_var,
-                output_dir,
                 pooled_results,
                 categorical_vars,
                 numerical_vars,
-                patient_constant_vars,
-                time_varying_vars
+                patient_constant_vars
             )
         self.plot_forest_plot(pooled_results, output_dir)
 
@@ -905,585 +861,6 @@ class TumorAnalysis:
                 f"\t\tCould not perform analysis on {x_val} and {y_val} due to incompatible data"
                 " types."
             )
-
-    def univariate_analysis(
-        self, variable, outcome_var, output_dir, pooled_results, cat_vars, num_vars, pat_con_vars, time_vars
-    ):
-        """
-        Perform univariate logistic regression analysis for a given variable.
-        """
-        X, y = self.prepare_data_for_univariate_analysis(variable, outcome_var, pat_con_vars, cat_vars)
-
-        if X is not None and not X.empty:
-            try:
-                result = logistic_regression_analysis(y, X)
-                # print(result.summary2())
-                self.visualize_univariate_analysis_alternative(
-                    result, variable, output_dir
-                )
-                if variable in num_vars:
-                    self.visualize_effect_size_distribution(
-                        variable, result, output_dir
-                    )
-                pooled_results = self.pool_results(result, variable, pooled_results, cat_vars, num_vars)
-                print(f"\t\t\tModel fitted successfully with {variable}.")
-            except ExceptionGroup as e:
-                print(f"\t\tError fitting model with {variable}: {e}")
-        else:
-            print(f"\t\tNo data available for {variable}.")
-
-        return pooled_results
-
-    def prepare_data_for_univariate_analysis(self, variable, outcome_var, pat_con_vars, cat_vars):
-        """
-        Prepare the data for univariate logistic regression analysis.
-        This function handles patient-constant and time-varying variables differently.
-        """
-        # Handling patient-constant variables
-        if variable in pat_con_vars:
-            data_agg = (
-                self.merged_data.groupby("Patient_ID")
-                .agg({variable: "first", outcome_var: "first"})
-                .reset_index()
-            )
-        else:
-            # Handling time-varying variables
-            data_agg = self.merged_data[[variable, outcome_var]].dropna()
-
-        # For categorical variables, convert them to dummy variables
-        if variable in cat_vars:
-            reference_category = data_agg[variable].mode()[0]
-            ref_count = (data_agg[variable] == reference_category).sum()
-            print("\t\t\tReference category: ", reference_category)
-            self.reference_categories[variable] = (reference_category, ref_count)
-            data_agg[variable] = data_agg[variable].astype(str)
-            dummies = pd.get_dummies(data_agg[variable], prefix=variable, drop_first=False)
-            if f"{variable}_{reference_category}" in dummies.columns:
-                dummies.drop(columns=[f"{variable}_{reference_category}"], inplace=True)
-            data_agg = pd.concat([data_agg.drop(columns=[variable]), dummies], axis=1)
-            for col in dummies.columns:
-                data_agg[col] = data_agg[col].astype(int)
-        
-        # Ensure outcome_var is binary numeric, reduce to relevant columns, check for missing values
-        data_agg[outcome_var] = (
-            pd.to_numeric(data_agg[outcome_var], errors="coerce").fillna(0).astype(int)
-        )
-        relevant_columns = [
-            col
-            for col in data_agg.columns
-            if col == outcome_var or col.startswith(variable + "_") or col == "const"
-        ]
-        data_agg = data_agg[relevant_columns].dropna()
-        if data_agg.isnull().values.any():
-            print(
-                f"\t\tWarning: Missing values detected for {variable}. Dropping missing values."
-            )
-            data_agg.fillna(0, inplace=True)
-        
-        # drop patient ID and assign constant for regression
-        data_agg = data_agg.drop(columns=["Patient_ID"], errors="ignore")
-        if "const" not in data_agg.columns:
-            data_agg = sm.add_constant(data_agg)
-
-        if data_agg.empty:
-            print(f"\t\tWarning: No data available for {variable}.")
-            return None, None
-        else:
-            y = data_agg[outcome_var]
-            X = data_agg.drop(columns=[outcome_var], errors="ignore")
-            # calculate_vif(X)
-            return X, y
-
-    def visualize_univariate_analysis(
-        self, model_result, variable_base_name, output_dir
-    ):
-        """
-        Visualize the results of univariate logistic regression analysis,
-        creating plots for both categorical and numerical variables that
-        display coefficients or odds ratios along with their confidence intervals.
-
-        Args:
-        - result: The result object from logistic regression analysis.
-        - variable: The name of the variable being analyzed.
-        - output_dir: The directory where the plot images will be saved.
-        """
-
-        coeffs = model_result.params.drop("const", errors="ignore")
-        conf = model_result.conf_int().drop("const", errors="ignore")
-        p_values = model_result.pvalues.drop("const", errors="ignore")
-
-        if variable_base_name in [
-            "Location",
-            "Symptoms",
-            "Histology",
-            "Treatment Type",
-            "BRAF Status",
-            "Sex",
-            "Received Treatment",
-            "Age Group",
-        ]:
-            values_to_plot = np.exp(coeffs)
-            lower_error = values_to_plot - np.exp(conf[0])
-            upper_error = np.exp(conf[1]) - values_to_plot
-        else:
-            values_to_plot = coeffs
-            lower_error = coeffs - conf[0]
-            upper_error = conf[1] - coeffs
-
-        error_bars = np.vstack([lower_error, upper_error])
-
-        plt.figure(figsize=(10, 6))
-        ax = plt.subplot(111)
-
-        categories = values_to_plot.index
-        ax.bar(
-            categories,
-            values_to_plot,
-            yerr=error_bars,
-            color="skyblue",
-            align="center",
-            alpha=0.7,
-            capsize=4,
-        )
-        ax.set_ylabel(
-            "Odds Ratio"
-            if variable_base_name
-            in [
-                "Location",
-                "Symptoms",
-                "Histology",
-                "Treatment Type",
-                "BRAF Status",
-                "Sex",
-                "Received Treatment",
-                "Age Group",
-            ]
-            else "Log Odds"
-        )
-
-        ax.set_title(f"{variable_base_name} Effect Size with 95% CI")
-        ax.axhline(
-            1
-            if variable_base_name
-            in [
-                "Location",
-                "Symptoms",
-                "Histology",
-                "Treatment Type",
-                "BRAF Status",
-                "Sex",
-                "Received Treatment",
-                "Age Group",
-            ]
-            else 0,
-            color="red",
-            linestyle="--",
-        )
-
-        # Annotate p-values
-        for i, p_value in enumerate(p_values):
-            ax.text(i, ax.get_ylim()[1], f"p={p_value:.2e}", ha="center", va="bottom")
-
-        plt.xticks(rotation=45)
-        plt.xlabel(
-            "Categories"
-            if variable_base_name
-            in [
-                "Location",
-                "Symptoms",
-                "Histology",
-                "Treatment Type",
-                "BRAF Status",
-                "Sex",
-                "Received Treatment",
-                "Age Group",
-            ]
-            else "Variable"
-        )
-        plt.tight_layout()
-
-        file_name = f"{variable_base_name}_univariate_analysis.png"
-        plt.savefig(os.path.join(output_dir, file_name))
-        plt.close()
-
-    def visualize_univariate_analysis_alternative(
-        self, model_result, variable_base_name, output_dir
-    ):
-        """
-        Visualize the results of univariate logistic regression analysis,
-        creating plots for both categorical and numerical variables that
-        display coefficients or odds ratios along with their confidence intervals.
-
-        Args:
-        - result: The result object from logistic regression analysis.
-        - variable: The name of the variable being analyzed.
-        - output_dir: The directory where the plot images will be saved.
-        """
-        coeffs = model_result.params
-        conf = model_result.conf_int()
-        odds_ratios = np.exp(
-            coeffs
-        )  # Convert coefficients to odds ratios for interpretation
-
-        # Calculate error bars from confidence intervals
-        error_bars = [odds_ratios - np.exp(conf[0]), np.exp(conf[1]) - odds_ratios]
-
-        if variable_base_name in [
-            "Location",
-            "Symptoms",
-            "Histology",
-            "Treatment Type",
-            "BRAF Status",
-            "Sex",
-            "Received Treatment",
-            "Age Group",
-        ]:
-            # Categorical variable: Plot as Odds Ratios
-            plt.figure(figsize=(8, 4))
-            plt.errorbar(
-                x=odds_ratios.index,
-                y=odds_ratios,
-                yerr=error_bars,
-                fmt="o",
-                color="black",
-                ecolor="lightgray",
-                elinewidth=3,
-                capsize=0,
-            )
-            plt.xticks(rotation=45)
-            plt.title(f"Odds Ratios with 95% CI for {variable_base_name}")
-            plt.ylabel("Odds Ratio")
-            plt.xlabel("Categories")
-        else:
-            # Numerical variable: Plot as Coefficients
-            plt.figure(figsize=(8, 4))
-            plt.errorbar(
-                x=coeffs.index,
-                y=coeffs,
-                yerr=[conf[1] - coeffs, coeffs - conf[0]],
-                fmt="o",
-                color="black",
-                ecolor="lightgray",
-                elinewidth=3,
-                capsize=0,
-            )
-            plt.title(f"Coefficients with 95% CI for {variable_base_name}")
-            plt.ylabel("Log Odds")
-            plt.xlabel("Variable")
-
-        # Adjust layout and save the figure
-        plt.tight_layout()
-        plt.savefig(f"{output_dir}/{variable_base_name}_analysis_plots_alternative.png")
-        plt.close()
-
-    def visualize_effect_size_distribution(self, variable, model_result, output_dir):
-        """
-        Visualize the distribution of a numerical variable alongside its effect size
-        and confidence interval from the univariate analysis.
-
-        Args:
-        - variable: The name of the numerical variable.
-        - model_result: The result object from logistic regression analysis.
-        - output_dir: The directory where the plot images will be saved.
-        """
-        if variable not in model_result.params:
-            print(f"Variable {variable} not found in model parameters.")
-            print(model_result.params.index)
-            return
-
-        # Effect size and confidence interval
-        coef = model_result.params[variable]
-        conf = model_result.conf_int().loc[variable].values
-        odds_ratio = np.exp(coef)
-        ci_lower, ci_upper = np.exp(conf)
-
-        # Plotting distribution of the variable
-        fig, ax1 = plt.subplots()
-        sns.histplot(self.merged_data[variable].dropna(), ax=ax1, color="gray")
-        ax1.set_xlabel(variable)
-        ax1.set_ylabel("Density")
-
-        # Adding secondary axis for effect size
-        ax2 = ax1.twinx()
-        ax2.plot(
-            [odds_ratio, odds_ratio], [0, 1], color="red", linestyle="--"
-        )  # Effect size line
-        ax2.errorbar(
-            odds_ratio,
-            0.5,
-            xerr=[[odds_ratio - ci_lower], [ci_upper - odds_ratio]],
-            fmt="o",
-            color="red",
-            ecolor="red",
-        )
-        ax2.set_ylabel("Odds Ratio")
-
-        plt.title(f"{variable} Distribution and Effect Size")
-        plt.tight_layout()
-        file_name = f"{variable}_effect_size_distribution.png"
-        plt.savefig(os.path.join(output_dir, file_name))
-        plt.close()
-
-    def plot_forest_plot(self, pooled_results, output_dir):
-        """
-        Create a forest plot from the pooled results of univariate analyses.
-
-        Args:
-            pooled_results: DataFrame with columns 'Variable', 'OR', 'Lower', 'Upper', and 'p'.
-            output_file: File path to save the forest plot image.
-        """
-        expected_columns = {"MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"}
-        if not expected_columns.issubset(pooled_results.columns):
-            missing_cols = expected_columns - set(pooled_results.columns)
-            raise ValueError(
-                f"The DataFrame is missing the following required columns: {missing_cols}"
-            )
-
-        # Exclude 'Reference' entries from calculations
-        reference_mask = pooled_results['Subcategory'].str.contains("Reference")
-        references = pooled_results[reference_mask]
-        filtered_results = pooled_results[~reference_mask]
-        
-        # sort pooled results alphabetically, then clear out non-positive and infinite values
-        filtered_results = filtered_results[
-            (filtered_results["OR"] > 0)
-            & (filtered_results["Lower"] > 0)
-            & (filtered_results["Upper"] > 0)
-        ]
-
-        filtered_results.replace([np.inf, -np.inf], np.nan, inplace=True)
-        filtered_results.dropna(subset=["OR", "Lower", "Upper", "p"], inplace=True)
-        
-        if not filtered_results.empty:
-            max_hr = np.percentile(filtered_results["Upper"], 90)
-            filtered_results = filtered_results[filtered_results["Upper"] <= max_hr]
-
-        # Include 'Reference' entries for plotting without affecting calculations
-        final_results = pd.concat([filtered_results, references], ignore_index=True)
-        final_results.sort_values(by=["MainCategory", "Subcategory"], ascending=[False, False], inplace=True)
-        final_results.reset_index(drop=True, inplace=True)
-        
-        # General plot settings + x parameters
-        fig, ax = plt.subplots(figsize=(10, 8))
-        plt.subplots_adjust(left=0.3, right=0.7)
-        ax.set_xscale("log")
-        ax.set_xlim(left=0.01, right=100)
-        ax.set_xlabel("Odd Ratios")
-        ax.axvline(x=1, linestyle="--", color="blue", lw=1)
-
-        # Categories handling and colors
-        unique_main_categories = final_results["MainCategory"].unique()
-        colormap = plt.get_cmap("tab10")
-        colors = [colormap(i) for i in range(len(unique_main_categories))]
-        category_colors = {
-            cat: color for cat, color in zip(unique_main_categories, colors)
-        }
-        
-        # annotations on the right
-        ax.margins(
-            x=1
-        )  
-        fig.canvas.draw()  # Need to draw the canvas to update axes positions
-
-        # Get the bounds of the axes in figure space
-        ax_bounds = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-
-        # Calculate the figure and axes widths in inches
-        fig_width_inches = fig.get_size_inches()[0]
-        axes_width_inches = ax_bounds.width
-        annotation_x_position = ax_bounds.x1 + 0.01 * fig_width_inches
-        
-        # Annotations on the left
-        copy_df = self.merged_data.copy()
-        unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
-        y_labels = []
-        for i, row in enumerate(final_results.itertuples()):
-            main_category = row.MainCategory
-            subcategory = row.Subcategory
-            if "(Reference)" in subcategory:
-                _ , count = self.reference_categories.get(main_category, (None, 0))
-            else:
-                count = unique_pat[main_category].value_counts().get(subcategory, 0)
-            label = f"{main_category} - {subcategory} - {count}"
-            y_labels.append(label)
-            
-            # plotting
-            if "(Reference)" not in subcategory:
-                ax.errorbar(
-                    row.OR,
-                    i,
-                    xerr=[[row.OR - row.Lower], [row.Upper - row.OR]],
-                    fmt='o',
-                    color=category_colors[main_category],
-                    ecolor=category_colors[main_category],
-                    elinewidth=1,
-                    capsize=3,
-                )
-                ax.text(
-                    annotation_x_position + (40 * axes_width_inches),
-                    i,
-                    f"{row.OR:.2f}",
-                    ha="left",
-                    va="center",
-                    fontsize=8,
-                    transform=ax.transData,
-                )
-                ax.text(
-                    annotation_x_position + (100 * axes_width_inches),
-                    i,
-                    f"({row.Lower:.2f}-{row.Upper:.2f})",
-                    ha="left",
-                    va="center",
-                    fontsize=8,
-                    transform=ax.transData,
-                )
-                ax.text(
-                    annotation_x_position + (600 * axes_width_inches),
-                    i,
-                    f"{row.p:.3f}",
-                    ha="left",
-                    va="center",
-                    fontsize=8,
-                    transform=ax.transData,
-                )
-            else:
-                ax.errorbar(
-                    1.0,
-                    i,
-                    fmt='o',
-                    color=category_colors[main_category],
-                    capsize=3,
-                )
-                ax.text(
-                    annotation_x_position + (40 * axes_width_inches),
-                    i,
-                    "Reference",
-                    ha="left",
-                    va="center",
-                    fontsize=8,
-                    transform=ax.transData,
-                )        
-        ax.set_yticks(range(len(y_labels)))
-        ax.set_yticklabels(y_labels, ha='right')
-        
-        # titles on the plot
-        ax.text(
-            -0.35,
-            1.01,
-            "Variables and \n Subgroups",
-            ha="right",
-            va="center",
-            fontsize=10,
-            fontweight="bold",
-            transform=ax.transAxes,
-        )
-        ax.text(
-            -0.2,
-            1.01,
-            "Count (n)",
-            ha="left",
-            va="center",
-            fontsize=10,
-            fontweight="bold",
-            transform=ax.transAxes,
-        )
-        ax.text(
-            1.05,
-            1.01,
-            "OR",
-            ha="left",
-            va="center",
-            fontsize=10,
-            fontweight="bold",
-            transform=ax.transAxes,
-        )
-        ax.text(
-            1.15,
-            1.01,
-            "95% CI",
-            ha="left",
-            va="center",
-            fontsize=10,
-            fontweight="bold",
-            transform=ax.transAxes,
-        )
-        ax.text(
-            1.35,
-            1.01,
-            "P-val",
-            ha="left",
-            va="center",
-            fontsize=10,
-            fontweight="bold",
-            transform=ax.transAxes,
-        )
-
-        # Add title, grid, and layout
-        ax.set_title("Univariate Analysis Forest Plot")
-        plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
-        plt.tight_layout(rect=[0, 0, 1, 0])
-
-        output_file = os.path.join(output_dir, "forest_plot.png")
-        plt.savefig(output_file)
-        plt.close()
-
-    def pool_results(self, result, var_name, pooled_results, cat_vars, num_vars):
-        """
-        Pool the results of univariate analysis to create a forest plot.
-
-        Args:
-            result: Result object from univariate analysis.
-            pooled_results: DataFrame to store pooled results.
-        """
-        if not isinstance(pooled_results, pd.DataFrame) or pooled_results is None:
-            pooled_results = pd.DataFrame(
-                columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]
-            )
-
-        if var_name in cat_vars:
-            reference_category = self.reference_categories.get(var_name, None)
-            if reference_category is None:
-                raise ValueError(f"No reference category set for {var_name}")
-            ref_row = pd.DataFrame(
-                {
-                    "MainCategory": var_name,
-                    "Subcategory": f"{reference_category} (Reference)",
-                    "OR": 1.0,
-                    "Lower": np.nan,
-                    "Upper": np.nan,
-                    "p": np.nan,
-                }, index=[0]
-            )
-            pooled_results = pd.concat([pooled_results, ref_row], ignore_index=True)
-        
-        if result is not None:
-            for variable in result.params.index[1:]:
-                if variable != "const":
-                    coef = result.params[variable]
-                    conf = result.conf_int().loc[variable].values
-                    p_val = result.pvalues[variable]
-                    if any(var_name == var.split('_')[0] for var in result.params.index):
-                        var_split = variable.split("_")
-                        subcategory = " ".join(var_split[1:])
-                    else:
-                        subcategory = "Continuous Variable"
-
-                    new_row = pd.DataFrame(
-                        {
-                            "MainCategory": var_name.replace("_", " "),
-                            "Subcategory": subcategory.replace("_", " ").strip(),
-                            "OR": np.exp(coef),
-                            "Lower": np.exp(conf[0]),
-                            "Upper": np.exp(conf[1]),
-                            "p": p_val,
-                        },
-                        index=[0],
-                    )
-                    pooled_results = pd.concat(
-                        [pooled_results, new_row], ignore_index=True
-                    )
-                    print(f"\t\t\tPooled results updated with {variable}.")
-        return pooled_results
 
     def visualize_statistical_test(
         self,
@@ -1606,6 +983,427 @@ class TumorAnalysis:
             )
             plt.savefig(heat_map_file)
             plt.close()
+
+    def univariate_analysis(
+        self, variable, outcome_var, pooled_results, cat_vars, num_vars, pat_con_vars
+    ):
+        """
+        Perform univariate logistic regression analysis for a given variable.
+        """
+        X, y = self.prepare_data_for_univariate_analysis(variable, outcome_var, cat_vars)
+
+        if X is not None and not X.empty:
+            try:
+                #calculate_vif(X)
+                result = logistic_regression_analysis(y, X)
+                #print(result.summary2())
+                pooled_results = self.pool_results(result, variable, pooled_results, cat_vars, num_vars)
+                print(f"\t\t\tModel fitted successfully with {variable}.")
+            except ExceptionGroup as e:
+                print(f"\t\tError fitting model with {variable}: {e}")
+        else:
+            print(f"\t\tNo data available for {variable}.")
+
+        return pooled_results
+
+    def prepare_data_for_univariate_analysis(self, variable, outcome_var, cat_vars):
+        """
+        Prepare the data for univariate logistic regression analysis.
+        This function handles patient-constant and time-varying variables differently.
+        """
+        # Handling patient-constant variables
+        if variable == "Age Group":
+            data_agg = self.merged_data[[variable, outcome_var]].dropna()
+        
+        else: 
+            data_agg = (
+                self.merged_data.groupby("Patient_ID")
+                .agg({variable: "first", outcome_var: "first"})
+                .reset_index()
+            )
+
+        # For categorical variables, convert them to dummy variables
+        if variable in cat_vars:
+            reference_category = data_agg[variable].mode()[0]
+            ref_count = (data_agg[variable] == reference_category).sum()
+            print("\t\t\tReference category: ", reference_category)
+            self.reference_categories[variable] = (reference_category, ref_count)
+            data_agg[variable] = data_agg[variable].astype(str)
+            dummies = pd.get_dummies(data_agg[variable], prefix=variable, drop_first=False)
+            if f"{variable}_{reference_category}" in dummies.columns:
+                dummies.drop(columns=[f"{variable}_{reference_category}"], inplace=True)
+            data_agg = pd.concat([data_agg.drop(columns=[variable]), dummies], axis=1)
+            for col in dummies.columns:
+                data_agg[col] = data_agg[col].astype(int)         
+        else:
+            data_agg[variable] = pd.to_numeric(data_agg[variable], errors='coerce')
+            if (data_agg[variable] <= 0).any():
+                # Handle zeros or negative values if necessary, e.g., by adding a small constant
+                data_agg[variable] += 1
+            # Apply log transformation
+            data_agg[variable] = np.log(data_agg[variable])
+        
+        # Ensure outcome_var is binary numeric, reduce to relevant columns, check for missing values
+        data_agg[outcome_var] = (
+            pd.to_numeric(data_agg[outcome_var], errors="coerce").fillna(0).astype(int)
+        )
+        # relevant_columns = [
+        #     col
+        #     for col in data_agg.columns
+        #     if col == outcome_var or col.startswith(variable + "_") or col == "const"
+        # ]
+        # data_agg = data_agg[relevant_columns].dropna()
+        
+        # drop patient ID and assign constant for regression
+        data_agg = data_agg.drop(columns=["Patient_ID"], errors="ignore")
+        data_agg.dropna(inplace=True)
+        if "const" not in data_agg.columns:
+            data_agg = sm.add_constant(data_agg)
+
+        if data_agg.empty:
+            print(f"\t\tWarning: No data available for {variable}.")
+            return None, None
+        else:
+            y = data_agg[outcome_var]
+            X = data_agg.drop(columns=[outcome_var], errors="ignore")
+            return X, y
+
+    def plot_forest_plot(self, pooled_results, output_dir):
+        """
+        Create a forest plot from the pooled results of univariate analyses.
+
+        Args:
+            pooled_results: DataFrame with columns 'Variable', 'OR', 'Lower', 'Upper', and 'p'.
+            output_file: File path to save the forest plot image.
+        """
+        expected_columns = {"MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"}
+        if not expected_columns.issubset(pooled_results.columns):
+            missing_cols = expected_columns - set(pooled_results.columns)
+            raise ValueError(
+                f"The DataFrame is missing the following required columns: {missing_cols}"
+            )
+
+        # Exclude 'Reference' entries from calculations
+        reference_mask = pooled_results['Subcategory'].str.contains("Reference")
+        references = pooled_results[reference_mask]
+        filtered_results = pooled_results[~reference_mask]
+        
+        # sort pooled results alphabetically, then clear out non-positive and infinite values
+        filtered_results = filtered_results[
+            (filtered_results["OR"] > 0)
+            & (filtered_results["Lower"] > 0)
+            & (filtered_results["Upper"] > 0)
+        ]
+
+        filtered_results.replace([np.inf, -np.inf], np.nan, inplace=True)
+        filtered_results.dropna(subset=["OR", "Lower", "Upper", "p"], inplace=True)
+        
+        if not filtered_results.empty:
+            max_hr = np.percentile(filtered_results["Upper"], 90)
+            filtered_results = filtered_results[filtered_results["Upper"] <= max_hr]
+
+        # Include 'Reference' entries for plotting without affecting calculations
+        final_results = pd.concat([filtered_results, references], ignore_index=True)
+        final_results.sort_values(by=["MainCategory", "Subcategory"], ascending=[False, False], inplace=True)
+        final_results.reset_index(drop=True, inplace=True)
+        
+        # General plot settings + x parameters
+        fig, ax = plt.subplots(figsize=(10, 8))
+        plt.subplots_adjust(left=0.3, right=0.7)
+        ax.set_xscale("log")
+        ax.set_xlim(left=0.01, right=100)
+        ax.set_xlabel("Odd Ratios")
+        ax.axvline(x=1, linestyle="--", color="blue", lw=1)
+
+        # Categories handling and colors
+        unique_main_categories = final_results["MainCategory"].unique()
+        colormap = plt.get_cmap("tab20")
+        colors = [colormap(i) for i in range(len(unique_main_categories))]
+        category_colors = {
+            cat: color for cat, color in zip(unique_main_categories, colors)
+        }
+        
+        # annotations on the right
+        ax.margins(
+            x=1
+        )  
+        fig.canvas.draw()  # Need to draw the canvas to update axes positions
+
+        # Get the bounds of the axes in figure space
+        ax_bounds = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+
+        # Calculate the figure and axes widths in inches
+        fig_width_inches = fig.get_size_inches()[0]
+        axes_width_inches = ax_bounds.width
+        annotation_x_position = ax_bounds.x1 + 0.01 * fig_width_inches
+        
+        # Annotations on the left
+        copy_df = self.merged_data.copy()
+        unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
+        y_labels = []
+        for i, row in enumerate(final_results.itertuples()):
+            main_category = row.MainCategory
+            subcategory = row.Subcategory
+            if "(Reference)" in subcategory:
+                _ , count = self.reference_categories.get(main_category, (None, 0))
+            else:
+                count = unique_pat[main_category].value_counts().get(subcategory, 0)
+            label = f"{main_category} - {subcategory} - {count}"
+            y_labels.append(label)
+            
+            # plotting
+            if "(Reference)" not in subcategory:
+                ax.errorbar(
+                    row.OR,
+                    i,
+                    xerr=[[row.OR - row.Lower], [row.Upper - row.OR]],
+                    fmt='o',
+                    color=category_colors[main_category],
+                    ecolor=category_colors[main_category],
+                    elinewidth=1,
+                    capsize=3,
+                )
+                ax.text(
+                    annotation_x_position + (40 * axes_width_inches),
+                    i,
+                    f"{row.OR:.2f}",
+                    ha="left",
+                    va="center",
+                    fontsize=8,
+                    transform=ax.transData,
+                )
+                ax.text(
+                    annotation_x_position + (100 * axes_width_inches),
+                    i,
+                    f"({row.Lower:.2f}-{row.Upper:.2f})",
+                    ha="left",
+                    va="center",
+                    fontsize=8,
+                    transform=ax.transData,
+                )
+                ax.text(
+                    annotation_x_position + (600 * axes_width_inches),
+                    i,
+                    f"{row.p:.3f}",
+                    ha="left",
+                    va="center",
+                    fontsize=8,
+                    transform=ax.transData,
+                )
+            else:
+                ax.errorbar(
+                    1.0,
+                    i,
+                    fmt='^',
+                    color=category_colors[main_category],
+                    capsize=3,
+                )
+                ax.text(
+                    annotation_x_position + (40 * axes_width_inches),
+                    i,
+                    "Reference",
+                    ha="left",
+                    va="center",
+                    fontsize=8,
+                    transform=ax.transData,
+                )        
+        ax.set_yticks(range(len(y_labels)))
+        ax.set_yticklabels(y_labels, ha='right')
+        
+        # titles on the plot
+        ax.text(
+            -0.35,
+            1.01,
+            "Variables and \n Subgroups",
+            ha="right",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+            transform=ax.transAxes,
+        )
+        ax.text(
+            -0.2,
+            1.01,
+            "Count (n)",
+            ha="left",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+            transform=ax.transAxes,
+        )
+        ax.text(
+            1.05,
+            1.01,
+            "OR",
+            ha="left",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+            transform=ax.transAxes,
+        )
+        ax.text(
+            1.15,
+            1.01,
+            "95% CI",
+            ha="left",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+            transform=ax.transAxes,
+        )
+        ax.text(
+            1.35,
+            1.01,
+            "P-val",
+            ha="left",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+            transform=ax.transAxes,
+        )
+
+        # Add title, grid, and layout
+        ax.set_title("Univariate Analysis Forest Plot")
+        plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
+        plt.tight_layout(rect=[0, 0, 1, 0])
+
+        output_file = os.path.join(output_dir, "forest_plot.png")
+        plt.savefig(output_file)
+        plt.close()
+
+    def pool_results(self, result, var_name, pooled_results, cat_vars, num_vars):
+        """
+        Pool the results of univariate analysis to create a forest plot.
+
+        Args:
+            result: Result object from univariate analysis.
+            pooled_results: DataFrame to store pooled results.
+        """
+        if result is None:
+            raise ValueError("No result object provided for pooling.")
+
+        if not isinstance(pooled_results, pd.DataFrame) or pooled_results is None:
+            pooled_results = pd.DataFrame(
+                columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]
+            )
+
+        if var_name in cat_vars:
+            reference_category = self.reference_categories.get(var_name, None)
+            if reference_category is None:
+                raise ValueError(f"No reference category set for {var_name}")
+            ref_row = pd.DataFrame(
+                {
+                    "MainCategory": var_name,
+                    "Subcategory": f"{reference_category} (Reference)",
+                    "OR": 1.0,
+                    "Lower": np.nan,
+                    "Upper": np.nan,
+                    "p": np.nan,
+                }, index=[0]
+            )
+            pooled_results = pd.concat([pooled_results, ref_row], ignore_index=True)
+        
+        for variable in result.params.index:
+            if variable != "const":
+                if any(var_name == var.split('_')[0] for var in result.params.index):
+                    var_split = variable.split("_")
+                    subcategory = " ".join(var_split[1:])
+                else:
+                    subcategory = "Continuous Variable"
+        
+                coef = result.params[variable]
+                conf = result.conf_int().loc[variable].values
+                p_val = result.pvalues[variable]
+
+                new_row = pd.DataFrame(
+                    {
+                        "MainCategory": var_name.replace("_", " "),
+                        "Subcategory": subcategory.replace("_", " ").strip(),
+                        "OR": np.exp(coef),
+                        "Lower": np.exp(conf[0]),
+                        "Upper": np.exp(conf[1]),
+                        "p": p_val,
+                    },
+                    index=[0],
+            )
+                pooled_results = pd.concat(
+                    [pooled_results, new_row], ignore_index=True
+                )
+                print(f"\t\t\tPooled results updated with {variable}.")                   
+        
+        return pooled_results
+
+    def prepare_data_for_mixed_model(self, variables, outcome_var, group_var):
+        """
+        Prepare the data for mixed-effects modeling.
+
+        Args:
+            variables (list): List of variable names to include as predictors.
+            outcome_var (str): The name of the outcome variable.
+            group_var (str): The name of the grouping variable, typically subject ID.
+
+        Returns:
+            pd.DataFrame: A DataFrame ready for mixed-effects modeling.
+        """
+        # Filter out necessary columns and drop rows where any of these are NaN
+        data = self.merged_data[variables + [outcome_var, group_var]].dropna()
+
+        # Optionally, implement more sophisticated imputation if necessary
+        # Here's a simple imputation example replacing NaNs with the median of the column
+        for var in variables:
+            if data[var].isna().any():
+                median_value = data[var].median()
+                data[var].fillna(median_value, inplace=True)
+
+        # Check and ensure no NaN values are present in the outcome or group variables
+        if data[outcome_var].isna().any() or data[group_var].isna().any():
+            raise ValueError("Outcome or grouping variable cannot contain NaN values after preparation.")
+
+        # Returning the cleaned DataFrame
+        return data
+
+    def run_mixed_effects_model(self):
+        """
+        Run mixed-effects logistic regression on longitudinal variables.
+        """
+        formula = 'Outcome ~ Age + Volume + Volume_Change + Volume_Change_Rate + Days_Between_Scans + Follow_Up_Time + (1 | Patient_ID)'
+        model = smf.mixedlm(formula, data=self.merged_data, groups=self.merged_data['Patient_ID'], re_formula="~Age + Volume + Follow_Up_Time")
+        result = model.fit()
+        print(result.summary())
+        return result
+
+    def visualize_mixed_model_effects(self, model_result, variable, output_dir):
+        """
+        Visualize the distribution of the variable, fixed effects, and random effects.
+        """
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
+
+        # Distribution of the variable
+        sns.histplot(self.merged_data[variable], kde=True, ax=ax1, color="gray")
+        ax1.set_title(f'Distribution of {variable}')
+        ax1.set_ylabel('Density')
+
+        # Fixed effects (coefficients and CIs)
+        coef = model_result.fe_params.get(variable, None)
+        if coef:
+            conf = model_result.conf_int().loc[variable]
+            ax2.errorbar(x=[coef], y=[0], xerr=np.array([[coef - conf[0], conf[1] - coef]]).T, fmt='o', color='blue', label='Fixed Effect')
+            ax2.set_title('Fixed Effect Coefficient')
+            ax2.set_ylabel('Coefficient')
+
+        # Random effects plot
+        if hasattr(model_result, 'random_effects'):
+            re = model_result.random_effects
+            random_effects = [re[sub][variable] for sub in re if variable in re[sub]]
+            ax3.scatter(random_effects, np.arange(len(random_effects)), color='green', alpha=0.5)
+            ax3.set_title('Random Effects Distribution')
+            ax3.set_xlabel(variable)
+            ax3.set_ylabel('Subject Index')
+
+        plt.tight_layout()
+        file_name = f"{variable}_effect_size_distribution.png"
+        plt.savefig(os.path.join(output_dir, file_name))
+        plt.close()
 
     #####################################
     # CURVE PLOTTING AND TREND ANALYSIS #
@@ -2108,10 +1906,6 @@ class TumorAnalysis:
                 "Volume",
                 "Volume Change",
             ]
-            post_treatment_vars = [
-                "Volume",
-                "Volume Change",
-            ]
 
             for pre_var in pre_treatment_vars:
                 print(
@@ -2120,16 +1914,6 @@ class TumorAnalysis:
                 self.merged_data = sensitivity_analysis(
                     self.merged_data,
                     pre_var,
-                    z_threshold=correlation_cfg.SENSITIVITY_THRESHOLD,
-                )
-
-            for post_var in post_treatment_vars:
-                print(
-                    f"\tPerforming sensitivity analysis on post-treatment variables {post_var}..."
-                )
-                self.post_treatment_data = sensitivity_analysis(
-                    self.post_treatment_data,
-                    post_var,
                     z_threshold=correlation_cfg.SENSITIVITY_THRESHOLD,
                 )
 
@@ -2163,6 +1947,7 @@ class TumorAnalysis:
 
             if self.merged_data.isnull().values.any():
                 self.merged_data.replace(np.nan, np.inf, inplace=True)
+            
             # Survival analysis
             # stratify_by_list = [
             #     "Location",
