@@ -42,7 +42,7 @@ from utils.helper_functions import (
     kruskal_wallis_test,
     fisher_exact_test,
     logistic_regression_analysis,
-    calculate_vif,
+    # calculate_vif,
 )
 
 
@@ -766,8 +766,6 @@ class TumorAnalysis:
                 outcome_var,
                 pooled_results,
                 categorical_vars,
-                numerical_vars,
-                patient_constant_vars
             )
         self.plot_forest_plot(pooled_results, output_dir)
 
@@ -985,7 +983,7 @@ class TumorAnalysis:
             plt.close()
 
     def univariate_analysis(
-        self, variable, outcome_var, pooled_results, cat_vars, num_vars, pat_con_vars
+        self, variable, outcome_var, pooled_results, cat_vars
     ):
         """
         Perform univariate logistic regression analysis for a given variable.
@@ -997,7 +995,7 @@ class TumorAnalysis:
                 #calculate_vif(X)
                 result = logistic_regression_analysis(y, X)
                 #print(result.summary2())
-                pooled_results = self.pool_results(result, variable, pooled_results, cat_vars, num_vars)
+                pooled_results = self.pool_results(result, variable, pooled_results, cat_vars)
                 print(f"\t\t\tModel fitted successfully with {variable}.")
             except ExceptionGroup as e:
                 print(f"\t\tError fitting model with {variable}: {e}")
@@ -1082,7 +1080,6 @@ class TumorAnalysis:
             raise ValueError(
                 f"The DataFrame is missing the following required columns: {missing_cols}"
             )
-
         # Exclude 'Reference' entries from calculations
         reference_mask = pooled_results['Subcategory'].str.contains("Reference")
         references = pooled_results[reference_mask]
@@ -1094,12 +1091,10 @@ class TumorAnalysis:
             & (filtered_results["Lower"] > 0)
             & (filtered_results["Upper"] > 0)
         ]
-
         filtered_results.replace([np.inf, -np.inf], np.nan, inplace=True)
         filtered_results.dropna(subset=["OR", "Lower", "Upper", "p"], inplace=True)
-        
         if not filtered_results.empty:
-            max_hr = np.percentile(filtered_results["Upper"], 90)
+            max_hr = np.percentile(filtered_results["Upper"], 99) # remove outliers
             filtered_results = filtered_results[filtered_results["Upper"] <= max_hr]
 
         # Include 'Reference' entries for plotting without affecting calculations
@@ -1271,7 +1266,7 @@ class TumorAnalysis:
         plt.savefig(output_file)
         plt.close()
 
-    def pool_results(self, result, var_name, pooled_results, cat_vars, num_vars):
+    def pool_results(self, result, var_name, pooled_results, cat_vars):
         """
         Pool the results of univariate analysis to create a forest plot.
 
@@ -1376,7 +1371,7 @@ class TumorAnalysis:
         """
         Visualize the distribution of the variable, fixed effects, and random effects.
         """
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
+        _, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
 
         # Distribution of the variable
         sns.histplot(self.merged_data[variable], kde=True, ax=ax1, color="gray")
@@ -1693,6 +1688,7 @@ class TumorAnalysis:
             # Patient Classification, Treatment Type
             copy_df = self.merged_data.copy()
             unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
+            counts_braf = unique_pat["BRAF Status"].value_counts()
             counts_sex = unique_pat["Sex"].value_counts()
             counts_received_treatment = unique_pat["Received Treatment"].value_counts()
             counts_symptoms = unique_pat["Symptoms"].value_counts()
@@ -1710,6 +1706,7 @@ class TumorAnalysis:
             write_stat(f"\t\tSex: {counts_sex}")
             write_stat(f"\t\tPatient Classification: {counts_patient_classification}")
             write_stat(f"\t\tTreatment Type: {counts_treatment_type}")
+            write_stat(f"\t\tBRAF Status: {counts_braf}")
 
             # Volume Change
             filtered_data = self.merged_data[self.merged_data["Volume Change"] != 0]
@@ -1921,7 +1918,6 @@ class TumorAnalysis:
 
         if correlation_cfg.PROPENSITY:
             print(f"Step {step_idx}: Performing Propensity Score Matching...")
-            print(self.merged_data.dtypes)
             for data in [self.merged_data]:
                 treatment_column = "Received Treatment"
                 covariate_columns = ["Normalized Volume", "Volume Change"]
