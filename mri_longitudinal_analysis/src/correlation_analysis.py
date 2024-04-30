@@ -88,7 +88,6 @@ class TumorAnalysis:
             self.load_clinical_data_cbtn(clinical_data_path, patient_ids_volumes)
         self.merge_data()
         self.aggregate_summary_statistics()
-        print(self.merged_data.dtypes)
 
     def validate_files(self, clinical_data_path, volumes_data_paths):
         """
@@ -395,9 +394,11 @@ class TumorAnalysis:
         self.volumes_data = self.volumes_data.rename(
             columns={
                 "Volume Growth[%]": "Volume Change",
-                "Volume Growth[%] Rate": "Volume Change Rate",
                 "Volume Growth[%] Avg": "Volume Change Avg",
                 "Volume Growth[%] Std": "Volume Change Std",
+                "Volume Growth[%] Rate": "Volume Change Rate",
+                "Volume Growth[%] Rate Avg": "Volume Change Rate Avg",
+                "Volume Growth[%] Rate Std": "Volume Change Rate Std",
             }
         )
 
@@ -735,7 +736,9 @@ class TumorAnalysis:
         #                 output_dir,
         #             )
 
-        # Univariate analysis, logistic regression and forest plot 
+        ####################################################################
+        ##### Univariate analysis, logistic regression and forest plot #####
+        ####################################################################
         patient_constant_vars = [
             "Location",
             "Symptoms",
@@ -768,6 +771,24 @@ class TumorAnalysis:
                 categorical_vars,
             )
         self.plot_forest_plot(pooled_results, output_dir)
+        
+        #############################################
+        ##### Mixed effects logistic regression #####
+        #############################################
+        longitudinal_vars = [
+            "Age",
+            "Volume",
+            "Volume Change",
+            "Volume Change Rate",
+            "Follow-Up Time",
+        ]
+        grouping_var = "Patient_ID"
+        #data = self.prepare_data_for_mixed_model(longitudinal_vars, outcome_var, grouping_var)
+        #result = self.run_mixed_effects_model(data, grouping_var)
+        #for var in longitudinal_vars:
+        #    self.visualize_mixed_model_effects(result, var, output_dir)
+
+
 
     def analyze_correlation(
         self, x_val, y_val, data, prefix, output_dir, method="spearman"
@@ -1354,15 +1375,31 @@ class TumorAnalysis:
         if data[outcome_var].isna().any() or data[group_var].isna().any():
             raise ValueError("Outcome or grouping variable cannot contain NaN values after preparation.")
 
+        print(data.dtypes)
+        #data['Patient_ID'] = data['Patient_ID'].astype('category')
+        data = data.rename(
+            columns={
+                "Volume Change": "Volume_Change",
+                "Volume Change Rate": "Volume_Change_Rate",
+                "Days Between Scans": "Days_Between_Scans",
+                "Follow-Up Time": "Follow_Up_Time",
+                "Patient Classification Binary": "Patient_Classification_Binary",
+        })
+        data['Age_scaled'] = (data['Age'] - data['Age'].mean()) / data['Age'].std()
+        data['Volume_scaled'] = (data['Volume'] - data['Volume'].mean()) / data['Volume'].std()
+        data['Volume_Change_scaled'] = (data['Volume_Change'] - data['Volume_Change'].mean()) / data['Volume_Change'].std()
+        data['Volume_Change_Rate_scaled'] = (data['Volume_Change_Rate'] - data['Volume_Change_Rate'].mean()) / data['Volume_Change_Rate'].std()
+        
         # Returning the cleaned DataFrame
         return data
 
-    def run_mixed_effects_model(self):
+    def run_mixed_effects_model(self, data, grouping_var):
         """
         Run mixed-effects logistic regression on longitudinal variables.
         """
-        formula = 'Outcome ~ Age + Volume + Volume_Change + Volume_Change_Rate + Days_Between_Scans + Follow_Up_Time + (1 | Patient_ID)'
-        model = smf.mixedlm(formula, data=self.merged_data, groups=self.merged_data['Patient_ID'], re_formula="~Age + Volume + Follow_Up_Time")
+        #formula = 'Patient_Classification_Binary ~ Age + Volume + Volume_Change + Volume_Change_Rate + Days_Between_Scans + Follow_Up_Time + (1 | Patient_ID)'        
+        formula = 'Patient_Classification_Binary ~ Age + Volume + Volume_Change + Volume_Change_Rate'        
+        model = smf.mixedlm(formula, data=data, groups=data[grouping_var], re_formula="~Age + Volume + Volume_Change + Volume_Change_Rate")
         result = model.fit()
         print(result.summary())
         return result
