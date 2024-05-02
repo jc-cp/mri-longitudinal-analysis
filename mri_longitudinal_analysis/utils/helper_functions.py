@@ -8,6 +8,7 @@ from scipy.optimize import curve_fit
 from scipy.stats import norm, zscore, pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr, kruskal, fisher_exact
 from statsmodels.stats.multitest import multipletests
 import statsmodels.api as sm
+import statsmodels.formula.api as smf
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression, LinearRegression
@@ -488,12 +489,45 @@ def fisher_exact_test(data, x_val, y_val):
         return None, None
 
 
-def logistic_regression_analysis(y, x):
+def logistic_regression_analysis(y, x, regularization=None, C=1.0):
     """
     Perform logistic regression to analyze the impact of various factors on tumor progression.
     """
-    model_result = sm.Logit(y, x).fit(disp=0, maxiter=100, method='lbfgs')
+    if regularization == 'l1':
+        model_result = sm.Logit(y,x).fit_regularized(method='l1', alpha=1/C, disp=0, maxiter=100)
+    else:
+        model_result = sm.Logit(y, x).fit(disp=0, maxiter=100, method='lbfgs')
     return model_result
+
+
+def stepwise_selection(y, x):
+    """
+    Perform stepwise variable selection for logistic regression.
+    """
+    full_model = sm.Logit(y, x).fit(disp=0, maxiter=100, method='lbfgs')
+    
+    # Perform forward stepwise selection
+    selected_model = sm.Logit(y, np.ones((len(y), 1))).fit(disp=0, maxiter=100, method='lbfgs')
+    remaining_vars = set(x.columns)
+    
+    while len(remaining_vars) > 0:
+        best_score = np.inf
+        best_var = None
+        
+        for var in remaining_vars:
+            candidate_model = sm.Logit(y, sm.add_constant(x[[var]])).fit(disp=0, maxiter=100, method='lbfgs')
+            score = candidate_model.aic
+            if score < best_score:
+                best_score = score
+                best_var = var
+        
+        if best_var is not None:
+            selected_model = sm.Logit(y, sm.add_constant(x[selected_model.params.index.tolist() + [best_var]])).fit(disp=0, maxiter=100, method='lbfgs')
+            remaining_vars.remove(best_var)
+        else:
+            break
+    
+    return selected_model
 
 
 def calculate_vif(X):

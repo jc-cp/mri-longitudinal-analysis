@@ -42,6 +42,7 @@ from utils.helper_functions import (
     kruskal_wallis_test,
     fisher_exact_test,
     logistic_regression_analysis,
+    stepwise_selection,
     # calculate_vif,
 )
 
@@ -758,19 +759,27 @@ class TumorAnalysis:
             "Days Between Scans Median",
             "Age Group",
         ]
-
-        pooled_results = pd.DataFrame(
+        pooled_results_uni = pooled_results_multi = pd.DataFrame(
             columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]
         )
+        print("\t\tUnivariate Analysis:")
         for variable in patient_constant_vars:
             print(f"\t\tAnalyzing {variable}...")
-            pooled_results = self.univariate_analysis(
+            pooled_results_uni = self.univariate_analysis(
                 variable,
                 outcome_var,
-                pooled_results,
+                pooled_results_uni,
                 categorical_vars,
             )
-        self.plot_forest_plot(pooled_results, output_dir)
+        self.plot_forest_plot(pooled_results_uni, output_dir, categorical_vars)
+        print("\t\tUnivariate Analysis done! Forest Plot saved.")
+
+        #############################################
+        ##### Multi-variate logistic regression #####
+        #############################################
+        print("\t\tMultivariate Analysis:")
+        pooled_results_multi = self.multivariate_analysis(patient_constant_vars, outcome_var, pooled_results_multi, categorical_vars)
+        self.plot_forest_plot(pooled_results_multi, output_dir, categorical_vars, analysis_type="Multivariate")
         
         #############################################
         ##### Mixed effects logistic regression #####
@@ -787,8 +796,6 @@ class TumorAnalysis:
         #result = self.run_mixed_effects_model(data, grouping_var)
         #for var in longitudinal_vars:
         #    self.visualize_mixed_model_effects(result, var, output_dir)
-
-
 
     def analyze_correlation(
         self, x_val, y_val, data, prefix, output_dir, method="spearman"
@@ -1004,74 +1011,76 @@ class TumorAnalysis:
             plt.close()
 
     def univariate_analysis(
-        self, variable, outcome_var, pooled_results, cat_vars
+        self, variable, outcome_var, pooled_results_uni, cat_vars
     ):
         """
         Perform univariate logistic regression analysis for a given variable.
         """
-        X, y = self.prepare_data_for_univariate_analysis(variable, outcome_var, cat_vars)
+        X, y = self.prepare_data_for_analysis(variable, outcome_var, cat_vars)
 
         if X is not None and not X.empty:
             try:
                 #calculate_vif(X)
                 result = logistic_regression_analysis(y, X)
                 #print(result.summary2())
-                pooled_results = self.pool_results(result, variable, pooled_results, cat_vars)
+                pooled_results_uni = self.pool_results(result, variable, pooled_results_uni, cat_vars)
                 print(f"\t\t\tModel fitted successfully with {variable}.")
             except ExceptionGroup as e:
                 print(f"\t\tError fitting model with {variable}: {e}")
         else:
             print(f"\t\tNo data available for {variable}.")
 
-        return pooled_results
+        return pooled_results_uni
 
-    def prepare_data_for_univariate_analysis(self, variable, outcome_var, cat_vars):
+    def prepare_data_for_analysis(self, variables, outcome_var, cat_vars):
         """
         Prepare the data for univariate logistic regression analysis.
         This function handles patient-constant and time-varying variables differently.
         """
-        # Handling patient-constant variables
-        if variable == "Age Group":
-            data_agg = self.merged_data[[variable, outcome_var]].dropna()
+        if isinstance(variables, str):  # For univariate case where a single variable string is passed
+            variables = [variables]
         
-        else: 
-            data_agg = (
-                self.merged_data.groupby("Patient_ID")
-                .agg({variable: "first", outcome_var: "first"})
-                .reset_index()
+        if len(variables) == 1:
+            # Univariate case
+            variable = variables[0]
+            if variable == "Age Group":
+                data_agg = self.merged_data[[variable, outcome_var]].dropna()
+            else:
+                data_agg = (
+                    self.merged_data.groupby("Patient_ID")
+                    .agg({variable: "first", outcome_var: "first"})
+                    .reset_index()
             )
-
-        # For categorical variables, convert them to dummy variables
-        if variable in cat_vars:
-            reference_category = data_agg[variable].mode()[0]
-            ref_count = (data_agg[variable] == reference_category).sum()
-            print("\t\t\tReference category: ", reference_category)
-            self.reference_categories[variable] = (reference_category, ref_count)
-            data_agg[variable] = data_agg[variable].astype(str)
-            dummies = pd.get_dummies(data_agg[variable], prefix=variable, drop_first=False)
-            if f"{variable}_{reference_category}" in dummies.columns:
-                dummies.drop(columns=[f"{variable}_{reference_category}"], inplace=True)
-            data_agg = pd.concat([data_agg.drop(columns=[variable]), dummies], axis=1)
-            for col in dummies.columns:
-                data_agg[col] = data_agg[col].astype(int)         
         else:
-            data_agg[variable] = pd.to_numeric(data_agg[variable], errors='coerce')
-            if (data_agg[variable] <= 0).any():
-                # Handle zeros or negative values if necessary, e.g., by adding a small constant
-                data_agg[variable] += 1
-            # Apply log transformation
-            data_agg[variable] = np.log(data_agg[variable])
+            # Multivariate case
+            data_agg = self.merged_data[["Patient_ID"] + variables + [outcome_var]].copy()
+        
+        for variable in variables:
+            # For categorical variables, convert them to dummy variables
+            if variable in cat_vars:
+                reference_category = data_agg[variable].mode()[0]
+                ref_count = (data_agg[variable] == reference_category).sum()
+                print("\t\t\tReference category: ", reference_category)
+                self.reference_categories[variable] = (reference_category, ref_count)
+                data_agg[variable] = data_agg[variable].astype(str)
+                dummies = pd.get_dummies(data_agg[variable], prefix=variable, drop_first=False)
+                if f"{variable}_{reference_category}" in dummies.columns:
+                    dummies.drop(columns=[f"{variable}_{reference_category}"], inplace=True)
+                data_agg = pd.concat([data_agg.drop(columns=[variable]), dummies], axis=1)
+                for col in dummies.columns:
+                    data_agg[col] = data_agg[col].astype(int)         
+            else:
+                data_agg[variable] = pd.to_numeric(data_agg[variable], errors='coerce')
+                if (data_agg[variable] <= 0).any():
+                    # Handle zeros or negative values if necessary, e.g., by adding a small constant
+                    data_agg[variable] += 1
+                # Apply log transformation
+                data_agg[variable] = np.log(data_agg[variable])
         
         # Ensure outcome_var is binary numeric, reduce to relevant columns, check for missing values
         data_agg[outcome_var] = (
             pd.to_numeric(data_agg[outcome_var], errors="coerce").fillna(0).astype(int)
         )
-        # relevant_columns = [
-        #     col
-        #     for col in data_agg.columns
-        #     if col == outcome_var or col.startswith(variable + "_") or col == "const"
-        # ]
-        # data_agg = data_agg[relevant_columns].dropna()
         
         # drop patient ID and assign constant for regression
         data_agg = data_agg.drop(columns=["Patient_ID"], errors="ignore")
@@ -1080,14 +1089,14 @@ class TumorAnalysis:
             data_agg = sm.add_constant(data_agg)
 
         if data_agg.empty:
-            print(f"\t\tWarning: No data available for {variable}.")
+            print("\t\tWarning: No data available. Recheck code and data structure.")
             return None, None
         else:
             y = data_agg[outcome_var]
             X = data_agg.drop(columns=[outcome_var], errors="ignore")
             return X, y
 
-    def plot_forest_plot(self, pooled_results, output_dir):
+    def plot_forest_plot(self, pooled_results, output_dir, cat_vars, analysis_type="Univariate"):
         """
         Create a forest plot from the pooled results of univariate analyses.
 
@@ -1095,6 +1104,7 @@ class TumorAnalysis:
             pooled_results: DataFrame with columns 'Variable', 'OR', 'Lower', 'Upper', and 'p'.
             output_file: File path to save the forest plot image.
         """
+        print(pooled_results)
         expected_columns = {"MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"}
         if not expected_columns.issubset(pooled_results.columns):
             missing_cols = expected_columns - set(pooled_results.columns)
@@ -1128,7 +1138,7 @@ class TumorAnalysis:
         plt.subplots_adjust(left=0.3, right=0.7)
         ax.set_xscale("log")
         ax.set_xlim(left=0.01, right=100)
-        ax.set_xlabel("Odd Ratios")
+        ax.set_xlabel("<-- Lower TPL | Higher TPL -->")
         ax.axvline(x=1, linestyle="--", color="blue", lw=1)
 
         # Categories handling and colors
@@ -1163,7 +1173,10 @@ class TumorAnalysis:
             if "(Reference)" in subcategory:
                 _ , count = self.reference_categories.get(main_category, (None, 0))
             else:
-                count = unique_pat[main_category].value_counts().get(subcategory, 0)
+                if main_category in cat_vars:
+                    count = unique_pat[main_category].value_counts().get(subcategory, 0)
+                else:
+                    count = len(unique_pat)
             label = f"{main_category} - {subcategory} - {count}"
             y_labels.append(label)
             
@@ -1279,15 +1292,15 @@ class TumorAnalysis:
         )
 
         # Add title, grid, and layout
-        ax.set_title("Univariate Analysis Forest Plot")
+        ax.set_title(f"{analysis_type} Analysis Forest Plot")
         plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
         plt.tight_layout(rect=[0, 0, 1, 0])
 
-        output_file = os.path.join(output_dir, "forest_plot.png")
+        output_file = os.path.join(output_dir, f"{analysis_type}_forest_plot.png")
         plt.savefig(output_file)
         plt.close()
 
-    def pool_results(self, result, var_name, pooled_results, cat_vars):
+    def pool_results(self, result, variables, pooled_results, cat_vars):
         """
         Pool the results of univariate analysis to create a forest plot.
 
@@ -1302,39 +1315,41 @@ class TumorAnalysis:
             pooled_results = pd.DataFrame(
                 columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]
             )
-
-        if var_name in cat_vars:
-            reference_category = self.reference_categories.get(var_name, None)
-            if reference_category is None:
-                raise ValueError(f"No reference category set for {var_name}")
-            ref_row = pd.DataFrame(
-                {
-                    "MainCategory": var_name,
-                    "Subcategory": f"{reference_category} (Reference)",
-                    "OR": 1.0,
-                    "Lower": np.nan,
-                    "Upper": np.nan,
-                    "p": np.nan,
-                }, index=[0]
-            )
-            pooled_results = pd.concat([pooled_results, ref_row], ignore_index=True)
         
-        for variable in result.params.index:
-            if variable != "const":
-                if any(var_name == var.split('_')[0] for var in result.params.index):
-                    var_split = variable.split("_")
-                    subcategory = " ".join(var_split[1:])
-                else:
-                    subcategory = "Continuous Variable"
-        
-                coef = result.params[variable]
-                conf = result.conf_int().loc[variable].values
-                p_val = result.pvalues[variable]
+        if not isinstance(variables, list):
+            variables = [variables]
 
+        for variable in variables:
+            if variable in cat_vars:
+                reference_category = self.reference_categories.get(variable, None)
+                if reference_category is None:
+                    raise ValueError(f"No reference category set for {variable}")
+                ref_row = pd.DataFrame(
+                    {
+                        "MainCategory": variable,
+                        "Subcategory": f"{reference_category} (Reference)",
+                        "OR": 1.0,
+                        "Lower": np.nan,
+                        "Upper": np.nan,
+                        "p": np.nan,
+                    }, index=[0]
+                )
+                pooled_results = pd.concat([pooled_results, ref_row], ignore_index=True)
+                            
+        for idx in result.params.index:
+            if idx != "const":
+                parts = idx.split('_')
+                main_category = parts[0]
+                subcategory = " ".join(parts[1:]) if len(parts) > 1 else "Continuous"   
+
+                coef = result.params[idx]
+                conf = result.conf_int().loc[idx].values
+                p_val = result.pvalues[idx]
+                
                 new_row = pd.DataFrame(
                     {
-                        "MainCategory": var_name.replace("_", " "),
-                        "Subcategory": subcategory.replace("_", " ").strip(),
+                        "MainCategory": main_category,
+                        "Subcategory": subcategory,
                         "OR": np.exp(coef),
                         "Lower": np.exp(conf[0]),
                         "Upper": np.exp(conf[1]),
@@ -1345,10 +1360,30 @@ class TumorAnalysis:
                 pooled_results = pd.concat(
                     [pooled_results, new_row], ignore_index=True
                 )
-                print(f"\t\t\tPooled results updated with {variable}.")                   
-        
+                print(f"\t\t\tPooled results updated with {idx}.")                   
+            
         return pooled_results
 
+    def multivariate_analysis(self, variables, outcome_var, pooled_results_multi, cat_vars):
+        """
+        Perform multivariate logistic regression analysis for a given set of variables.
+        """
+        X, y = self.prepare_data_for_analysis(variables, outcome_var, cat_vars)
+
+        if X is not None and not X.empty:
+            try:
+                result = stepwise_selection(y, X)
+                # print(result.summary2())
+                print(f"\t\t\tModel fitted successfully with {variables}.")
+                pooled_results_multi = self.pool_results(result, variables, pooled_results_multi, cat_vars)
+                
+            except ExceptionGroup as e:
+                print(f"\t\tError fitting model with {variables}: {e}")
+        else:
+            print(f"\t\tNo data available for {variables}.")
+        
+        return pooled_results_multi
+        
     def prepare_data_for_mixed_model(self, variables, outcome_var, group_var):
         """
         Prepare the data for mixed-effects modeling.
@@ -1436,7 +1471,7 @@ class TumorAnalysis:
         file_name = f"{variable}_effect_size_distribution.png"
         plt.savefig(os.path.join(output_dir, file_name))
         plt.close()
-
+  
     #####################################
     # CURVE PLOTTING AND TREND ANALYSIS #
     #####################################
