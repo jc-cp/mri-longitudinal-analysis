@@ -724,12 +724,15 @@ class VolumeEstimator:
                     df["Days Between Scans"] = df["Age"].diff()
                     if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
                         df["Date"] = "N/A"
+                        df["Scan_ID"] = df["Age"] # TODO: in joint data will lead to problems
                     else:
                         df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d/%m/%Y")
+                        df["Scan_ID"] = pd.to_datetime(df["Date"], format="%d/%m/%Y").dt.strftime("%Y%m%d")
 
                 # Reordering columns based on data type
                 columns_order = (
                     [
+                        "Scan_ID",
                         "Date",
                         "Age",
                         "Days Between Scans",
@@ -748,6 +751,7 @@ class VolumeEstimator:
                     ]
                     if not volume_est_cfg.TEST_DATA
                     else [
+                        "Scan_ID",
                         "Date",
                         "Volume",
                         "Normalized Volume",
