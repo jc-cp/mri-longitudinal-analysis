@@ -1,24 +1,31 @@
 """Config file for the correlation analysis script."""
 from pathlib import Path
 
+# Cohort definition
+COHORT = "JOINT"    # "BCH" or "CBTN" or "JOINT"
+SAMPLE_SIZE = 99  # BCH: 56, CBTN: 43, JOINT: 99 -> for plotting trajectories, number of cohort
+
 # Directories and files
 CLINICAL_CSV_BCH = Path(
     "/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/bch_filtering_68_.csv"
 )
 CLINICAL_CSV_CBTN = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/input/clinical/cbtn_filtered_pruned_treatment_513.csv")
-CLINICAL_CSV = CLINICAL_CSV_BCH  # Change this according to cohort
+
+VOLUMES_BCH = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/final/pre_treatment/output/time_series/moving_average")
+VOLUMES_CBTN = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/accepted/pre_treatment/output/time_series/moving_average")
+VOLUMES_JOINT = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/final_dataset/output/time_series/moving_average")
 
 
-BCH = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/final/pre_treatment/output/time_series/moving_average")
-CBTN = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/accepted/pre_treatment/output/time_series/moving_average")
-JOINT = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/final_dataset/output/time_series/moving_average")
-VOLUMES_CSV = BCH # Change this according to cohort
+CLINICAL_CSV_PATHS = {
+    "bch": CLINICAL_CSV_BCH,
+    "cbtn": CLINICAL_CSV_CBTN
+}
 
-
-COHORT = "BCH"    # "BCH" or "CBTN" or "JOINT"
-SAMPLE_SIZE = 61  # BCH: 61, CBTN: 43 -> for plotting trajectories, number of cohort
-
-
+VOLUMES_DATA_PATHS = {
+    "bch": VOLUMES_BCH,
+    "cbtn": VOLUMES_CBTN,
+    "joint": VOLUMES_JOINT
+}
 OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output")
 OUTPUT_DIR_CORRELATIONS = OUTPUT_DIR / f"correlation_plots_{COHORT.lower()}"
 OUTPUT_DIR_STATS = OUTPUT_DIR / f"correlation_stats_{COHORT.lower()}"
@@ -89,17 +96,18 @@ BCH_SYMPTOMS = {
 }
 
 CBTN_SYMPTOMS = {
-    "None": "No symptoms (incident finding)",
-    "Unavailable": "No symptoms (incident finding)",
     "headaches": "Headaches",
+    "hydrocephalus": "Headaches",
+    "emesis" : "Headaches",
     "seizure": "Seizures",
     "neurological": "Neurological deficits",
+    "behavior": "Neurological deficits",
     "developmental": "Developmental delay",
+    "endocrinopathy": "Developmental delay",
     "visual": "Visual deficits",
-    "behavior": "Other",
-    "endocrinopathy": "Other",
-    "hydrocephalus": "Other",
     "other": "Other",
+    "None": "No symptoms (incident finding)",
+    "Unavailable": "No symptoms (incident finding)",
 }
 
 BCH_LOCATION = {
@@ -123,7 +131,7 @@ BCH_LOCATION = {
     "stem": "Brainstem",
     "ventricle": "Ventricles",
     "ventricular": "Ventricles",
-    "optic": "Other",
+    "optic": "Meninges / Suprasellar",
     "spinal": "Other",
     "midline": "Other",
     "pineal": "Other",
@@ -141,7 +149,7 @@ CBTN_LOCATION = {
     "Occipital Lobe": "Cortical",
     "Meninges": "Meninges / Suprasellar",
     "Suprasellar": "Meninges / Suprasellar",
-    "Optic": "Other",
+    "Optic": "Meninges / Suprasellar",
     "Spinal": "Other",
     "Other": "Other",
 }

@@ -56,7 +56,7 @@ class TumorAnalysis:
     # DATA LOADING AND PREPROCESSING #
     ##################################
 
-    def __init__(self, clinical_data_path, volumes_data_paths, cohort):
+    def __init__(self, data_paths_, cohort):
         """
         Initialize the TumorAnalysis class.
 
@@ -81,33 +81,41 @@ class TumorAnalysis:
         self.reference_categories = {}
         print("Step 0: Initializing TumorAnalysis class...")
 
-        self.validate_files(clinical_data_path, volumes_data_paths)
-        patient_ids_volumes = self.load_volumes_data(volumes_data_paths)
-        if self.cohort == "BCH":
-            self.load_clinical_data_bch(clinical_data_path, patient_ids_volumes)
+        self.validate_files(data_paths_["clinical_data_paths"], data_paths_["volumes_data_paths"])
+        patient_ids_volumes = self.load_volumes_data(data_paths_["volumes_data_paths"])
+        if self.cohort == "JOINT":
+            self.load_clinical_data(data_paths_["clinical_data_paths"], patient_ids_volumes)
         else:
-            self.load_clinical_data_cbtn(clinical_data_path, patient_ids_volumes)
+            if self.cohort == "BCH":
+                _ = self.load_clinical_data_bch(data_paths_["clinical_data_paths"]["bch"], patient_ids_volumes)
+            elif self.cohort == "CBTN":
+                _ = self.load_clinical_data_cbtn(data_paths_["clinical_data_paths"]["cbtn"], patient_ids_volumes)
         self.merge_data()
         self.aggregate_summary_statistics()
 
-    def validate_files(self, clinical_data_path, volumes_data_paths):
+    def validate_files(self, clinical_data_paths, volumes_data_paths):
         """
         Check if the specified clinical data and volume data files exist.
 
         Parameters:
-        - clinical_data_path (str): Path to the clinical data file.
-        - volumes_data_paths (list): List containing paths to volume data files.
+        - clinical_data_paths (dict): Dictionary containing paths to clinical data files for each cohort.
+        - volumes_data_paths (list): List containing paths to volume data directories for each cohort.
 
         Raises:
         - FileNotFoundError: If any of the files specified do not exist.
 
         Prints a validation message if all files exist.
         """
-        missing_files = [
-            path
-            for path in [clinical_data_path] + volumes_data_paths
-            if not os.path.exists(path)
-        ]
+        missing_files = []
+
+        for _, clinical_data_path in clinical_data_paths.items():
+            if not os.path.exists(clinical_data_path):
+                missing_files.append(clinical_data_path)
+
+        for volumes_data_path in volumes_data_paths:
+            if not os.path.exists(volumes_data_path):
+                missing_files.append(volumes_data_path)
+
         if missing_files:
             raise FileNotFoundError(
                 f"The following files could not be found: {missing_files}"
@@ -188,15 +196,16 @@ class TumorAnalysis:
         self.clinical_data["Age at First Diagnosis"] = (
             self.clinical_data["Date First Diagnosis"]
             - self.clinical_data["Date of Birth"]
-        ).dt.days / 365.25
+        ).dt.days
 
         self.clinical_data["Date of last clinical follow-up"] = pd.to_datetime(
             self.clinical_data["Date of last clinical follow-up"], dayfirst=True
         )
+        
         self.clinical_data["Age at Last Clinical Follow-Up"] = (
             self.clinical_data["Date of last clinical follow-up"]
             - self.clinical_data["Date of Birth"]
-        ).dt.days / 365.25
+        ).dt.days
 
         self.clinical_data["Date First Treatment"] = pd.to_datetime(
             self.clinical_data["First Treatment"], dayfirst=True
@@ -205,7 +214,7 @@ class TumorAnalysis:
         self.clinical_data["Age at First Treatment"] = (
             self.clinical_data["Date First Treatment"]
             - self.clinical_data["Date of Birth"]
-        ).dt.days / 365.25
+        ).dt.days
 
         self.clinical_data["Received Treatment"] = (
             self.clinical_data["Age at First Treatment"]
@@ -220,7 +229,7 @@ class TumorAnalysis:
             - self.clinical_data["Age at First Diagnosis"]
         )
 
-        self.clinical_data["Follow-Up"] = self.clinical_data["Follow-Up"] / 365.25
+        self.clinical_data["Follow-Up"] = self.clinical_data["Follow-Up"]
 
         self.clinical_data["Follow-Up Time"] = np.where(
             self.clinical_data["Follow-Up"].notna(),
@@ -254,6 +263,8 @@ class TumorAnalysis:
         print(f"\tFiltered clinical data has length {len(self.clinical_data_reduced)}.")
 
         print("\tParsed clinical data.")
+        clinical_data_bch = self.clinical_data_reduced
+        return clinical_data_bch
 
     def load_clinical_data_cbtn(self, clinical_data_path, patient_ids_volumes):
         """
@@ -333,8 +344,44 @@ class TumorAnalysis:
         print(
             f"\tFiltered CBTN clinical data has length {len(self.clinical_data_reduced)}."
         )
-
+        
         print("\tParsed CBTN clinical data.")
+        clinical_data_cbtn = self.clinical_data_reduced
+        return clinical_data_cbtn
+
+    def load_clinical_data(self, clinical_data_paths, patient_ids_volumes):
+        """
+        Load and process clinical data from both BCH and CBTN files.
+        """
+        bch_clinical_data = pd.DataFrame()
+        cbtn_clinical_data = pd.DataFrame()
+        if "bch" in clinical_data_paths:
+            bch_clinical_data = self.load_clinical_data_bch(clinical_data_paths["bch"], patient_ids_volumes)
+            bch_clinical_data["Dataset"] = "BCH"
+        if "cbtn" in clinical_data_paths:
+            cbtn_clinical_data = self.load_clinical_data_cbtn(clinical_data_paths["cbtn"], patient_ids_volumes)
+            cbtn_clinical_data["Dataset"] = "CBTN"
+
+        if self.cohort == "JOINT":
+            # Concatenate BCH and CBTN clinical data
+            print(f"\tJoining BCH and CBTN clinical data with lengths {len(bch_clinical_data)} and {len(cbtn_clinical_data)}.")
+            self.clinical_data_reduced = pd.concat([bch_clinical_data, cbtn_clinical_data])
+
+            # Process the combined clinical data
+            self.clinical_data_reduced["Patient_ID"] = self.clinical_data_reduced.apply(
+                lambda row: str(row.get("BCH MRN", "")).zfill(7) if pd.notna(row.get("BCH MRN")) else str(row.get("CBTN Subject ID", "")),
+                axis=1
+            )
+        else:
+            # Handle single dataset cases
+            if self.cohort == "BCH":
+                self.clinical_data_reduced = bch_clinical_data
+            elif self.cohort == "CBTN":
+                self.clinical_data_reduced = cbtn_clinical_data
+            else:
+                raise ValueError(f"Invalid cohort: {self.cohort}")
+        
+        print(f"\tFinal clinical {self.cohort} data has length {len(self.clinical_data_reduced)}.")
 
     def load_volumes_data(self, volumes_data_paths):
         """
@@ -348,46 +395,43 @@ class TumorAnalysis:
         """
 
         data_frames = []
+        total_files = 0
         for volumes_data_path in volumes_data_paths:
             all_files = [f for f in os.listdir(volumes_data_path) if f.endswith(".csv")]
             print(f"\tVolume data found: {len(all_files)}.")
-
+            total_files += len(all_files)
             for file in all_files:
                 patient_id = file.split("_")[0]
 
                 patient_df = pd.read_csv(os.path.join(volumes_data_path, file))
                 # Adjust patient id
                 patient_df["Patient_ID"] = patient_id
-                if self.cohort == "BCH":
+                if "bch" in str(volumes_data_path).lower():
                     patient_df["Patient_ID"] = (
                         patient_df["Patient_ID"]
                         .astype(str)
                         .str.zfill(7)
                         .astype("string")
                     )
+                    patient_df["Date"] = pd.to_datetime(patient_df["Date"], format="%d/%m/%Y")
 
                 data_frames.append(patient_df)
 
-        self.volumes_data = pd.concat(data_frames, ignore_index=True)
-        if self.cohort == "BCH":
-            self.volumes_data["Date"] = pd.to_datetime(
-                self.volumes_data["Date"], format="%d/%m/%Y"
-            )
+        print(f"\tTotal volume data files found: {total_files}.")
 
-        # CBTN Follow up time
-        if self.cohort == "CBTN":
+        self.volumes_data = pd.concat(data_frames, ignore_index=True)
+
+        if self.cohort in ["CBTN", "JOINT"]:
             follow_up_times = {}
-            for patient_id in self.volumes_data["Patient_ID"].unique():
-                patient_data = self.volumes_data[
-                    self.volumes_data["Patient_ID"] == patient_id
-                ]
+            cbtn_patient_ids = [patient_id for patient_id in self.volumes_data["Patient_ID"].unique() if not patient_id.isdigit()]
+            for patient_id in cbtn_patient_ids:
+                patient_data = self.volumes_data[self.volumes_data["Patient_ID"] == patient_id]
                 min_date = patient_data["Age"].min()
                 max_date = patient_data["Age"].max()
                 follow_up = max_date - min_date
                 follow_up_times[patient_id] = follow_up
-            self.volumes_data["Follow-Up Time"] = self.volumes_data["Patient_ID"].map(
-                follow_up_times
-            )
+            self.volumes_data["Follow-Up Time"] = self.volumes_data["Patient_ID"].map(follow_up_times)
+
 
         # Patient IDs in volumes data
         patient_ids_volumes = set(self.volumes_data["Patient_ID"].unique())
@@ -430,16 +474,10 @@ class TumorAnalysis:
             if row["Radiation as part of initial treatment"] == "Yes":
                 treatments.append("Radiation")
 
-            if len(treatments) == 1 and treatments[0] == "Radiation":
-                treatment_list.append("Surgery and Radiation")
-            elif len(treatments) == 0:
-                treatment_list.append("No Treatment")
-            elif len(treatments) == 1:
-                treatment_list.append(f"{treatments[0]} Only")
-            elif len(treatments) == 2:
-                treatment_list.append(f"{treatments[0]} and {treatments[1]}")
-            elif len(treatments) == 3:
-                treatment_list.append("All Treatments")
+            treatment_type = ", ".join(treatments) if treatments else "No Treatment"
+            if treatment_type == "Surgery, Chemotherapy, Radiation":
+                treatment_type = "All Treatments"
+            treatment_list.append(treatment_type)
 
         return treatment_list
 
@@ -499,7 +537,9 @@ class TumorAnalysis:
             # TODO: Fix this manual correction
             if treatment_type != "Surgery, Chemotherapy, Radiation":
                 self.clinical_data.at[idx, "Treatment Type"] = treatment_type
-
+            else:
+                self.clinical_data.at[idx, "Treatment Type"] = "All Treatments"
+                
             # Received Treatment
             received_treatment = "Yes" if treatments else "No"
             self.clinical_data.at[idx, "Received Treatment"] = received_treatment
@@ -555,26 +595,42 @@ class TumorAnalysis:
 
         This function updates the `self.merged_data` attribute with the merged DataFrame.
         """
+        self.volumes_data["Volumes Follow-Up Time"] = self.volumes_data["Follow-Up Time"]
+        self.volumes_data = self.volumes_data.drop(columns=["Follow-Up Time"])
+        
+        if self.cohort == "JOINT":
+            self.merged_data = pd.merge(
+                self.clinical_data_reduced,
+                self.volumes_data,
+                on=["Patient_ID"],
+                how="right",
+            )
+            self.merged_data["Follow-Up Time"] = self.merged_data.apply(
+                lambda row: row["Follow-Up Time"] if row["Dataset"] == "BCH" else row["Volumes Follow-Up Time"],
+                axis=1
+            )
+            
+            self.merged_data = self.merged_data.drop(columns=["CBTN Subject ID", "BCH MRN", "Volumes Follow-Up Time", "Dataset"])
 
-        if self.cohort == "BCH":
-            column = "BCH MRN"
         else:
-            column = "CBTN Subject ID"
+            if self.cohort == "BCH":
+                column = "BCH MRN"
+            else:
+                column = "CBTN Subject ID"
 
-        self.merged_data = pd.merge(
-            self.clinical_data_reduced,
-            self.volumes_data,
-            left_on=[column],
-            right_on=["Patient_ID"],
-            how="right",
-        )
-        self.merged_data = self.merged_data.drop(columns=[column])
+            self.merged_data = pd.merge(
+                self.clinical_data_reduced,
+                self.volumes_data,
+                left_on=[column],
+                right_on=["Patient_ID"],
+                how="right",
+            )
+            self.merged_data = self.merged_data.drop(columns=[column])
         self.merged_data["Age Group"] = self.merged_data.apply(
             categorize_age_group, axis=1
         ).astype("category")
-        # Reset index after merging
         self.merged_data.reset_index(drop=True, inplace=True)
-        print("\tMerged clinical and volume data.")
+        print(f"\tMerged clinical and volume data. Final data has length {len(self.merged_data)} and unique patients {self.merged_data['Patient_ID'].nunique()}.")
 
     def aggregate_summary_statistics(self):
         """
@@ -623,6 +679,7 @@ class TumorAnalysis:
 
         time_varying_vars = [
         "Age", "Days Between Scans", "Volume", "Volume Change", "Volume Change Rate", "Follow-Up Time"]
+        
         for var in time_varying_vars:
             median_column = f"{var} Median"
             self.merged_data[median_column] = self.merged_data.groupby("Patient_ID")[var].transform('median')
@@ -777,9 +834,9 @@ class TumorAnalysis:
         #############################################
         ##### Multi-variate logistic regression #####
         #############################################
-        print("\t\tMultivariate Analysis:")
-        pooled_results_multi = self.multivariate_analysis(patient_constant_vars, outcome_var, pooled_results_multi, categorical_vars)
-        self.plot_forest_plot(pooled_results_multi, output_dir, categorical_vars, analysis_type="Multivariate")
+        #print("\t\tMultivariate Analysis:")
+        #pooled_results_multi = self.multivariate_analysis(patient_constant_vars, outcome_var, pooled_results_multi, categorical_vars)
+        #self.plot_forest_plot(pooled_results_multi, output_dir, categorical_vars, analysis_type="Multivariate")
         
         #############################################
         ##### Mixed effects logistic regression #####
@@ -1125,7 +1182,7 @@ class TumorAnalysis:
         filtered_results.replace([np.inf, -np.inf], np.nan, inplace=True)
         filtered_results.dropna(subset=["OR", "Lower", "Upper", "p"], inplace=True)
         if not filtered_results.empty:
-            max_hr = np.percentile(filtered_results["Upper"], 99) # remove outliers
+            max_hr = 100 # remove outliers
             filtered_results = filtered_results[filtered_results["Upper"] <= max_hr]
 
         # Include 'Reference' entries for plotting without affecting calculations
@@ -1213,7 +1270,7 @@ class TumorAnalysis:
                 ax.text(
                     annotation_x_position + (600 * axes_width_inches),
                     i,
-                    f"{row.p:.3f}",
+                    f"{row.p:.3f}" if row.p >= 0.01 else "<0.01",
                     ha="left",
                     va="center",
                     fontsize=8,
@@ -1841,14 +1898,14 @@ class TumorAnalysis:
             median_follow_up = self.merged_data["Follow-Up Time"].median()
             max_follow_up = self.merged_data["Follow-Up Time"].max()
             min_follow_up = self.merged_data["Follow-Up Time"].min()
-            median_follow_up_months = median_follow_up
-            max_follow_up_months = max_follow_up
-            min_follow_up_months = min_follow_up
+            median_follow_up_y = median_follow_up / 365.25
+            max_follow_up_y = max_follow_up / 365.25
+            min_follow_up_y = min_follow_up / 365.25
             write_stat(
-                f"\t\tMedian Follow-Up Time: {median_follow_up_months:.2f} years"
+                f"\t\tMedian Follow-Up Time: {median_follow_up_y:.2f} years"
             )
-            write_stat(f"\t\tMaximum Follow-Up Time: {max_follow_up_months:.2f} years")
-            write_stat(f"\t\tMinimum Follow-Up Time: {min_follow_up_months:.2f} years")
+            write_stat(f"\t\tMaximum Follow-Up Time: {max_follow_up_y:.2f} years")
+            write_stat(f"\t\tMinimum Follow-Up Time: {min_follow_up_y:.2f} years")
 
             # get the ids of the patients with the three highest normalized volumes that do not repeat
             top_normalized_volumes = self.merged_data.nlargest(3, "Normalized Volume")
@@ -2012,10 +2069,12 @@ class TumorAnalysis:
         if correlation_cfg.ANALYSIS_PRE_TREATMENT:
             prefix = f"{self.cohort}_pre_treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
-
+        
             if self.merged_data.isnull().values.any():
+                string_columns = self.merged_data.select_dtypes(include=['string']).columns
+                self.merged_data[string_columns] = self.merged_data[string_columns].apply(pd.to_numeric, errors='coerce')
                 self.merged_data.replace(np.nan, np.inf, inplace=True)
-            
+                        
             # Survival analysis
             # stratify_by_list = [
             #     "Location",
@@ -2042,7 +2101,7 @@ class TumorAnalysis:
 
             if self.merged_data.isnull().values.any():
                 print(self.merged_data.isnull().sum())
-                # self.merged_data.replace(np.nan, np.inf, inplace=True)
+                self.merged_data.replace(np.nan, np.inf, inplace=True)
 
             # Descriptive statistics for table1 in paper
             # print(self.merged_data.dtypes)
@@ -2093,11 +2152,23 @@ class TumorAnalysis:
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
+    if correlation_cfg.COHORT == "JOINT":
+            data_paths = {
+                "clinical_data_paths": correlation_cfg.CLINICAL_CSV_PATHS,
+                "volumes_data_paths": [
+                    correlation_cfg.VOLUMES_DATA_PATHS["bch"],
+                    correlation_cfg.VOLUMES_DATA_PATHS["cbtn"]
+                ]
+            }
+    else:
+        data_paths = {
+            "clinical_data_paths": correlation_cfg.CLINICAL_CSV_PATHS[correlation_cfg.COHORT.lower()],
+            "volumes_data_paths": [correlation_cfg.VOLUMES_DATA_PATHS[correlation_cfg.COHORT.lower()]]
+        }
+
     analysis = TumorAnalysis(
-        correlation_cfg.CLINICAL_CSV,
-        [correlation_cfg.VOLUMES_CSV],
-        cohort=correlation_cfg.COHORT,
-    )
+        data_paths,
+        cohort=correlation_cfg.COHORT)
 
     os.makedirs(correlation_cfg.OUTPUT_DIR_CORRELATIONS, exist_ok=True)
     os.makedirs(correlation_cfg.OUTPUT_DIR_STATS, exist_ok=True)

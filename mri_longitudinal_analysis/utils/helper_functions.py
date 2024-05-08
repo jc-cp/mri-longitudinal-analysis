@@ -1007,14 +1007,16 @@ def plot_individual_trajectories(
     """
     plt.figure(figsize=(10, 6))
     plot_data = plot_data[plot_data["Time since First Scan"] <= time_limit]
-    num_patients = plot_data["Patient_ID"].nunique()
+    num_patients = plot_data["Patient_ID"].nunique()    
+    max_time = plot_data["Time since First Scan"].max()
+        
     # Get the median every 3 months
     median_data = (
         plot_data.groupby(
             pd.cut(
                 plot_data["Time since First Scan"],
                 pd.interval_range(
-                    start=0, end=plot_data["Time since First Scan"].max(), freq=median_freq,
+                    start=0, end=max_time, freq=median_freq,
                 ),
             )
         )[column]
@@ -1038,7 +1040,7 @@ def plot_individual_trajectories(
                         category_data["Time since First Scan"],
                         pd.interval_range(
                             start=0,
-                            end=category_data["Time since First Scan"].max(),
+                            end=max_time,
                             freq=median_freq,
                         ),
                     )
