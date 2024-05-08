@@ -14,6 +14,7 @@ import statsmodels.formula.api as smf
 from scipy.stats import shapiro
 from cfg.src import correlation_cfg
 from lifelines import KaplanMeierFitter
+from cfg.utils.helper_functions_cfg import NORD_PALETTE
 from utils.helper_functions import (
     bonferroni_correction,
     chi_squared_test,
@@ -534,7 +535,6 @@ class TumorAnalysis:
                 treatments.append("Radiation")
             treatment_type = ", ".join(treatments) if treatments else "No Treatment"
 
-            # TODO: Fix this manual correction
             if treatment_type != "Surgery, Chemotherapy, Radiation":
                 self.clinical_data.at[idx, "Treatment Type"] = treatment_type
             else:
@@ -610,7 +610,7 @@ class TumorAnalysis:
                 axis=1
             )
             
-            self.merged_data = self.merged_data.drop(columns=["CBTN Subject ID", "BCH MRN", "Volumes Follow-Up Time", "Dataset"])
+            self.merged_data = self.merged_data.drop(columns=["CBTN Subject ID", "BCH MRN", "Volumes Follow-Up Time"])
 
         else:
             if self.cohort == "BCH":
@@ -629,6 +629,12 @@ class TumorAnalysis:
         self.merged_data["Age Group"] = self.merged_data.apply(
             categorize_age_group, axis=1
         ).astype("category")
+        self.merged_data["Growth Pattern"] = self.merged_data["Growth Pattern"].astype("category")
+        self.merged_data["Growth Type"] = self.merged_data["Growth Type"].astype("category")
+        self.merged_data["Dataset"] = self.merged_data["Dataset"].astype("category")
+        self.merged_data["Histology"] = self.merged_data["Histology"].astype("category")
+        #self.merged_data["Patient_ID"] = self.merged_data["Patient_ID"].astype("string")
+        self.merged_data["Treatment Type"] = self.merged_data["Treatment Type"].astype("category")
         self.merged_data.reset_index(drop=True, inplace=True)
         print(f"\tMerged clinical and volume data. Final data has length {len(self.merged_data)} and unique patients {self.merged_data['Patient_ID'].nunique()}.")
 
@@ -1945,6 +1951,66 @@ class TumorAnalysis:
 
         print(f"\t\tSaved summary statistics to {file_path}.")
 
+    def generate_plots(self, output_dir):
+        """
+        Violin plots.
+        """
+        data = self.merged_data.copy()
+        sns.set_palette(NORD_PALETTE)
+
+        # Create a figure with subplots
+        fig, axs = plt.subplots(2, 2, figsize=(13, 10))
+
+        # Violin plot for "Follow-Up Time" distribution per dataset
+        sns.violinplot(x="Dataset", y="Follow-Up Time", data=data, ax=axs[0, 0])
+        axs[0, 0].set_title("Distribution of Follow-Up Time")
+        axs[0, 0].set_xlabel("Dataset")
+        axs[0, 0].set_ylabel("Follow-Up Time [days]")
+
+        # Violin plot for number of scans per patient per dataset
+        scans_per_patient = self.merged_data.groupby(["Dataset", "Patient_ID"]).size().reset_index(name="Number of Scans")        
+        #if scans_per_patient["Number of Scans"] == 0:
+        scans_per_patient.loc[scans_per_patient["Number of Scans"] == 0, "Number of Scans"] = 3        
+        sns.violinplot(x="Dataset", y="Number of Scans", data=scans_per_patient, ax=axs[0, 1])
+        sns.stripplot(x="Dataset", y="Number of Scans", data=scans_per_patient, ax=axs[0, 1], color="black", size=3, alpha=0.5)
+        axs[0, 1].set_title("Distribution of Number of Scans per Patient")
+        axs[0, 1].set_xlabel("Dataset")
+        axs[0, 1].set_ylabel("Number of Scans")
+        
+        
+        # Violin plot for follow-up interval distribution per dataset
+        sns.violinplot(y="Dataset", x="Days Between Scans", data=data, ax=axs[1, 0])
+        axs[1, 0].set_title("Distribution of Follow-Up Intervals")
+        axs[1, 0].set_ylabel("Dataset")
+        axs[1, 0].set_xlabel("Time Between Scans [days]")
+
+        # Bar plot for progression classification per dataset
+        classification_counts = data.groupby(["Dataset", "Patient Classification"]).size().unstack()
+        colors = [NORD_PALETTE[2], NORD_PALETTE[1], NORD_PALETTE[0]]
+        classification_percentages = classification_counts.div(classification_counts.sum(axis=1), axis=0) * 100
+        classification_counts.plot(kind="bar", ax=axs[1, 1], color=colors)
+        axs[1, 1].set_title("Patient Classification per Dataset")
+        axs[1, 1].set_xlabel("Dataset")
+        axs[1, 1].set_xticklabels(axs[1, 1].get_xticklabels(), rotation=0, ha="center")
+        axs[1, 1].set_ylabel("Count")
+        axs[1, 1].legend(title="Patient Classification")
+
+        # Add percentages at the top of each bar
+        for i, p in enumerate(axs[1, 1].patches):
+            dataset_idx = i // classification_counts.shape[1]
+            class_idx = i % classification_counts.shape[1]
+            if class_idx < classification_percentages.shape[1]:
+                axs[1, 1].annotate(f"{classification_percentages.iloc[dataset_idx, class_idx]:.1f}%",
+                                (p.get_x() + p.get_width() / 2., p.get_height()),
+                                ha="center", va="bottom", fontsize=8, rotation=0)
+
+
+        # Adjust the spacing between subplots
+        plt.tight_layout()
+
+        # Display the plot
+        file_name = os.path.join(output_dir, "dataset_comparison.png")
+        plt.savefig(file_name)
     ##########################################
     # EFS RELATED ANALYSIS AND VISUALIZATION #
     ##########################################
@@ -2074,7 +2140,7 @@ class TumorAnalysis:
                 string_columns = self.merged_data.select_dtypes(include=['string']).columns
                 self.merged_data[string_columns] = self.merged_data[string_columns].apply(pd.to_numeric, errors='coerce')
                 self.merged_data.replace(np.nan, np.inf, inplace=True)
-                        
+
             # Survival analysis
             # stratify_by_list = [
             #     "Location",
@@ -2106,6 +2172,8 @@ class TumorAnalysis:
             # Descriptive statistics for table1 in paper
             # print(self.merged_data.dtypes)
             self.printout_stats(prefix=prefix, output_file_path=output_stats)
+            if self.cohort == "JOINT":
+                self.generate_plots(output_dir=output_stats)
 
             # Correlations between variables
             self.analyze_pre_treatment(
