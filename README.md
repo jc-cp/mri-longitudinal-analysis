@@ -1,4 +1,5 @@
 # Mri Longitudinal Analysis
+![Analysis Pipeline](https://github.com/jc-cp/mri-longitudinal-analysis/assets/104212632/b3a92a50-6fad-45fb-a100-15b24f68bb66)
 
 ## Project Goals
 
