@@ -5,7 +5,7 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
-from scipy.stats import norm, zscore, pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr, kruskal, fisher_exact
+from scipy.stats import norm, zscore, pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr, kruskal, fisher_exact, mannwhitneyu
 from statsmodels.stats.multitest import multipletests
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
@@ -489,6 +489,27 @@ def fisher_exact_test(data, x_val, y_val):
         return None, None
 
 
+def mann_whitney_u_test(data, var, cohort_var):
+    """
+    Perform the Mann-Whitney U test to compare two independent samples.
+
+    Parameters:
+    - data (DataFrame): The DataFrame containing the data.
+    - var (str): The variable to be compared between the two cohorts.
+    - cohort_var (str): The variable defining the cohorts.
+
+    Returns:
+    - u_stat (float): The Mann-Whitney U statistic.
+    - p_val (float): The p-value associated with the test.
+    """
+    cohort1_data = data[data[cohort_var] == data[cohort_var].unique()[0]]
+    cohort2_data = data[data[cohort_var] == data[cohort_var].unique()[1]]
+
+    u_stat, p_val = mannwhitneyu(cohort1_data[var], cohort2_data[var])
+
+    return u_stat, p_val
+
+
 def logistic_regression_analysis(y, x, regularization=None, C=1.0):
     """
     Perform logistic regression to analyze the impact of various factors on tumor progression.
@@ -530,11 +551,17 @@ def stepwise_selection(y, x):
     return selected_model
 
 
-def calculate_vif(X):
+def calculate_vif(X, checks=False):
     """
     Calculate Variance Inflation Factor (VIF) for each variable in the DataFrame X.
     X should already have dummy variables for categorical features and should not contain the outcome variable.
     """
+    if checks:
+        # Convert non-numeric columns to numeric
+        X = X.apply(pd.to_numeric, errors='coerce')
+        # Drop columns with all missing values
+        X = X.dropna(axis=1, how='all')
+        
     vif_data = pd.DataFrame({
         'Variable': X.columns,
         'VIF': [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
@@ -676,9 +703,6 @@ def classify_patient(
     patient_id,
     column_name,
     progression_threshold,
-    stability_threshold,
-    high_risk_threshold,
-    angle=False,
 ):
     """
     Classify a patient based on the slope of actual and predicted growth rates.
@@ -688,39 +712,21 @@ def classify_patient(
 
     if len(patient_data) < 2:
         return None
+    
+    first_value = patient_data[column_name].iloc[0]
+    last_value = patient_data[column_name].iloc[-1]
+    # Calculate percentage change
+    if first_value == 0:
+        return "Erratic"  # Avoid division by zero
 
-    if angle:
-        _, actual_angle = calculate_slope_and_angle(data, patient_id, column_name)
+    percent_change = ((last_value - first_value) / first_value) * 100
 
-        if actual_angle is None:
-            return f"Failed to calculate slope for patient {patient_id}"
-
-        if actual_angle > progression_threshold:
-            progression_type = "Progressor"
-            risk_level = "High-risk" if actual_angle > high_risk_threshold else "Low-risk"
-            return f"{progression_type}, {risk_level}"
-        elif abs(actual_angle) < stability_threshold:
-            return "Stable"
-        elif actual_angle < -progression_threshold:
-            return "Regressor"
-        else:
-            return "Erratic"
+    if percent_change >= progression_threshold:
+        return "Progressor"
+    elif percent_change <= -progression_threshold:
+        return "Regressor"
     else:
-        first_value = patient_data[column_name].iloc[0]
-        last_value = patient_data[column_name].iloc[-1]
-        progression_threshold = 25
-        # Calculate percentage change
-        if first_value == 0:
-            return "Erratic"  # Avoid division by zero
-
-        percent_change = ((last_value - first_value) / first_value) * 100
-
-        if percent_change >= progression_threshold:
-            return "Progressor"
-        elif percent_change <= -progression_threshold:
-            return "Regressor"
-        else:
-            return "Stable"
+        return "Stable"
 
 
 def calculate_percentage_change(data, patient_id, column_name):
@@ -925,8 +931,9 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     classifications = data["Classification"].unique()
 
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
-
-    for classification, color in zip(classifications, palette):
+    #colors = [palette[1], palette[2], palette[0]]
+    colors =  ["blue", "red", "green"]
+    for classification, color in zip(classifications, colors):
         class_data = data[data["Classification"] == classification]
         first_patient_plotted = False
 
@@ -987,7 +994,7 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     plt.ylabel(f"Tumor {column_name} [{unit}]")
     plt.title(f"Patient Trend Trajectories (N={num_patients})")
     plt.legend()
-    plt.savefig(output_filename)
+    plt.savefig(output_filename, dpi=300)
     plt.close()
 
 
@@ -1060,14 +1067,14 @@ def plot_individual_trajectories(
                     alpha=0.5,
                     linewidth=1,
                 )
-            sns.lineplot(
-                x=median_data_category["Time since First Scan"].apply(lambda x: x.mid),
-                y=column,
-                data=median_data_category,
-                color=median_color,
-                linestyle="--",
-                label=f"{category_column} {category} Median Trajectory",
-            )
+            # sns.lineplot(
+            #     x=median_data_category["Time since First Scan"].apply(lambda x: x.mid),
+            #     y=column,
+            #     data=median_data_category,
+            #     color=median_color,
+            #     linestyle="--",
+            #     label=f"{category_column} {category} Median Trajectory",
+            # )
 
         sns.lineplot(
             x=median_data["Time since First Scan"].apply(lambda x: x.mid),
@@ -1110,7 +1117,7 @@ def plot_individual_trajectories(
 
     plt.xlabel("Days Since First Scan")
     plt.ylabel(f"Tumor {column} [{unit}]")
-    plt.savefig(name)
+    plt.savefig(name, dpi=300)
     plt.close()
     if category_column:
         print(f"\t\tSaved tumor {column} trajectories plot by category: {category_column}.")
