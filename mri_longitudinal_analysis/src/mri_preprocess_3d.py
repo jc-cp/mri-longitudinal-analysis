@@ -83,7 +83,9 @@ def registration(
 
     fixed_img = sitk.ReadImage(temp_img, sitk.sitkFloat32)
     problematic_ids = []
-    processed_files = get_processed_files(output_dir)  # Get list of already processed files
+    processed_files = get_processed_files(
+        output_dir
+    )  # Get list of already processed files
 
     random.shuffle(input_data)
 
@@ -142,7 +144,9 @@ def registration(
             )
             # multi-resolution rigid registration using Mutual Information
             registration_method = sitk.ImageRegistrationMethod()
-            registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
+            registration_method.SetMetricAsMattesMutualInformation(
+                numberOfHistogramBins=50
+            )
             registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
             registration_method.SetMetricSamplingPercentage(0.01)
             registration_method.SetInterpolator(sitk.sitkLinear)
@@ -198,15 +202,21 @@ def registration(
             )
 
             if save_tfm:
-                sitk.WriteTransform(final_transform, os.path.join(output_dir, f"{id_}" + "_T2.tfm"))
+                sitk.WriteTransform(
+                    final_transform, os.path.join(output_dir, f"{id_}" + "_T2.tfm")
+                )
         except IOError as io_error:
             print(f"Error with image {id_}: {io_error}")
             with open("log_file.txt", "a", encoding="utf-8") as file:
-                file.write(f"Image is causing trouble: {img_path}\n Error: {io_error}\n")
+                file.write(
+                    f"Image is causing trouble: {img_path}\n Error: {io_error}\n"
+                )
             continue
         except RuntimeError as run_error:
             with open("log_file.txt", "a", encoding="utf-8") as file:
-                file.write(f"Image is causing trouble: {img_path}\n Error: {run_error}\n")
+                file.write(
+                    f"Image is causing trouble: {img_path}\n Error: {run_error}\n"
+                )
             continue
 
     count = index + 1
@@ -227,7 +237,11 @@ def get_image_files(base_dir):
     image_files_ = []
     for file in os.listdir(base_dir):
         full_path = os.path.join(base_dir, file)
-        if os.path.isfile(full_path) and file.endswith(".nii.gz") and "label" not in file:
+        if (
+            os.path.isfile(full_path)
+            and file.endswith(".nii.gz")
+            and "label" not in file
+        ):
             image_files_.append(full_path)
             # Break when limit is reached
             if len(image_files_) >= preprocess_cfg.LIMIT_LOADING:

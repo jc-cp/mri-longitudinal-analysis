@@ -42,7 +42,6 @@ class ClinicalData:
         """
         try:
             d_f = pd.read_csv(self.file_path, encoding="utf-8")
-            # print(d_f.head())
             return d_f
         except FileNotFoundError:
             print("File not found. Please check the file path.")
@@ -110,20 +109,28 @@ class ClinicalData:
             elif "ganglioglioma" in pathologic_diagnosis.lower():
                 patient_data[patient_id]["Pathologic diagnosis"] = "Ganglioglioma"
             elif "glioneuronal" in pathologic_diagnosis.lower():
-                patient_data[patient_id]["Pathologic diagnosis"] = "Glioneuronal Neoplasm"
+                patient_data[patient_id][
+                    "Pathologic diagnosis"
+                ] = "Glioneuronal Neoplasm"
             elif "xanthoastrocytoma" in pathologic_diagnosis.lower():
-                patient_data[patient_id]["Pathologic diagnosis"] = "Pleomorphic Xanthoastrocytoma"
+                patient_data[patient_id][
+                    "Pathologic diagnosis"
+                ] = "Pleomorphic Xanthoastrocytoma"
             elif (
                 "low grade glioma" in pathologic_diagnosis.lower()
                 or "low-grade glioma" in pathologic_diagnosis.lower()
             ):
-                patient_data[patient_id]["Pathologic diagnosis"] = "Plain Low Grade Glioma"
+                patient_data[patient_id][
+                    "Pathologic diagnosis"
+                ] = "Plain Low Grade Glioma"
             else:
                 patient_data[patient_id]["Pathologic diagnosis"] = "Other"
 
             if row["Surgical Resection"] == "Yes":
                 patient_data[patient_id]["Surgery"] = "Yes"
-                patient_data[patient_id]["Date of first surgery"] = row["Date of first surgery"]
+                patient_data[patient_id]["Date of first surgery"] = row[
+                    "Date of first surgery"
+                ]
 
             if row["Systemic therapy before radiation"] == "Yes":
                 patient_data[patient_id]["Chemotherapy"] = "Yes"
@@ -133,7 +140,9 @@ class ClinicalData:
 
             if row["Radiation as part of initial treatment"] == "Yes":
                 patient_data[patient_id]["Radiation"] = "Yes"
-                patient_data[patient_id]["Start Date of Radiation"] = row["Start Date of Radiation"]
+                patient_data[patient_id]["Start Date of Radiation"] = row[
+                    "Start Date of Radiation"
+                ]
 
         return patient_data
 
@@ -281,13 +290,19 @@ class ClinicalData:
 
             elif "Chemotherapy" in patient_data[patient_id]:
                 treatment_type = "Chemotherapy"
-                treatment_date_str = patient_data[patient_id]["Date of Systemic Therapy Start"]
+                treatment_date_str = patient_data[patient_id][
+                    "Date of Systemic Therapy Start"
+                ]
 
             elif "Radiation" in patient_data[patient_id]:
                 treatment_type = "Radiation"
                 treatment_date_str = patient_data[patient_id]["Start Date of Radiation"]
 
-            if treatment_type and treatment_date_str and isinstance(treatment_date_str, str):
+            if (
+                treatment_type
+                and treatment_date_str
+                and isinstance(treatment_date_str, str)
+            ):
                 try:
                     # Attempt to parse the date in the expected format
                     treatment_date = datetime.strptime(treatment_date_str, "%d/%m/%Y")
@@ -317,7 +332,8 @@ class ClinicalData:
 
     def check_treatment_type(self, patient_info):
         return any(
-            treatment in patient_info for treatment in ["Surgery", "Chemotherapy", "Radiation"]
+            treatment in patient_info
+            for treatment in ["Surgery", "Chemotherapy", "Radiation"]
         )
 
     def check_treatment_date(self, patient_info):
@@ -334,7 +350,8 @@ class ClinicalData:
 
     def should_count_as_no_treatment(self, patient_info):
         return not (
-            self.check_treatment_type(patient_info) and self.check_treatment_date(patient_info)
+            self.check_treatment_type(patient_info)
+            and self.check_treatment_date(patient_info)
         )
 
     def main(self):
@@ -346,10 +363,14 @@ class ClinicalData:
             self.visualize_data(patient_data)
 
         if self.output_file:
-            self.write_dict_to_file(patient_data, filter_clinical_data_cfg.OUTPUT_FILE_NAME)
+            self.write_dict_to_file(
+                patient_data, filter_clinical_data_cfg.OUTPUT_FILE_NAME
+            )
 
         if self.delete_post_op_data:
-            self.move_post_surgery_files(patient_data, filter_clinical_data_cfg.DATA_DIR)
+            self.move_post_surgery_files(
+                patient_data, filter_clinical_data_cfg.DATA_DIR
+            )
 
 
 if __name__ == "__main__":
