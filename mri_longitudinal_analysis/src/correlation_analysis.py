@@ -10,13 +10,12 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 import statsmodels.api as sm
-import statsmodels.formula.api as smf
 from scipy.stats import shapiro, ttest_ind, chi2_contingency, mannwhitneyu, fisher_exact
-from sklearn.preprocessing import StandardScaler
 from cfg.src import correlation_cfg
 from cfg.utils.helper_functions_cfg import NORD_PALETTE
 from lifelines import KaplanMeierFitter, CoxPHFitter
-from lifelines.statistics import proportional_hazard_test
+
+# from lifelines.statistics import proportional_hazard_test
 from lifelines.utils import concordance_index
 from utils.helper_functions import (
     bonferroni_correction,
@@ -45,10 +44,10 @@ from utils.helper_functions import (
     consistency_check,
     kruskal_wallis_test,
     fisher_exact_test,
-    #mann_whitney_u_test,
+    # mann_whitney_u_test,
     logistic_regression_analysis,
-    #stepwise_selection,
-    #calculate_vif,
+    # stepwise_selection,
+    # calculate_vif,
 )
 
 
@@ -84,15 +83,23 @@ class TumorAnalysis:
         self.reference_categories = {}
         print("Step 0: Initializing TumorAnalysis class...")
 
-        self.validate_files(data_paths_["clinical_data_paths"], data_paths_["volumes_data_paths"])
+        self.validate_files(
+            data_paths_["clinical_data_paths"], data_paths_["volumes_data_paths"]
+        )
         patient_ids_volumes = self.load_volumes_data(data_paths_["volumes_data_paths"])
         if self.cohort == "JOINT":
-            self.load_clinical_data(data_paths_["clinical_data_paths"], patient_ids_volumes)
+            self.load_clinical_data(
+                data_paths_["clinical_data_paths"], patient_ids_volumes
+            )
         else:
             if self.cohort == "BCH":
-                _ = self.load_clinical_data_bch(data_paths_["clinical_data_paths"]["bch"], patient_ids_volumes)
+                _ = self.load_clinical_data_bch(
+                    data_paths_["clinical_data_paths"]["bch"], patient_ids_volumes
+                )
             elif self.cohort == "CBTN":
-                _ = self.load_clinical_data_cbtn(data_paths_["clinical_data_paths"]["cbtn"], patient_ids_volumes)
+                _ = self.load_clinical_data_cbtn(
+                    data_paths_["clinical_data_paths"]["cbtn"], patient_ids_volumes
+                )
         self.merge_data()
         self.aggregate_summary_statistics()
 
@@ -213,12 +220,15 @@ class TumorAnalysis:
         self.clinical_data["Date of last clinical follow-up"] = pd.to_datetime(
             self.clinical_data["Date of last clinical follow-up"], dayfirst=True
         )
-        
+
         self.clinical_data["Age at Last Clinical Follow-Up"] = np.minimum(
-            (self.clinical_data["Date of last clinical follow-up"]
-            - self.clinical_data["Date of Birth"]).dt.days, 
-            self.clinical_data["Age at First Treatment"].fillna(np.inf))
-        
+            (
+                self.clinical_data["Date of last clinical follow-up"]
+                - self.clinical_data["Date of Birth"]
+            ).dt.days,
+            self.clinical_data["Age at First Treatment"].fillna(np.inf),
+        )
+
         self.clinical_data["Received Treatment"] = (
             self.clinical_data["Age at First Treatment"]
             .notna()
@@ -347,7 +357,7 @@ class TumorAnalysis:
         print(
             f"\tFiltered CBTN clinical data has length {len(self.clinical_data_reduced)}."
         )
-        
+
         print("\tParsed CBTN clinical data.")
         clinical_data_cbtn = self.clinical_data_reduced
         return clinical_data_cbtn
@@ -359,21 +369,31 @@ class TumorAnalysis:
         bch_clinical_data = pd.DataFrame()
         cbtn_clinical_data = pd.DataFrame()
         if "bch" in clinical_data_paths:
-            bch_clinical_data = self.load_clinical_data_bch(clinical_data_paths["bch"], patient_ids_volumes)
+            bch_clinical_data = self.load_clinical_data_bch(
+                clinical_data_paths["bch"], patient_ids_volumes
+            )
             bch_clinical_data["Dataset"] = "BCH"
         if "cbtn" in clinical_data_paths:
-            cbtn_clinical_data = self.load_clinical_data_cbtn(clinical_data_paths["cbtn"], patient_ids_volumes)
+            cbtn_clinical_data = self.load_clinical_data_cbtn(
+                clinical_data_paths["cbtn"], patient_ids_volumes
+            )
             cbtn_clinical_data["Dataset"] = "CBTN"
 
         if self.cohort == "JOINT":
             # Concatenate BCH and CBTN clinical data
-            print(f"\tJoining BCH and CBTN clinical data with lengths {len(bch_clinical_data)} and {len(cbtn_clinical_data)}.")
-            self.clinical_data_reduced = pd.concat([bch_clinical_data, cbtn_clinical_data])
+            print(
+                f"\tJoining BCH and CBTN clinical data with lengths {len(bch_clinical_data)} and {len(cbtn_clinical_data)}."
+            )
+            self.clinical_data_reduced = pd.concat(
+                [bch_clinical_data, cbtn_clinical_data]
+            )
 
             # Process the combined clinical data
             self.clinical_data_reduced["Patient_ID"] = self.clinical_data_reduced.apply(
-                lambda row: str(row.get("BCH MRN", "")).zfill(7) if pd.notna(row.get("BCH MRN")) else str(row.get("CBTN Subject ID", "")),
-                axis=1
+                lambda row: str(row.get("BCH MRN", "")).zfill(7)
+                if pd.notna(row.get("BCH MRN"))
+                else str(row.get("CBTN Subject ID", "")),
+                axis=1,
             )
         else:
             # Handle single dataset cases
@@ -383,8 +403,10 @@ class TumorAnalysis:
                 self.clinical_data_reduced = cbtn_clinical_data
             else:
                 raise ValueError(f"Invalid cohort: {self.cohort}")
-        
-        print(f"\tFinal clinical {self.cohort} data has length {len(self.clinical_data_reduced)}.")
+
+        print(
+            f"\tFinal clinical {self.cohort} data has length {len(self.clinical_data_reduced)}."
+        )
 
     def load_volumes_data(self, volumes_data_paths):
         """
@@ -416,7 +438,9 @@ class TumorAnalysis:
                         .str.zfill(7)
                         .astype("string")
                     )
-                    patient_df["Date"] = pd.to_datetime(patient_df["Date"], format="%d/%m/%Y")
+                    patient_df["Date"] = pd.to_datetime(
+                        patient_df["Date"], format="%d/%m/%Y"
+                    )
 
                 data_frames.append(patient_df)
 
@@ -426,15 +450,22 @@ class TumorAnalysis:
 
         if self.cohort in ["CBTN", "JOINT"]:
             follow_up_times = {}
-            cbtn_patient_ids = [patient_id for patient_id in self.volumes_data["Patient_ID"].unique() if not patient_id.isdigit()]
+            cbtn_patient_ids = [
+                patient_id
+                for patient_id in self.volumes_data["Patient_ID"].unique()
+                if not patient_id.isdigit()
+            ]
             for patient_id in cbtn_patient_ids:
-                patient_data = self.volumes_data[self.volumes_data["Patient_ID"] == patient_id]
+                patient_data = self.volumes_data[
+                    self.volumes_data["Patient_ID"] == patient_id
+                ]
                 min_date = patient_data["Age"].min()
                 max_date = patient_data["Age"].max()
                 follow_up = max_date - min_date
                 follow_up_times[patient_id] = follow_up
-            self.volumes_data["Follow-Up Time"] = self.volumes_data["Patient_ID"].map(follow_up_times)
-
+            self.volumes_data["Follow-Up Time"] = self.volumes_data["Patient_ID"].map(
+                follow_up_times
+            )
 
         # Patient IDs in volumes data
         patient_ids_volumes = set(self.volumes_data["Patient_ID"].unique())
@@ -541,7 +572,7 @@ class TumorAnalysis:
                 self.clinical_data.at[idx, "Treatment Type"] = treatment_type
             else:
                 self.clinical_data.at[idx, "Treatment Type"] = "All Treatments"
-                
+
             # Received Treatment
             received_treatment = "Yes" if treatments else "No"
             self.clinical_data.at[idx, "Received Treatment"] = received_treatment
@@ -574,9 +605,12 @@ class TumorAnalysis:
         self.clinical_data["Age at First Diagnosis"] = pd.to_numeric(
             self.clinical_data["Age at First Diagnosis"], errors="coerce"
         )
-        self.clinical_data["Age at Last Clinical Follow-Up"] = np.minimum(pd.to_numeric(
-            self.clinical_data["Age at Last Clinical Follow-Up"], errors="coerce"
-        ), self.clinical_data["Age at First Treatment"].fillna(np.inf))
+        self.clinical_data["Age at Last Clinical Follow-Up"] = np.minimum(
+            pd.to_numeric(
+                self.clinical_data["Age at Last Clinical Follow-Up"], errors="coerce"
+            ),
+            self.clinical_data["Age at First Treatment"].fillna(np.inf),
+        )
 
         # Fill missing values
         self.clinical_data.fillna(
@@ -594,9 +628,11 @@ class TumorAnalysis:
 
         This function updates the `self.merged_data` attribute with the merged DataFrame.
         """
-        self.volumes_data["Volumes Follow-Up Time"] = self.volumes_data["Follow-Up Time"]
+        self.volumes_data["Volumes Follow-Up Time"] = self.volumes_data[
+            "Follow-Up Time"
+        ]
         self.volumes_data = self.volumes_data.drop(columns=["Follow-Up Time"])
-        
+
         if self.cohort == "JOINT":
             self.merged_data = pd.merge(
                 self.clinical_data_reduced,
@@ -605,11 +641,15 @@ class TumorAnalysis:
                 how="right",
             )
             self.merged_data["Follow-Up Time"] = self.merged_data.apply(
-                lambda row: row["Follow-Up Time"] if row["Dataset"] == "BCH" else row["Volumes Follow-Up Time"],
-                axis=1
+                lambda row: row["Follow-Up Time"]
+                if row["Dataset"] == "BCH"
+                else row["Volumes Follow-Up Time"],
+                axis=1,
             )
-            
-            self.merged_data = self.merged_data.drop(columns=["CBTN Subject ID", "BCH MRN", "Volumes Follow-Up Time"])
+
+            self.merged_data = self.merged_data.drop(
+                columns=["CBTN Subject ID", "BCH MRN", "Volumes Follow-Up Time"]
+            )
 
         else:
             if self.cohort == "BCH":
@@ -628,14 +668,22 @@ class TumorAnalysis:
         self.merged_data["Age Group"] = self.merged_data.apply(
             categorize_age_group, axis=1
         ).astype("category")
-        self.merged_data["Growth Pattern"] = self.merged_data["Growth Pattern"].astype("category")
-        self.merged_data["Growth Type"] = self.merged_data["Growth Type"].astype("category")
+        self.merged_data["Growth Pattern"] = self.merged_data["Growth Pattern"].astype(
+            "category"
+        )
+        self.merged_data["Growth Type"] = self.merged_data["Growth Type"].astype(
+            "category"
+        )
         self.merged_data["Dataset"] = self.merged_data["Dataset"].astype("category")
         self.merged_data["Histology"] = self.merged_data["Histology"].astype("category")
-        #self.merged_data["Patient_ID"] = self.merged_data["Patient_ID"].astype("string")
-        self.merged_data["Treatment Type"] = self.merged_data["Treatment Type"].astype("category")
+        # self.merged_data["Patient_ID"] = self.merged_data["Patient_ID"].astype("string")
+        self.merged_data["Treatment Type"] = self.merged_data["Treatment Type"].astype(
+            "category"
+        )
         self.merged_data.reset_index(drop=True, inplace=True)
-        print(f"\tMerged clinical and volume data. Final data has length {len(self.merged_data)} and unique patients {self.merged_data['Patient_ID'].nunique()}.")
+        print(
+            f"\tMerged clinical and volume data. Final data has length {len(self.merged_data)} and unique patients {self.merged_data['Patient_ID'].nunique()}."
+        )
 
     def aggregate_summary_statistics(self):
         """
@@ -672,10 +720,10 @@ class TumorAnalysis:
 
         # add rolling stats and cumulative stats for specified columns
         for var in [
-            #"Volume",
+            # "Volume",
             "Normalized Volume",
             "Volume Change",
-            #"Volume Change Rate",
+            # "Volume Change Rate",
         ]:
             grouped = self.merged_data.groupby("Patient_ID", as_index=False)
             # self.merged_data = grouped.apply(cumulative_stats, var)
@@ -684,11 +732,19 @@ class TumorAnalysis:
             self.merged_data.reset_index(drop=True, inplace=True)
 
         time_varying_vars = [
-        "Age", "Days Between Scans", "Volume", "Volume Change", "Volume Change Rate", "Follow-Up Time"]
-        
+            "Age",
+            "Days Between Scans",
+            "Volume",
+            "Volume Change",
+            "Volume Change Rate",
+            "Follow-Up Time",
+        ]
+
         for var in time_varying_vars:
             median_column = f"{var} Median"
-            self.merged_data[median_column] = self.merged_data.groupby("Patient_ID")[var].transform('median')
+            self.merged_data[median_column] = self.merged_data.groupby("Patient_ID")[
+                var
+            ].transform("median")
         print("\tAdded rolling and accumulative summary statistics.")
 
     ###################################
@@ -798,13 +854,16 @@ class TumorAnalysis:
         #                 prefix,
         #                 output_dir,
         #             )
-        
+
         ##############################################
         ##### Cohort Table with basic statistics #####
         ##############################################
-        cohort_table = self.create_cohort_table(categorical_vars=categorical_vars, continuous_vars=numerical_vars)
+        print("\t\tCreating cohort table:")
+        cohort_table = self.create_cohort_table(
+            categorical_vars=categorical_vars, continuous_vars=numerical_vars
+        )
         print(cohort_table)
-        
+
         ####################################################################
         ##### Univariate analysis, logistic regression and forest plot #####
         ####################################################################
@@ -848,33 +907,48 @@ class TumorAnalysis:
         #############################################
         print("\t\tMultivariate Analysis:")
         variable_combinations = [
-            ["Location", "Symptoms", "Histology", "BRAF Status", "Sex", "Received Treatment"],  # Categorical variables
-            ["Age at First Diagnosis", "Age at Last Clinical Follow-Up", "Age Median", "Age Group"],  # Age-related variables
-            ["Baseline Volume", "Volume Median", "Volume Change Median", "Volume Change Rate Median"],  # Volume-related variables
-            ["Follow-Up Time Median", "Days Between Scans Median"],  # Time-related variables
-            ["Treatment Type", "Received Treatment"]  # Treatment-related variables
-            ]
-        pooled_results_multi = pd.DataFrame(columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"])
-        for combo in variable_combinations:
-            pooled_results_multi = self.multivariate_analysis(combo, outcome_var, pooled_results_multi, categorical_vars)
-            self.plot_forest_plot(pooled_results_multi, output_dir, categorical_vars, analysis_type="Multivariate", combo=combo)
-            #pooled_results_multi = pd.DataFrame(columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"])
-
-        #############################################
-        ##### Mixed effects logistic regression #####
-        #############################################
-        longitudinal_vars = [
-            "Age",
-            "Volume",
-            "Volume Change",
-            "Volume Change Rate",
-            "Follow-Up Time",
+            [
+                "Location",
+                "Symptoms",
+                "Histology",
+                "BRAF Status",
+                "Sex",
+                "Received Treatment",
+            ],  # Categorical variables
+            [
+                "Age at First Diagnosis",
+                "Age at Last Clinical Follow-Up",
+                "Age Median",
+                "Age Group",
+            ],  # Age-related variables
+            [
+                "Baseline Volume",
+                "Volume Median",
+                "Volume Change Median",
+                "Volume Change Rate Median",
+            ],  # Volume-related variables
+            [
+                "Follow-Up Time Median",
+                "Days Between Scans Median",
+            ],  # Time-related variables
+            ["Treatment Type", "Received Treatment"],  # Treatment-related variables
         ]
-        grouping_var = "Patient_ID"
-        #data = self.prepare_data_for_mixed_model(longitudinal_vars, outcome_var, grouping_var)
-        #result = self.run_mixed_effects_model(data, grouping_var)
-        #for var in longitudinal_vars:
-        #    self.visualize_mixed_model_effects(result, var, output_dir)
+        pooled_results_multi = pd.DataFrame(
+            columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]
+        )
+        for combo in variable_combinations:
+            pooled_results_multi = self.multivariate_analysis(
+                combo, outcome_var, pooled_results_multi, categorical_vars
+            )
+            self.plot_forest_plot(
+                pooled_results_multi,
+                output_dir,
+                categorical_vars,
+                analysis_type="Multivariate",
+                combo=combo,
+            )
+            # pooled_results_multi = pd.DataFrame(columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]) # enable to clear up th epooled results and not have a cumulative forest plot
+        print("\t\tMulti-variate Analysis done! Forest Plots saved.")
 
     def analyze_correlation(
         self, x_val, y_val, data, prefix, output_dir, method="spearman"
@@ -1089,9 +1163,7 @@ class TumorAnalysis:
             plt.savefig(heat_map_file)
             plt.close()
 
-    def univariate_analysis(
-        self, variable, outcome_var, pooled_results_uni, cat_vars
-    ):
+    def univariate_analysis(self, variable, outcome_var, pooled_results_uni, cat_vars):
         """
         Perform univariate logistic regression analysis for a given variable.
         """
@@ -1099,10 +1171,12 @@ class TumorAnalysis:
 
         if X is not None and not X.empty:
             try:
-                #calculate_vif(X)
+                # calculate_vif(X)
                 result = logistic_regression_analysis(y, X)
-                #print(result.summary2())
-                pooled_results_uni = self.pool_results(result, variable, pooled_results_uni, cat_vars)
+                # print(result.summary2())
+                pooled_results_uni = self.pool_results(
+                    result, variable, pooled_results_uni, cat_vars
+                )
                 print(f"\t\t\tModel fitted successfully with {variable}.")
             except ExceptionGroup as e:
                 print(f"\t\tError fitting model with {variable}: {e}")
@@ -1116,9 +1190,11 @@ class TumorAnalysis:
         Prepare the data for univariate logistic regression analysis.
         This function handles patient-constant and time-varying variables differently.
         """
-        if isinstance(variables, str):  # For univariate case where a single variable string is passed
+        if isinstance(
+            variables, str
+        ):  # For univariate case where a single variable string is passed
             variables = [variables]
-        
+
         if len(variables) == 1:
             # Univariate case
             variable = variables[0]
@@ -1129,26 +1205,36 @@ class TumorAnalysis:
                     self.merged_data.groupby("Patient_ID")
                     .agg({variable: "first", outcome_var: "first"})
                     .reset_index()
-            )
+                )
         else:
             # Multivariate case
-            data_agg = self.merged_data[["Patient_ID"] + variables + [outcome_var]].copy()
-            
+            data_agg = self.merged_data[
+                ["Patient_ID"] + variables + [outcome_var]
+            ].copy()
+
             # Separate categorical and numerical variables
             cat_vars_subset = [var for var in variables if var in cat_vars]
             num_vars_subset = [var for var in variables if var not in cat_vars]
-            
+
             # Aggregate categorical variables by taking the mode, numerical the man and outcome the first value per patient
             if cat_vars_subset:
-                cat_agg = data_agg.groupby("Patient_ID")[cat_vars_subset].agg(lambda x: x.value_counts().index[0])
-                data_agg = data_agg.drop(columns=cat_vars_subset).merge(cat_agg, on="Patient_ID")
+                cat_agg = data_agg.groupby("Patient_ID")[cat_vars_subset].agg(
+                    lambda x: x.value_counts().index[0]
+                )
+                data_agg = data_agg.drop(columns=cat_vars_subset).merge(
+                    cat_agg, on="Patient_ID"
+                )
             if num_vars_subset:
                 num_agg = data_agg.groupby("Patient_ID")[num_vars_subset].mean()
-                data_agg = data_agg.drop(columns=num_vars_subset).merge(num_agg, on="Patient_ID")
-                
+                data_agg = data_agg.drop(columns=num_vars_subset).merge(
+                    num_agg, on="Patient_ID"
+                )
+
             outcome_agg = data_agg.groupby("Patient_ID")[outcome_var].first()
-            data_agg = data_agg.drop(columns=[outcome_var]).merge(outcome_agg, on="Patient_ID")
-            
+            data_agg = data_agg.drop(columns=[outcome_var]).merge(
+                outcome_agg, on="Patient_ID"
+            )
+
         for variable in variables:
             # For categorical variables, convert them to dummy variables
             if variable in cat_vars:
@@ -1157,30 +1243,38 @@ class TumorAnalysis:
                 print("\t\t\tReference category: ", reference_category)
                 self.reference_categories[variable] = (reference_category, ref_count)
                 data_agg[variable] = data_agg[variable].astype(str)
-                dummies = pd.get_dummies(data_agg[variable], prefix=variable, drop_first=False)
+                dummies = pd.get_dummies(
+                    data_agg[variable], prefix=variable, drop_first=False
+                )
                 if f"{variable}_{reference_category}" in dummies.columns:
-                    dummies.drop(columns=[f"{variable}_{reference_category}"], inplace=True)
-                data_agg = pd.concat([data_agg.drop(columns=[variable]), dummies], axis=1)
+                    dummies.drop(
+                        columns=[f"{variable}_{reference_category}"], inplace=True
+                    )
+                data_agg = pd.concat(
+                    [data_agg.drop(columns=[variable]), dummies], axis=1
+                )
                 for col in dummies.columns:
-                    data_agg[col] = data_agg[col].astype(int)         
+                    data_agg[col] = data_agg[col].astype(int)
             else:
-                data_agg[variable] = pd.to_numeric(data_agg[variable], errors='coerce')
+                data_agg[variable] = pd.to_numeric(data_agg[variable], errors="coerce")
                 if (data_agg[variable] <= 0).any():
                     # Handle zeros or negative values if necessary, e.g., by adding a small constant
-                    #data_agg[variable] += 1
+                    # data_agg[variable] += 1
                     data_agg[variable] = data_agg[variable].replace(0, 0.1)
                     data_agg[variable] = data_agg[variable].clip(lower=0.1)
                 # Apply log transformation
                 data_agg[variable] = np.log(data_agg[variable])
-        
+
         # Ensure outcome_var is binary numeric, reduce to relevant columns, check for missing values
         data_agg[outcome_var] = (
             pd.to_numeric(data_agg[outcome_var], errors="coerce").fillna(0).astype(int)
         )
-        
+
         # drop patient ID and assign constant for regression
         data_agg = data_agg.drop(columns=["Patient_ID"], errors="ignore")
-        data_agg = data_agg[[outcome_var] + [col for col in data_agg.columns if col != outcome_var]]
+        data_agg = data_agg[
+            [outcome_var] + [col for col in data_agg.columns if col != outcome_var]
+        ]
         data_agg.dropna(inplace=True)
         if "const" not in data_agg.columns:
             data_agg = sm.add_constant(data_agg)
@@ -1193,7 +1287,14 @@ class TumorAnalysis:
             X = data_agg.drop(columns=[outcome_var], errors="ignore")
             return X, y
 
-    def plot_forest_plot(self, pooled_results, output_dir, cat_vars, analysis_type="Univariate", combo=None):
+    def plot_forest_plot(
+        self,
+        pooled_results,
+        output_dir,
+        cat_vars,
+        analysis_type="Univariate",
+        combo=None,
+    ):
         """
         Create a forest plot from the pooled results of univariate analyses.
 
@@ -1201,7 +1302,7 @@ class TumorAnalysis:
             pooled_results: DataFrame with columns 'Variable', 'OR', 'Lower', 'Upper', and 'p'.
             output_file: File path to save the forest plot image.
         """
-        #print(pooled_results)
+        # print(pooled_results)
         expected_columns = {"MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"}
         if not expected_columns.issubset(pooled_results.columns):
             missing_cols = expected_columns - set(pooled_results.columns)
@@ -1209,10 +1310,10 @@ class TumorAnalysis:
                 f"The DataFrame is missing the following required columns: {missing_cols}"
             )
         # Exclude 'Reference' entries from calculations
-        reference_mask = pooled_results['Subcategory'].str.contains("Reference")
+        reference_mask = pooled_results["Subcategory"].str.contains("Reference")
         references = pooled_results[reference_mask]
         filtered_results = pooled_results[~reference_mask]
-        
+
         # sort pooled results alphabetically, then clear out non-positive and infinite values
         filtered_results = filtered_results[
             (filtered_results["OR"] > 0)
@@ -1222,14 +1323,16 @@ class TumorAnalysis:
         filtered_results.replace([np.inf, -np.inf], np.nan, inplace=True)
         filtered_results.dropna(subset=["OR", "Lower", "Upper", "p"], inplace=True)
         if not filtered_results.empty:
-            max_hr = 100 # remove outliers
+            max_hr = 100  # remove outliers
             filtered_results = filtered_results[filtered_results["Upper"] <= max_hr]
 
         # Include 'Reference' entries for plotting without affecting calculations
         final_results = pd.concat([filtered_results, references], ignore_index=True)
-        final_results.sort_values(by=["MainCategory", "Subcategory"], ascending=[False, False], inplace=True)
+        final_results.sort_values(
+            by=["MainCategory", "Subcategory"], ascending=[False, False], inplace=True
+        )
         final_results.reset_index(drop=True, inplace=True)
-        
+
         # General plot settings + x parameters
         fig, ax = plt.subplots(figsize=(10, 8))
         plt.subplots_adjust(left=0.3, right=0.7)
@@ -1245,11 +1348,9 @@ class TumorAnalysis:
         category_colors = {
             cat: color for cat, color in zip(unique_main_categories, colors)
         }
-        
+
         # annotations on the right
-        ax.margins(
-            x=1
-        )  
+        ax.margins(x=1)
         fig.canvas.draw()  # Need to draw the canvas to update axes positions
 
         # Get the bounds of the axes in figure space
@@ -1259,7 +1360,7 @@ class TumorAnalysis:
         fig_width_inches = fig.get_size_inches()[0]
         axes_width_inches = ax_bounds.width
         annotation_x_position = ax_bounds.x1 + 0.01 * fig_width_inches
-        
+
         # Annotations on the left
         copy_df = self.merged_data.copy()
         unique_pat = copy_df.drop_duplicates(subset=["Patient_ID"])
@@ -1268,7 +1369,7 @@ class TumorAnalysis:
             main_category = row.MainCategory
             subcategory = row.Subcategory
             if "(Reference)" in subcategory:
-                _ , count = self.reference_categories.get(main_category, (None, 0))
+                _, count = self.reference_categories.get(main_category, (None, 0))
             else:
                 if main_category in cat_vars:
                     count = unique_pat[main_category].value_counts().get(subcategory, 0)
@@ -1276,14 +1377,14 @@ class TumorAnalysis:
                     count = len(unique_pat)
             label = f"{main_category} - {subcategory} - {count}"
             y_labels.append(label)
-            
+
             # plotting
             if "(Reference)" not in subcategory:
                 ax.errorbar(
                     row.OR,
                     i,
                     xerr=[[row.OR - row.Lower], [row.Upper - row.OR]],
-                    fmt='o',
+                    fmt="o",
                     color=category_colors[main_category],
                     ecolor=category_colors[main_category],
                     elinewidth=1,
@@ -1320,7 +1421,7 @@ class TumorAnalysis:
                 ax.errorbar(
                     1.0,
                     i,
-                    fmt='^',
+                    fmt="^",
                     color=category_colors[main_category],
                     capsize=3,
                 )
@@ -1332,10 +1433,10 @@ class TumorAnalysis:
                     va="center",
                     fontsize=8,
                     transform=ax.transData,
-                )        
+                )
         ax.set_yticks(range(len(y_labels)))
-        ax.set_yticklabels(y_labels, ha='right')
-        
+        ax.set_yticklabels(y_labels, ha="right")
+
         # titles on the plot
         ax.text(
             -0.35,
@@ -1395,7 +1496,9 @@ class TumorAnalysis:
 
         if analysis_type == "Multivariate":
             combo_str = "_".join(combo)
-            output_file = os.path.join(output_dir, f"{analysis_type}_{combo_str}_forest_plot.png")
+            output_file = os.path.join(
+                output_dir, f"{analysis_type}_{combo_str}_forest_plot.png"
+            )
         else:
             output_file = os.path.join(output_dir, f"{analysis_type}_forest_plot.png")
         plt.savefig(output_file, dpi=300)
@@ -1416,7 +1519,7 @@ class TumorAnalysis:
             pooled_results = pd.DataFrame(
                 columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]
             )
-        
+
         if not isinstance(variables, list):
             variables = [variables]
 
@@ -1433,19 +1536,20 @@ class TumorAnalysis:
                         "Lower": np.nan,
                         "Upper": np.nan,
                         "p": np.nan,
-                    }, index=[0]
+                    },
+                    index=[0],
                 )
                 pooled_results = pd.concat([pooled_results, ref_row], ignore_index=True)
         for idx in result.params.index:
             if idx != "const":
-                parts = idx.split('_')
+                parts = idx.split("_")
                 main_category = parts[0]
-                subcategory = " ".join(parts[1:]) if len(parts) > 1 else "Continuous"   
+                subcategory = " ".join(parts[1:]) if len(parts) > 1 else "Continuous"
 
                 coef = result.params[idx]
                 conf = result.conf_int().loc[idx].values
                 p_val = result.pvalues[idx]
-                
+
                 new_row = pd.DataFrame(
                     {
                         "MainCategory": main_category,
@@ -1456,15 +1560,15 @@ class TumorAnalysis:
                         "p": p_val,
                     },
                     index=[0],
-                    )
-                pooled_results = pd.concat(
-                    [pooled_results, new_row], ignore_index=True
                 )
-                print(f"\t\t\tPooled results updated with {idx}.")                   
-            
+                pooled_results = pd.concat([pooled_results, new_row], ignore_index=True)
+                print(f"\t\t\tPooled results updated with {idx}.")
+
         return pooled_results
 
-    def multivariate_analysis(self, variables, outcome_var, pooled_results_multi, cat_vars):
+    def multivariate_analysis(
+        self, variables, outcome_var, pooled_results_multi, cat_vars
+    ):
         """
         Perform multivariate logistic regression analysis for a given set of variables.
         """
@@ -1475,103 +1579,17 @@ class TumorAnalysis:
                 result = logistic_regression_analysis(y, X)
                 # print(result.summary2())
                 print(f"\t\t\tModel fitted successfully with {variables}.")
-                pooled_results_multi = self.pool_results(result, variables, pooled_results_multi, cat_vars)
-                
+                pooled_results_multi = self.pool_results(
+                    result, variables, pooled_results_multi, cat_vars
+                )
+
             except ExceptionGroup as e:
                 print(f"\t\tError fitting model with {variables}: {e}")
         else:
             print(f"\t\tNo data available for {variables}.")
-        
+
         return pooled_results_multi
-        
-    def prepare_data_for_mixed_model(self, variables, outcome_var, group_var):
-        """
-        Prepare the data for mixed-effects modeling.
 
-        Args:
-            variables (list): List of variable names to include as predictors.
-            outcome_var (str): The name of the outcome variable.
-            group_var (str): The name of the grouping variable, typically subject ID.
-
-        Returns:
-            pd.DataFrame: A DataFrame ready for mixed-effects modeling.
-        """
-        # Filter out necessary columns and drop rows where any of these are NaN
-        data = self.merged_data[variables + [outcome_var, group_var]].dropna()
-
-        # Optionally, implement more sophisticated imputation if necessary
-        # Here's a simple imputation example replacing NaNs with the median of the column
-        for var in variables:
-            if data[var].isna().any():
-                median_value = data[var].median()
-                data[var].fillna(median_value, inplace=True)
-
-        # Check and ensure no NaN values are present in the outcome or group variables
-        if data[outcome_var].isna().any() or data[group_var].isna().any():
-            raise ValueError("Outcome or grouping variable cannot contain NaN values after preparation.")
-
-        print(data.dtypes)
-        #data['Patient_ID'] = data['Patient_ID'].astype('category')
-        data = data.rename(
-            columns={
-                "Volume Change": "Volume_Change",
-                "Volume Change Rate": "Volume_Change_Rate",
-                "Days Between Scans": "Days_Between_Scans",
-                "Follow-Up Time": "Follow_Up_Time",
-                "Patient Classification Binary": "Patient_Classification_Binary",
-        })
-        data['Age_scaled'] = (data['Age'] - data['Age'].mean()) / data['Age'].std()
-        data['Volume_scaled'] = (data['Volume'] - data['Volume'].mean()) / data['Volume'].std()
-        data['Volume_Change_scaled'] = (data['Volume_Change'] - data['Volume_Change'].mean()) / data['Volume_Change'].std()
-        data['Volume_Change_Rate_scaled'] = (data['Volume_Change_Rate'] - data['Volume_Change_Rate'].mean()) / data['Volume_Change_Rate'].std()
-        
-        # Returning the cleaned DataFrame
-        return data
-
-    def run_mixed_effects_model(self, data, grouping_var):
-        """
-        Run mixed-effects logistic regression on longitudinal variables.
-        """
-        #formula = 'Patient_Classification_Binary ~ Age + Volume + Volume_Change + Volume_Change_Rate + Days_Between_Scans + Follow_Up_Time + (1 | Patient_ID)'        
-        formula = 'Patient_Classification_Binary ~ Age + Volume + Volume_Change + Volume_Change_Rate'        
-        model = smf.mixedlm(formula, data=data, groups=data[grouping_var], re_formula="~Age + Volume + Volume_Change + Volume_Change_Rate")
-        result = model.fit()
-        print(result.summary())
-        return result
-
-    def visualize_mixed_model_effects(self, model_result, variable, output_dir):
-        """
-        Visualize the distribution of the variable, fixed effects, and random effects.
-        """
-        _, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
-
-        # Distribution of the variable
-        sns.histplot(self.merged_data[variable], kde=True, ax=ax1, color="gray")
-        ax1.set_title(f'Distribution of {variable}')
-        ax1.set_ylabel('Density')
-
-        # Fixed effects (coefficients and CIs)
-        coef = model_result.fe_params.get(variable, None)
-        if coef:
-            conf = model_result.conf_int().loc[variable]
-            ax2.errorbar(x=[coef], y=[0], xerr=np.array([[coef - conf[0], conf[1] - coef]]).T, fmt='o', color='blue', label='Fixed Effect')
-            ax2.set_title('Fixed Effect Coefficient')
-            ax2.set_ylabel('Coefficient')
-
-        # Random effects plot
-        if hasattr(model_result, 'random_effects'):
-            re = model_result.random_effects
-            random_effects = [re[sub][variable] for sub in re if variable in re[sub]]
-            ax3.scatter(random_effects, np.arange(len(random_effects)), color='green', alpha=0.5)
-            ax3.set_title('Random Effects Distribution')
-            ax3.set_xlabel(variable)
-            ax3.set_ylabel('Subject Index')
-
-        plt.tight_layout()
-        file_name = f"{variable}_effect_size_distribution.png"
-        plt.savefig(os.path.join(output_dir, file_name))
-        plt.close()
-  
     #####################################
     # CURVE PLOTTING AND TREND ANALYSIS #
     #####################################
@@ -1941,9 +1959,7 @@ class TumorAnalysis:
             median_follow_up_y = median_follow_up / 365.25
             max_follow_up_y = max_follow_up / 365.25
             min_follow_up_y = min_follow_up / 365.25
-            write_stat(
-                f"\t\tMedian Follow-Up Time: {median_follow_up_y:.2f} years"
-            )
+            write_stat(f"\t\tMedian Follow-Up Time: {median_follow_up_y:.2f} years")
             write_stat(f"\t\tMaximum Follow-Up Time: {max_follow_up_y:.2f} years")
             write_stat(f"\t\tMinimum Follow-Up Time: {min_follow_up_y:.2f} years")
 
@@ -2002,27 +2018,46 @@ class TumorAnalysis:
         axs[0, 0].set_ylabel("Follow-Up Time [days]")
 
         # Violin plot for number of scans per patient per dataset
-        scans_per_patient = self.merged_data.groupby(["Dataset", "Patient_ID"]).size().reset_index(name="Number of Scans")        
-        #if scans_per_patient["Number of Scans"] == 0:
-        scans_per_patient.loc[scans_per_patient["Number of Scans"] == 0, "Number of Scans"] = 3        
-        sns.violinplot(x="Dataset", y="Number of Scans", data=scans_per_patient, ax=axs[0, 1])
-        sns.stripplot(x="Dataset", y="Number of Scans", data=scans_per_patient, ax=axs[0, 1], color="black", size=3, alpha=0.5)
+        scans_per_patient = (
+            self.merged_data.groupby(["Dataset", "Patient_ID"])
+            .size()
+            .reset_index(name="Number of Scans")
+        )
+        # if scans_per_patient["Number of Scans"] == 0:
+        scans_per_patient.loc[
+            scans_per_patient["Number of Scans"] == 0, "Number of Scans"
+        ] = 3
+        sns.violinplot(
+            x="Dataset", y="Number of Scans", data=scans_per_patient, ax=axs[0, 1]
+        )
+        sns.stripplot(
+            x="Dataset",
+            y="Number of Scans",
+            data=scans_per_patient,
+            ax=axs[0, 1],
+            color="black",
+            size=3,
+            alpha=0.5,
+        )
         axs[0, 1].set_title("Distribution of Number of Scans per Patient")
         axs[0, 1].set_xlabel("Dataset")
         axs[0, 1].set_ylabel("Number of Scans")
-        
-        
+
         # Violin plot for follow-up interval distribution per dataset
         sns.violinplot(y="Dataset", x="Days Between Scans", data=data, ax=axs[1, 0])
         axs[1, 0].set_title("Distribution of Follow-Up Intervals")
         axs[1, 0].set_ylabel("Dataset")
         axs[1, 0].set_xlabel("Time Between Scans [days]")
         # Bar plot for progression classification per dataset
-        classification_counts = data.groupby(["Dataset", "Patient Classification"]).size().unstack()
+        classification_counts = (
+            data.groupby(["Dataset", "Patient Classification"]).size().unstack()
+        )
         colors = [NORD_PALETTE[2], NORD_PALETTE[1], NORD_PALETTE[0]]
-        #colors = ["red","blue", "green"]
+        # colors = ["red","blue", "green"]
 
-        classification_percentages = classification_counts.div(classification_counts.sum(axis=1), axis=0) * 100
+        classification_percentages = (
+            classification_counts.div(classification_counts.sum(axis=1), axis=0) * 100
+        )
         classification_counts.plot(kind="bar", ax=axs[1, 1], color=colors)
         axs[1, 1].set_title("Patient Classification per Dataset")
         axs[1, 1].set_xlabel("Dataset")
@@ -2035,10 +2070,14 @@ class TumorAnalysis:
             dataset_idx = i // classification_counts.shape[1]
             class_idx = i % classification_counts.shape[1]
             if class_idx < classification_percentages.shape[1]:
-                axs[1, 1].annotate(f"{classification_percentages.iloc[dataset_idx, class_idx]:.1f}%",
-                                (p.get_x() + p.get_width() / 2., p.get_height()),
-                                ha="center", va="bottom", fontsize=8, rotation=0)
-
+                axs[1, 1].annotate(
+                    f"{classification_percentages.iloc[dataset_idx, class_idx]:.1f}%",
+                    (p.get_x() + p.get_width() / 2.0, p.get_height()),
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    rotation=0,
+                )
 
         # Adjust the spacing between subplots
         plt.tight_layout()
@@ -2046,46 +2085,64 @@ class TumorAnalysis:
         # Display the plot
         file_name = os.path.join(output_dir, "dataset_comparison.png")
         plt.savefig(file_name, dpi=300)
-    
+
     def create_cohort_table(self, categorical_vars, continuous_vars):
         """
         Create a table comparing the two cohorts based on the variables of interest.
         """
         cohort_var = "Dataset"
         data = self.merged_data.copy()
-        cohort_table = pd.DataFrame(columns=['Variable', 'Cohort 1', 'Cohort 2', 'P-value'])
-        aggregated_data = data.groupby(['Patient_ID', cohort_var]).last().reset_index()
+        cohort_table = pd.DataFrame(
+            columns=["Variable", "Cohort 1", "Cohort 2", "P-value"]
+        )
+        aggregated_data = data.groupby(["Patient_ID", cohort_var]).last().reset_index()
         aggregated_data = aggregated_data.dropna(subset=continuous_vars)
         for var in categorical_vars + continuous_vars:
-            cohort1_data = aggregated_data[aggregated_data[cohort_var] == aggregated_data[cohort_var].unique()[0]]
-            cohort2_data = aggregated_data[aggregated_data[cohort_var] == aggregated_data[cohort_var].unique()[1]]
-            
+            cohort1_data = aggregated_data[
+                aggregated_data[cohort_var] == aggregated_data[cohort_var].unique()[0]
+            ]
+            cohort2_data = aggregated_data[
+                aggregated_data[cohort_var] == aggregated_data[cohort_var].unique()[1]
+            ]
+
             if var in categorical_vars:
-                contingency_table = pd.crosstab(aggregated_data[cohort_var], aggregated_data[var])
+                contingency_table = pd.crosstab(
+                    aggregated_data[cohort_var], aggregated_data[var]
+                )
                 if contingency_table.shape[0] == 2 and contingency_table.shape[1] == 2:
                     _, p_val = fisher_exact(contingency_table)
                 else:
                     _, p_val, _, _ = chi2_contingency(contingency_table)
-                
-                cohort1_value = contingency_table.loc[aggregated_data[cohort_var].unique()[0]].to_dict()
-                cohort2_value = contingency_table.loc[aggregated_data[cohort_var].unique()[1]].to_dict()
-            else:    
+
+                cohort1_value = contingency_table.loc[
+                    aggregated_data[cohort_var].unique()[0]
+                ].to_dict()
+                cohort2_value = contingency_table.loc[
+                    aggregated_data[cohort_var].unique()[1]
+                ].to_dict()
+            else:
                 if len(cohort1_data) >= 30 and len(cohort2_data) >= 30:
                     _, p_val = ttest_ind(cohort1_data[var], cohort2_data[var])
                 else:
                     _, p_val = mannwhitneyu(cohort1_data[var], cohort2_data[var])
-                
-                cohort1_value = f"{cohort1_data[var].mean():.2f} ± {cohort1_data[var].std():.2f}"
-                cohort2_value = f"{cohort2_data[var].mean():.2f} ± {cohort2_data[var].std():.2f}"
-            
-            new_row = pd.DataFrame({
-                'Variable': [var],
-                'Cohort 1': [cohort1_value],
-                'Cohort 2': [cohort2_value],
-                'P-value': [f"{p_val:.3f}"]
-            })
+
+                cohort1_value = (
+                    f"{cohort1_data[var].mean():.2f} ± {cohort1_data[var].std():.2f}"
+                )
+                cohort2_value = (
+                    f"{cohort2_data[var].mean():.2f} ± {cohort2_data[var].std():.2f}"
+                )
+
+            new_row = pd.DataFrame(
+                {
+                    "Variable": [var],
+                    "Cohort 1": [cohort1_value],
+                    "Cohort 2": [cohort2_value],
+                    "P-value": [f"{p_val:.3f}"],
+                }
+            )
             cohort_table = pd.concat([cohort_table, new_row], ignore_index=True)
-        
+
         return cohort_table
 
     ##########################################
@@ -2104,18 +2161,29 @@ class TumorAnalysis:
         # pre_treatment_data as df copy for KM curves
         # only patients who showed tumor progression before the first treatment
         analysis_data_pre = self.merged_data.copy()
-        progression_data = analysis_data_pre.groupby("Patient_ID").apply(self.calculate_progression)
+        progression_data = analysis_data_pre.groupby("Patient_ID").apply(
+            self.calculate_progression
+        )
         progression_data = progression_data.reset_index(drop=False)
         # consider on the one side the merging back to the first data frame and continue with the analysis dataframe at the same time
-        self.merged_data = pd.merge(self.merged_data, progression_data, on="Patient_ID", how="left")
-        analysis_data_pre = pd.merge(analysis_data_pre, progression_data[['Patient_ID', 'Age at First Progression']], on="Patient_ID", how="left")
-        
+        self.merged_data = pd.merge(
+            self.merged_data, progression_data, on="Patient_ID", how="left"
+        )
+        analysis_data_pre = pd.merge(
+            analysis_data_pre,
+            progression_data[["Patient_ID", "Age at First Progression"]],
+            on="Patient_ID",
+            how="left",
+        )
+
         analysis_data_pre = analysis_data_pre[
             analysis_data_pre["Age at First Diagnosis"]
             < analysis_data_pre["Age at First Treatment"]
         ]
         analysis_data_pre.loc[:, "Duration"] = (
-            analysis_data_pre["Age at First Progression"].fillna(analysis_data_pre["Age at Last Clinical Follow-Up"])
+            analysis_data_pre["Age at First Progression"].fillna(
+                analysis_data_pre["Age at Last Clinical Follow-Up"]
+            )
             - analysis_data_pre["Age at First Diagnosis"]
         )
 
@@ -2125,14 +2193,16 @@ class TumorAnalysis:
         analysis_data_pre = analysis_data_pre.dropna(
             subset=["Duration", "Event_Occurred"]
         )
-        
+
         for element in stratify_by:
             if element is not None:
-                self.kaplan_meier_analysis(analysis_data_pre, output_dir, element, prefix)
+                self.kaplan_meier_analysis(
+                    analysis_data_pre, output_dir, element, prefix
+                )
             else:
                 self.kaplan_meier_analysis(analysis_data_pre, output_dir, prefix=prefix)
                 # self.cox_proportional_hazards_analysis(analysis_data_pre, output_dir)
-            
+
     def kaplan_meier_analysis(self, data, output_dir, stratify_by=None, prefix=""):
         """
         Kaplan-Meier survival analysis for time-to-event data.
@@ -2177,22 +2247,29 @@ class TumorAnalysis:
         Calculate the age at first progression and time to progression for each patient.
         """
         baseline_volume = group.iloc[0]["Volume"]
-        progression_threshold = baseline_volume * float(f"1.{self.progression_threshold}")
-        
+        progression_threshold = baseline_volume * float(
+            f"1.{self.progression_threshold}"
+        )
+
         progression_mask = group["Volume"] >= progression_threshold
         if progression_mask.any():
             first_progression_index = progression_mask.idxmax()
             age_at_first_progression = group.loc[first_progression_index, "Age"]
             time_to_progression = age_at_first_progression - group.iloc[0]["Age"]
             age_group_at_progression = group.loc[first_progression_index, "Age Group"]
-            
-            volume_change_threshold = baseline_volume * float(f"1.{self.volume_change_threshold}")  # 10% 
+
+            volume_change_threshold = baseline_volume * float(
+                f"1.{self.volume_change_threshold}"
+            )  # 10%
             volume_change_mask = group["Volume"] >= volume_change_threshold
-            
+
             if volume_change_mask.any():
                 first_volume_change_index = volume_change_mask.idxmax()
                 age_at_volume_change = group.loc[first_volume_change_index, "Age"]
-                if pd.notnull(age_at_first_progression) and age_at_first_progression > age_at_volume_change:
+                if (
+                    pd.notnull(age_at_first_progression)
+                    and age_at_first_progression > age_at_volume_change
+                ):
                     time_gap = age_at_first_progression - age_at_volume_change
                 else:
                     time_gap = 0
@@ -2201,30 +2278,41 @@ class TumorAnalysis:
         else:
             age_at_first_progression = group["Age at Last Clinical Follow-Up"].max()
             age_at_volume_change = group["Age at Last Clinical Follow-Up"].max()
-            time_to_progression = 0  
+            time_to_progression = 0
             time_gap = 0
             age_group_at_progression = group["Age Group"].iloc[-1]
-        
-        return pd.Series({"Age at First Progression": age_at_first_progression,
-                          "Age Group at Progression": age_group_at_progression,
-                          "Age at Volume Change": age_at_volume_change,
-                          "Time to Progression": time_to_progression, 
-                          "Time Gap": time_gap})
+
+        return pd.Series(
+            {
+                "Age at First Progression": age_at_first_progression,
+                "Age Group at Progression": age_group_at_progression,
+                "Age at Volume Change": age_at_volume_change,
+                "Time to Progression": time_to_progression,
+                "Time Gap": time_gap,
+            }
+        )
 
     def preprocess_data_hz_model(self, data):
         """
         Preprocess the data for Cox proportional hazards analysis.
         """
         analysis_data = data.copy()
-        list_of_columns = ["Follow-Up Time","Patient_ID", "Date", "Scan_ID", "Dataset", # "Volume RollMean" 
-                           # "Volume RollMedian", "Volume RollStd", "Normalized Volume RollMean", "Normalized Volume RollMedian", 
-                           # "Normalized Volume RollStd", "Volume Change RollMean", "Volume Change RollMedian", "Volume Change RollStd",
-                           # "Volume Change Rate RollMean", "Volume Change Rate RollMedian", "Volume Change Rate RollStd"
-                           ]
+        list_of_columns = [
+            "Follow-Up Time",
+            "Patient_ID",
+            "Date",
+            "Scan_ID",
+            "Dataset",  # "Volume RollMean"
+            # "Volume RollMedian", "Volume RollStd", "Normalized Volume RollMean", "Normalized Volume RollMedian",
+            # "Normalized Volume RollStd", "Volume Change RollMean", "Volume Change RollMedian", "Volume Change RollStd",
+            # "Volume Change Rate RollMean", "Volume Change Rate RollMedian", "Volume Change Rate RollStd"
+        ]
         analysis_data.drop(columns=list_of_columns, inplace=True)
 
         # Identify column types and adjust: continuous > scaling, categorical > encoding
-        categorical_columns = analysis_data.select_dtypes(include=["category"]).columns.tolist()
+        categorical_columns = analysis_data.select_dtypes(
+            include=["category"]
+        ).columns.tolist()
         analysis_data = pd.get_dummies(analysis_data, columns=categorical_columns)
 
         print(f"Total number of rows before filtering: {analysis_data.shape[0]}")
@@ -2238,34 +2326,35 @@ class TumorAnalysis:
             print(f"Warning: {nan_rows.sum()} rows contain NaN values.")
             analysis_data = analysis_data[~nan_rows]
             print(f"Total number of rows after NaN filtering: {analysis_data.shape[0]}")
-        
-        #continuous_columns = analysis_data.select_dtypes(include=[np.number]).columns.difference(analysis_data.columns[analysis_data.columns.str.contains('_')]).tolist()
-        #scaler = StandardScaler()
-        #analysis_data[continuous_columns] = scaler.fit_transform(analysis_data[continuous_columns])
-                
+
+        # continuous_columns = analysis_data.select_dtypes(include=[np.number]).columns.difference(analysis_data.columns[analysis_data.columns.str.contains('_')]).tolist()
+        # scaler = StandardScaler()
+        # analysis_data[continuous_columns] = scaler.fit_transform(analysis_data[continuous_columns])
+
         if (analysis_data["Duration"] <= 0).any():
-            raise ValueError("The 'Duration' column contains non-positive values. Please ensure all durations are positive.")
-            
-        
+            raise ValueError(
+                "The 'Duration' column contains non-positive values. Please ensure all durations are positive."
+            )
+
         # calculate_vif(analysis_data.drop(columns=["Duration", "Event_Occurred"]), checks=True)
         # Handle missing values
         analysis_data = analysis_data.dropna(subset=["Duration", "Event_Occurred"])
 
         return analysis_data
-    
+
     def cox_proportional_hazards_analysis(self, data, output_dir):
         """
-        Cox proportional hazards analysis for time-to-event data.        
+        Cox proportional hazards analysis for time-to-event data.
         """
         analysis_data = self.preprocess_data_hz_model(data)
         print(analysis_data.dtypes)
-        
+
         cph = CoxPHFitter(baseline_estimation_method="spline", n_baseline_knots=4)
         cph.fit(analysis_data, duration_col="Duration", event_col="Event_Occurred")
-        #check = proportional_hazard_test(cph, analysis_data)
-        #check.print_summary()
+        # check = proportional_hazard_test(cph, analysis_data)
+        # check.print_summary()
         cph.print_summary()
-        
+
         # Visualize the survival curves
         ax = cph.plot()
         ax.set_title("Survival Curves from Cox Model")
@@ -2277,21 +2366,29 @@ class TumorAnalysis:
         plt.savefig(cox_plot, dpi=300)
         plt.close()
         print("\t\tSaved Cox proportional hazards plot.")
-        
+
         # Visualize the partial effects of covariates
         plt.figure(figsize=(8, 6))
-        cph.plot_partial_effects_on_outcome(covariates=["BRAF Status_Fusion","BRAF Status_V600E"], values=[[0, 1], [10, 20]], plot_baseline=False)
+        cph.plot_partial_effects_on_outcome(
+            covariates=["BRAF Status_Fusion", "BRAF Status_V600E"],
+            values=[[0, 1], [10, 20]],
+            plot_baseline=False,
+        )
         plt.title("Log-Log Survival Curves for Covariates")
         plt.xlabel("Log-Time")
         plt.ylabel("Log-Survival Probability")
         log_log_plot = os.path.join(surv_dir, "log_log_survival_plot.png")
         plt.savefig(log_log_plot, dpi=300)
         plt.close()
-        
+
         # Visualize the concordance index
         print(analysis_data["Duration"].shape[0])
         print(analysis_data["Event_Occurred"].shape[0])
-        c_index = concordance_index(analysis_data["Duration"], -cph.predict_partial_hazard(analysis_data), analysis_data["Event_Occurred"])
+        c_index = concordance_index(
+            analysis_data["Duration"],
+            -cph.predict_partial_hazard(analysis_data),
+            analysis_data["Event_Occurred"],
+        )
         plt.figure(figsize=(8, 6))
         plt.bar(["C-index"], [c_index], color="skyblue", edgecolor="black")
         plt.xlabel("Metric")
@@ -2300,38 +2397,51 @@ class TumorAnalysis:
         c_index_plot = os.path.join(surv_dir, "c_index_plot.png")
         plt.savefig(c_index_plot, dpi=300)
         plt.close()
-        
+
         print("\t\tSaved C-index plot.")
-        
+
     def visualize_time_gap(self, output_dir):
         """
         Visualize the distribution of time gaps between volume change and progression.
         """
-        progression_data = self.merged_data.groupby("Patient_ID").apply(self.calculate_progression)
+        progression_data = self.merged_data.groupby("Patient_ID").apply(
+            self.calculate_progression
+        )
         time_gap_data = progression_data["Time Gap"].dropna()
-        time_gap_data = time_gap_data[time_gap_data > 0]  # Filter out non-positive values
+        time_gap_data = time_gap_data[
+            time_gap_data > 0
+        ]  # Filter out non-positive values
         _, ax = plt.subplots(figsize=(8, 6))
-        sns.histplot(time_gap_data, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax)
-        
+        sns.histplot(
+            time_gap_data, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax
+        )
+
         plt.xlabel("Time Gap (Days)")
         plt.ylabel("Frequency")
         plt.title("Distribution of Time Gap between Volume Change and Progression")
-        
+
         # Add summary statistics to the plot
         mean_gap = np.mean(time_gap_data)
         median_gap = np.median(time_gap_data)
-        ax.axvline(mean_gap, color='red', linestyle='--', label=f'Mean: {mean_gap:.2f} days')
-        ax.axvline(median_gap, color='green', linestyle='--', label=f'Median: {median_gap:.2f} days')
+        ax.axvline(
+            mean_gap, color="red", linestyle="--", label=f"Mean: {mean_gap:.2f} days"
+        )
+        ax.axvline(
+            median_gap,
+            color="green",
+            linestyle="--",
+            label=f"Median: {median_gap:.2f} days",
+        )
         ax.legend()
-        
+
         surv_dir = os.path.join(output_dir, "survival_plots")
         os.makedirs(surv_dir, exist_ok=True)
         time_gap_plot = os.path.join(surv_dir, "time_gap_plot.png")
         plt.savefig(time_gap_plot, dpi=300)
         plt.close()
-        
+
         print("\t\tSaved time gap plot.")
-    
+
     #################
     # MAIN ANALYSIS #
     #################
@@ -2391,25 +2501,31 @@ class TumorAnalysis:
         if correlation_cfg.ANALYSIS_PRE_TREATMENT:
             prefix = f"{self.cohort}_pre_treatment"
             print(f"Step {step_idx}: Starting main analyses {prefix}...")
-        
+
             if self.merged_data.isnull().values.any():
-                string_columns = self.merged_data.select_dtypes(include=['string']).columns
-                self.merged_data[string_columns] = self.merged_data[string_columns].apply(pd.to_numeric, errors='coerce')
+                string_columns = self.merged_data.select_dtypes(
+                    include=["string"]
+                ).columns
+                self.merged_data[string_columns] = self.merged_data[
+                    string_columns
+                ].apply(pd.to_numeric, errors="coerce")
                 self.merged_data.replace(np.nan, np.inf, inplace=True)
 
             # Survival analysis
             stratify_by_list = [
-               "Location",
-               "Sex",
-               "BRAF Status",
-               "Age Group",
-               "Symptoms",
-               "Histology",
-               "Treatment Type",
-               "Received Treatment",
-               None
+                "Location",
+                "Sex",
+                "BRAF Status",
+                "Age Group",
+                "Symptoms",
+                "Histology",
+                "Treatment Type",
+                "Received Treatment",
+                None,
             ]
-            self.time_to_event_analysis(prefix, output_dir=output_stats, stratify_by=stratify_by_list)
+            self.time_to_event_analysis(
+                prefix, output_dir=output_stats, stratify_by=stratify_by_list
+            )
             self.visualize_time_gap(output_dir=output_stats)
 
             # Trajectories & Trend analysis
@@ -2480,22 +2596,24 @@ class TumorAnalysis:
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     if correlation_cfg.COHORT == "JOINT":
-            data_paths = {
-                "clinical_data_paths": correlation_cfg.CLINICAL_CSV_PATHS,
-                "volumes_data_paths": [
-                    correlation_cfg.VOLUMES_DATA_PATHS["bch"],
-                    correlation_cfg.VOLUMES_DATA_PATHS["cbtn"]
-                ]
-            }
+        data_paths = {
+            "clinical_data_paths": correlation_cfg.CLINICAL_CSV_PATHS,
+            "volumes_data_paths": [
+                correlation_cfg.VOLUMES_DATA_PATHS["bch"],
+                correlation_cfg.VOLUMES_DATA_PATHS["cbtn"],
+            ],
+        }
     else:
         data_paths = {
-            "clinical_data_paths": correlation_cfg.CLINICAL_CSV_PATHS[correlation_cfg.COHORT.lower()],
-            "volumes_data_paths": [correlation_cfg.VOLUMES_DATA_PATHS[correlation_cfg.COHORT.lower()]]
+            "clinical_data_paths": correlation_cfg.CLINICAL_CSV_PATHS[
+                correlation_cfg.COHORT.lower()
+            ],
+            "volumes_data_paths": [
+                correlation_cfg.VOLUMES_DATA_PATHS[correlation_cfg.COHORT.lower()]
+            ],
         }
 
-    analysis = TumorAnalysis(
-        data_paths,
-        cohort=correlation_cfg.COHORT)
+    analysis = TumorAnalysis(data_paths, cohort=correlation_cfg.COHORT)
 
     os.makedirs(correlation_cfg.OUTPUT_DIR_CORRELATIONS, exist_ok=True)
     os.makedirs(correlation_cfg.OUTPUT_DIR_STATS, exist_ok=True)
