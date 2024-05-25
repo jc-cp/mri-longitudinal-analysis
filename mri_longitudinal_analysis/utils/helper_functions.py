@@ -8,7 +8,6 @@ from scipy.optimize import curve_fit
 from scipy.stats import norm, zscore, pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr, kruskal, fisher_exact, mannwhitneyu
 from statsmodels.stats.multitest import multipletests
 import statsmodels.api as sm
-import statsmodels.formula.api as smf
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression, LinearRegression
@@ -524,9 +523,7 @@ def logistic_regression_analysis(y, x, regularization=None, C=1.0):
 def stepwise_selection(y, x):
     """
     Perform stepwise variable selection for logistic regression.
-    """
-    full_model = sm.Logit(y, x).fit(disp=0, maxiter=100, method='lbfgs')
-    
+    """    
     # Perform forward stepwise selection
     selected_model = sm.Logit(y, np.ones((len(y), 1))).fit(disp=0, maxiter=100, method='lbfgs')
     remaining_vars = set(x.columns)
@@ -567,7 +564,7 @@ def calculate_vif(X, checks=False):
         'VIF': [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
     })
 
-    print("\nVIF Calculation Results:")
+    print("\tVIF Calculation Results:")
     print(vif_data)
 
 #######################################
@@ -929,7 +926,7 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     # Unique classifications & palette
     data = data[data["Time since First Scan"] <= 4000]
     classifications = data["Classification"].unique()
-
+    #pylint: disable=unused-variable
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
     #colors = [palette[1], palette[2], palette[0]]
     colors =  ["blue", "red", "green"]
@@ -1037,6 +1034,7 @@ def plot_individual_trajectories(
         median_palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(categories))
         legend_handles = []
 
+        #pylint: disable=unused-variable
         for (category, patient_color), median_color in zip(
             zip(categories, patient_palette), median_palette
         ):
