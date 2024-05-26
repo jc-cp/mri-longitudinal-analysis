@@ -10,7 +10,7 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 import statsmodels.api as sm
-from scipy.stats import shapiro, ttest_ind, chi2_contingency, mannwhitneyu, fisher_exact
+from scipy.stats import shapiro, ttest_ind, chi2_contingency, mannwhitneyu, fisher_exact, levene
 from cfg.src import correlation_cfg
 from cfg.utils.helper_functions_cfg import NORD_PALETTE
 from lifelines import KaplanMeierFitter, CoxPHFitter
@@ -26,6 +26,7 @@ from utils.helper_functions import (
     calculate_propensity_scores,
     sensitivity_analysis,
     spearman_correlation,
+    pearson_correlation,
     ttest,
     zero_fill,
     check_balance,
@@ -44,9 +45,7 @@ from utils.helper_functions import (
     consistency_check,
     kruskal_wallis_test,
     fisher_exact_test,
-    # mann_whitney_u_test,
     logistic_regression_analysis,
-    # stepwise_selection,
     # calculate_vif,
 )
 
@@ -73,8 +72,7 @@ class TumorAnalysis:
         self.clinical_data_reduced = pd.DataFrame()
         self.post_treatment_data = pd.DataFrame()
         self.merged_data = pd.DataFrame()
-        self.p_values = []
-        self.coef_values = []
+        self.results = {}
         self.progression_threshold = correlation_cfg.PROGRESSION_THRESHOLD
         self.volume_change_threshold = correlation_cfg.CHANGE_THRESHOLD
         self.caliper = correlation_cfg.CALIPER
@@ -790,70 +788,75 @@ class TumorAnalysis:
         ]
         outcome_var = "Patient Classification Binary"
         # for full blown out comparison uncomment the following lines
-        # for num_var in numerical_vars:
-        #     for cat_var in categorical_vars:
-        #         if self.merged_data[cat_var].nunique() == 2:
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 output_dir,
-        #                 method="t-test",
-        #             )
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 output_dir,
-        #                 method="point-biserial",
-        #             )
-        #         else:
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 output_dir,
-        #                 method="ANOVA",
-        #             )
-        #     filtered_vars = [
-        #         var
-        #         for var in numerical_vars
-        #         if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
-        #     ]
-        #     for other_num_var in filtered_vars:
-        #         if other_num_var != num_var:
-        #             self.analyze_correlation(
-        #                 num_var,
-        #                 other_num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 output_dir,
-        #                 method="spearman",
-        #             )
-        #             self.analyze_correlation(
-        #                 num_var,
-        #                 other_num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 output_dir,
-        #                 method="pearson",
-        #             )
-        # aggregated_data = (
-        #     self.merged_data.sort_values("Date").groupby("Patient_ID", as_index=False).last()
-        # )
-        # for cat_var in categorical_vars:
-        #     for other_cat_var in categorical_vars:
-        #         if cat_var != other_cat_var:
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 other_cat_var,
-        #                 aggregated_data,
-        #                 prefix,
-        #                 output_dir,
-        #             )
+        correlation_dir = os.path.join(output_dir, "correlations")
+        os.makedirs(correlation_dir, exist_ok=True)
+        for num_var in numerical_vars:
+            for cat_var in categorical_vars:
+                if self.merged_data[cat_var].nunique() == 2:
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="t-test",
+                    )
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="point-biserial",
+                    )
+                else:
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type=None,
+                    )
+            
+            filtered_vars = [
+                var
+                for var in numerical_vars
+                if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
+            ]
+            for other_num_var in filtered_vars:
+                if other_num_var != num_var:
+                    self.analyze_correlation(
+                        num_var,
+                        other_num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="Spearman",
+                    )
+                    self.analyze_correlation(
+                        num_var,
+                        other_num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="Pearson",
+                    )
+        
+        aggregated_data = (
+            self.merged_data.sort_values("Age").groupby("Patient_ID", as_index=False).last()
+        )
+        for cat_var in categorical_vars:
+            for other_cat_var in categorical_vars:
+                if cat_var != other_cat_var:
+                    self.analyze_correlation(
+                        cat_var,
+                        other_cat_var,
+                        aggregated_data,
+                        prefix,
+                        correlation_dir,
+                        test_type=None
+                    )
 
         ##############################################
         ##### Cohort Table with basic statistics #####
@@ -951,7 +954,7 @@ class TumorAnalysis:
         print("\t\tMulti-variate Analysis done! Forest Plots saved.")
 
     def analyze_correlation(
-        self, x_val, y_val, data, prefix, output_dir, method="spearman"
+        self, x_val, y_val, data, prefix, output_dir, test_type
     ):
         """
         Perform and print the results of a statistical test to analyze the correlation
@@ -962,43 +965,46 @@ class TumorAnalysis:
         - y_val (str): The name of the second variable.
         - data (DataFrame): The data containing the variables.
         - prefix (str): The prefix to be used for naming visualizations.
-        - method (str): The statistical method to be used (default is "spearman").
+        - test_type (str): The statistical method to be used.
 
         Updates the class attributes with the results of the test and prints the outcome.
         """
         test_result, coef, p_val = None, None, None  # Initialize test_result
-        test_type = ""
         x_dtype = data[x_val].dtype
         y_dtype = data[y_val].dtype
 
         if pd.api.types.is_numeric_dtype(x_dtype) and pd.api.types.is_numeric_dtype(
             y_dtype
         ):
-            coef, p_val = spearman_correlation(data[x_val], data[y_val])
-            test_result = (coef, p_val)
-            test_type = f"correlation {method}"
+            if test_type == "Spearman":
+                coef, p_val = spearman_correlation(data[x_val], data[y_val])
+                test_result = (coef, p_val)
+            elif test_type == "Pearson":
+                coef, p_val = pearson_correlation(data[x_val], data[y_val])
+                test_result = (coef, p_val)
         elif pd.api.types.is_categorical_dtype(
             x_dtype
         ) and pd.api.types.is_numeric_dtype(y_dtype):
             categories = data[x_val].nunique()
             if categories == 2:
-                if method == "t-test":
-                    t_stat, p_val = ttest(data, x_val, y_val)
-                    test_result = (t_stat, p_val)
-                    test_type = "t-test"
-                if method == "point-biserial":
+                if test_type == "t-test":
+                    if self.check_assumptions(x_val, y_val, data, "t-test"):
+                        t_stat, p_val = ttest(data, x_val, y_val)
+                        test_result = (t_stat, p_val)
+                    else:
+                        print(
+                            f"\t\tCould not perform analysis on {x_val} and {y_val} due to unmet assumptions checks."
+                        )
+                if test_type == "point-biserial":
                     coef, p_val = point_bi_serial(data, x_val, y_val)
                     test_result = (coef, p_val)
-                    test_type = "point-biserial"
             else:
-                groups = [group[y_val].dropna() for name, group in data.groupby(x_val)]
-                normality_tests = [shapiro(group)[1] for group in groups]
-                if all(
-                    p > 0.05 for p in normality_tests
-                ):  # If all groups pass normality test
+                #ANOVA
+                if self.check_assumptions(x_val, y_val, data, "ANOVA"):
                     f_stat, p_val = f_one(data, x_val, y_val)
                     test_result = (f_stat, p_val)
                     test_type = "ANOVA"
+                #Kruskal-Wallis
                 else:
                     test_stat, p_val = kruskal_wallis_test(data, x_val, y_val)
                     test_result = (test_stat, p_val)
@@ -1007,19 +1013,21 @@ class TumorAnalysis:
         elif pd.api.types.is_categorical_dtype(
             x_dtype
         ) and pd.api.types.is_categorical_dtype(y_dtype):
+            # Fisher's Exact Test
             if data[x_val].nunique() == 2 and data[y_val].nunique() == 2:
                 odds_ratio, p_val = fisher_exact_test(data, x_val, y_val)
                 test_result = (odds_ratio, p_val)
                 test_type = "Fisher's Exact"
+            # Chi-squared Test
             else:
                 chi2, p_val, _, _ = chi_squared_test(data, x_val, y_val)
                 test_result = (chi2, p_val)
-                test_type = "chi-squared"
+                test_type = "Chi-squared"
 
-        if test_result:
+        if test_result and test_result[1] < 0.05:
             print(
-                f"\t\t{x_val} and {y_val} - {test_type.title()} Test: Statistic={test_result[0]},"
-                f" P-value={test_result[1]}"
+               f"\t\t{x_val} and {y_val} - {test_type.title()} Test: Statistic={test_result[0]},"
+               f" P-value={test_result[1]}"
             )
             self.visualize_statistical_test(
                 x_val,
@@ -1029,18 +1037,20 @@ class TumorAnalysis:
                 prefix,
                 output_dir,
                 test_type,
-                method=method,
             )
-
-            self.p_values.append(p_val)
-            if coef is not None:
-                self.coef_values.append(coef)
+        elif test_result and not test_result[1] < 0.05:
+            print(
+                f"\t\t{x_val} and {y_val} - {test_type.title()} -> (Not significant)"
+            )
         else:
             print(
                 f"\t\tCould not perform analysis on {x_val} and {y_val} due to incompatible data"
                 " types."
             )
 
+        # save all of the p-values and coefficients in a dictionary call results
+        self.results[(x_val, y_val)] = test_result
+        
     def visualize_statistical_test(
         self,
         x_val,
@@ -1049,8 +1059,7 @@ class TumorAnalysis:
         test_result,
         prefix,
         output_dir,
-        test_type="correlation",
-        method="spearman",
+        test_type,
     ):
         """
         Visualize the result of a statistical test, including correlation heatmaps.
@@ -1062,7 +1071,6 @@ class TumorAnalysis:
             prefix (str): The prefix to be used for naming visualizations.
             test_type (str): The type of statistical test ('correlation', 't-test',
             'anova', 'chi-squared').
-            method (str): The correlation method used ('pearson' or 'spearman'), if applicable.
         """
         stat, p_val = test_result
         title = f"{x_val} vs {y_val} ({test_type.capitalize()}) \n"
@@ -1094,36 +1102,27 @@ class TumorAnalysis:
         y_unit = units.get(y_val, "")
 
         # Plot based on test type
-        if test_type in ["t-test", "ANOVA", "Kruskal-Wallis"]:
-            means = data.groupby(x_val)[y_val].mean()
-            stds = data.groupby(x_val)[y_val].std()
-            se = stds / np.sqrt(data.groupby(x_val)[y_val].count())  # Standard error
-            plt.xticks(rotation=90, fontsize="small")
-            # Bar plot with error bars showing the standard error
-            _, ax = plt.subplots()
-            means.plot(
-                kind="bar", yerr=se, capsize=4, ax=ax, color="skyblue", ecolor="black"
-            )
+        if test_type in ["ANOVA", "Kruskal-Wallis"]:
+            sns.violinplot(x=x_val, y=y_val, data=data)
             title += f"Statistic: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
-        elif test_type == "point-biserial":
+        elif test_type in ["point-biserial", "t-test"]:
             sns.boxplot(x=x_val, y=y_val, data=data)
             title += f"Correlation Coefficient: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
-        elif test_type == "Fisher's Exact":
-            contingency_table = pd.crosstab(data[y_val], data[x_val])
-            sns.heatmap(contingency_table, annot=True, cmap="coolwarm", fmt="g")
-            title += f"Odds Ratio: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
-        elif test_type == "correlation":
+        elif test_type in ["Spearman", "Pearson"]:
             sns.scatterplot(x=x_val, y=y_val, data=data)
             sns.regplot(x=x_val, y=y_val, data=data, scatter=False, color="blue")
             title += (
-                f"{method.title()} correlation coefficient: {stat:.2f}, P-value:"
+                f"{test_type} correlation coefficient: {stat:.2f}, P-value:"
                 f" {p_val:.3e} (N={num_patients})"
             )
-        elif test_type == "chi-squared":
+        elif test_type in ["Chi-squared", "Fisher's Exact"]:
             contingency_table = pd.crosstab(data[y_val], data[x_val])
             sns.heatmap(contingency_table, annot=True, cmap="coolwarm", fmt="g")
-            title += f"Chi2: {stat:.2f}, P-value: {p_val:.3e}, (N={num_patients})"
-
+            if test_type == "Chi-squared":
+                title += f"Chi2: {stat:.2f}, P-value: {p_val:.3e}, (N={num_patients})"
+            else:
+                title += f"Odds Ratio: {stat:.2f}, P-value: {p_val:.3e}, (N={num_patients})"
+        
         plt.title(title)
         if x_unit:
             plt.xlabel(f"{x_val} [{x_unit}]")
@@ -1136,32 +1135,41 @@ class TumorAnalysis:
         plt.tight_layout()
 
         save_file = os.path.join(
-            output_dir, f"{prefix}_{x_val}_vs_{y_val}_{test_type}_{method}.png"
+            output_dir, f"{prefix}_{x_val}_vs_{y_val}_{test_type}.png"
         )
         plt.savefig(save_file)
         plt.close()
 
-        # If the test type is correlation, create a heatmap for the correlation matrix
-        if test_type == "correlation":
-            plt.figure(figsize=(10, 8))
-
-            numeric_data = data.select_dtypes(include=[np.number])
-
-            sns.heatmap(
-                numeric_data.corr(method=method),
-                annot=True,
-                fmt=".2f",
-                cmap="coolwarm",
-                square=True,
-                linewidths=0.5,
-            )
-            plt.title(f"Heatmap of {method.capitalize()} Correlation")
-            plt.tight_layout()
-            heat_map_file = os.path.join(
-                output_dir, f"{prefix}_{method}_correlation_heatmap.png"
-            )
-            plt.savefig(heat_map_file)
-            plt.close()
+    def check_assumptions(self, x_val, y_val, data, test_type):
+        """
+        Function to check the assumptions of the statistical tests.
+        """
+        if test_type in ["t-test", "ANOVA"]:
+            categories = data[x_val].nunique()
+            if categories == 2:
+                group1 = data[data[x_val] == data[x_val].unique()[0]][y_val]
+                group2 = data[data[x_val] == data[x_val].unique()[1]][y_val]
+                if len(group1) < 3 or len(group2) < 3:
+                    return False
+                _, p_norm1 = shapiro(group1)
+                _, p_norm2 = shapiro(group2)
+                _, p_equal_var = levene(group1, group2)
+                return p_norm1 > 0.05 and p_norm2 > 0.05 and p_equal_var > 0.05
+            else:
+                groups = [data[data[x_val] == category][y_val] for category in data[x_val].unique()]
+                if any(len(group) < 3 for group in groups):
+                    return False
+                normality_tests = [shapiro(group)[1] for group in groups]
+                equal_variance_test = levene(*groups)[1] > 0.05
+                return all(p > 0.05 for p in normality_tests) and equal_variance_test
+        elif test_type in ["Spearman", "Pearson"]:
+            if len(data[x_val]) < 3 or len(data[y_val]) < 3:
+                return False
+            _, p_norm_x = shapiro(data[x_val])
+            _, p_norm_y = shapiro(data[y_val])
+            return p_norm_x > 0.05 and p_norm_y > 0.05
+        else:
+            return True
 
     def univariate_analysis(self, variable, outcome_var, pooled_results_uni, cat_vars):
         """
@@ -2109,7 +2117,7 @@ class TumorAnalysis:
                 contingency_table = pd.crosstab(
                     aggregated_data[cohort_var], aggregated_data[var]
                 )
-                if contingency_table.shape[0] == 2 and contingency_table.shape[1] == 2:
+                if cohort1_data[var].nunique() == 2 and cohort2_data[var].nunique() == 2:
                     _, p_val = fisher_exact(contingency_table)
                 else:
                     _, p_val, _, _ = chi2_contingency(contingency_table)
@@ -2122,7 +2130,10 @@ class TumorAnalysis:
                 ].to_dict()
             else:
                 if len(cohort1_data) >= 30 and len(cohort2_data) >= 30:
-                    _, p_val = ttest_ind(cohort1_data[var], cohort2_data[var])
+                    if self.check_assumptions(var, var, cohort1_data, "t-test") and self.check_assumptions(var, var, cohort2_data, "t-test"):
+                        _, p_val = ttest_ind(cohort1_data[var], cohort2_data[var])
+                    else:
+                        _, p_val = mannwhitneyu(cohort1_data[var], cohort2_data[var])
                 else:
                     _, p_val = mannwhitneyu(cohort1_data[var], cohort2_data[var])
 

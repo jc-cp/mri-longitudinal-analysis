@@ -88,8 +88,8 @@ def registration(
     )  # Get list of already processed files
 
     random.shuffle(input_data)
-
-    for index, img_path in enumerate(tqdm(input_data)):
+    count = 0
+    for _, img_path in enumerate(tqdm(input_data)):
         id_ = os.path.basename(img_path)  # Get filename from the full path
         id_ = id_.replace(".nii.gz", "")
         if id_ in processed_files:
@@ -219,7 +219,7 @@ def registration(
                 )
             continue
 
-    count = index + 1
+        count += 1
     print("Registered", count, "scans.")
     print("Problematic IDs:", problematic_ids)
 

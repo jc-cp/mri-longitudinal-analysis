@@ -172,7 +172,7 @@ BCH_GLIOMA_TYPES = {
 }
 
 CBTN_GLIOMA_TYPES = {
-    "neuro": "Glial-neuronal",
+    "neuro": "Glial-neuronal glioma",
     "gang": "Ganglioglioma",
     "astro": "Astrocytoma",
 }
