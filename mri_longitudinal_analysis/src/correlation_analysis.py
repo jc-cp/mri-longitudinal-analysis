@@ -36,17 +36,24 @@ from utils.helper_functions import (
     visualize_fdr_correction,
     save_for_deep_learning,
     categorize_age_group,
-    calculate_group_norms_and_stability,
+    # calculate_group_norms_and_stability,
     classify_patient,
     plot_trend_trajectories,
     plot_individual_trajectories,
-    calculate_percentage_change,
-    visualize_tumor_stability,
+    #calculate_percentage_change,
+    #visualize_tumor_stability,
     consistency_check,
     kruskal_wallis_test,
     fisher_exact_test,
     logistic_regression_analysis,
     # calculate_vif,
+    calculate_stability_index,
+    visualize_stability_index,
+    visualize_individual_indexes,
+    roc_curve_and_auc, 
+    visualize_ind_indexes_distrib,
+    visualize_volume_change, 
+    #grid_search_weights
 )
 
 
@@ -1797,63 +1804,72 @@ class TumorAnalysis:
         """
         print("\tAnalyzing tumor stability:")
         data = data.copy()
-        volume_column = "Normalized Volume"
-        volume_change_column = "Volume Change"
-        data = calculate_group_norms_and_stability(
-            data, volume_column, volume_change_column
-        )
-        # Calculate the overall volume change for each patient
-        data["Overall Volume Change"] = data["Patient_ID"].apply(
-            lambda x: calculate_percentage_change(data, x, volume_column)
-        )
-        # Calculate the Stability Index using weighted scores
-        data["Stability Index"] = (
-            volume_weight * data["Volume Stability Score"]
-            + growth_weight * data["Growth Stability Score"]
-        )
+        # volume_column = "Normalized Volume"
+        # volume_change_column = "Volume Change"
+        # data = calculate_group_norms_and_stability(
+        #     data, volume_column, volume_change_column
+        # )
+        # # Calculate the overall volume change for each patient
+        # data["Overall Volume Change"] = data["Patient_ID"].apply(
+        #     lambda x: calculate_percentage_change(data, x, volume_column)
+        # )
+        # # Calculate the Stability Index using weighted scores
+        # data["Stability Index"] = (
+        #     volume_weight * data["Volume Stability Score"]
+        #     + growth_weight * data["Growth Stability Score"]
+        # )
 
-        # Normalize the Stability Index to have a mean of 1
-        data["Stability Index"] /= np.mean(data["Stability Index"])
+        # # Normalize the Stability Index to have a mean of 1
+        # data["Stability Index"] /= np.mean(data["Stability Index"])
 
-        significant_volume_change = (
-            abs(data["Overall Volume Change"]) >= change_threshold
-        )
-        stable_subset = data.loc[~significant_volume_change, "Stability Index"]
-        mean_stability_index = stable_subset.mean()
-        std_stability_index = stable_subset.std()
-        num_std_dev = 2
-        stability_threshold = mean_stability_index + (num_std_dev * std_stability_index)
+        # significant_volume_change = (
+        #     abs(data["Overall Volume Change"]) >= change_threshold
+        # )
+        # stable_subset = data.loc[~significant_volume_change, "Stability Index"]
+        # mean_stability_index = stable_subset.mean()
+        # std_stability_index = stable_subset.std()
+        # num_std_dev = 2
+        # stability_threshold = mean_stability_index + (num_std_dev * std_stability_index)
 
-        data["Tumor Classification"] = data.apply(
-            lambda row: "Unstable"
-            if abs(row["Overall Volume Change"]) >= change_threshold
-            or row["Stability Index"] > stability_threshold
-            else "Stable",
-            axis=1,
-        ).astype("category")
+        # data["Tumor Classification"] = data.apply(
+        #     lambda row: "Unstable"
+        #     if abs(row["Overall Volume Change"]) >= change_threshold
+        #     or row["Stability Index"] > stability_threshold
+        #     else "Stable",
+        #     axis=1,
+        # ).astype("category")
 
+        tumor_stability_out = os.path.join(output_dir, "tumor_stability_plots")
+        os.makedirs(tumor_stability_out, exist_ok=True)
+        data_n = calculate_stability_index(data)
+        visualize_individual_indexes(data_n, tumor_stability_out)
+        visualize_stability_index(data_n, tumor_stability_out)
+        visualize_volume_change(data_n, tumor_stability_out)
+        visualize_ind_indexes_distrib(data_n, tumor_stability_out)
+        roc_curve_and_auc(data_n, tumor_stability_out)
+        #grid_search_weights(data_n)
         # Map the 'Stability Index' and 'Tumor Classification' to the
         # self.merged_data using the maps
-        m_data = pd.merge(
-            self.merged_data,
-            data[
-                [
-                    "Patient_ID",
-                    "Age",
-                    "Stability Index",
-                    "Tumor Classification",
-                    "Overall Volume Change",
-                ]
-            ],
-            on=["Patient_ID", "Age"],
-            how="left",
-        )
+        # m_data = pd.merge(
+        #     self.merged_data,
+        #     data[
+        #         [
+        #             "Patient_ID",
+        #             "Age",
+        #             "Stability Index",
+        #             "Tumor Classification",
+        #             "Overall Volume Change",
+        #         ]
+        #     ],
+        #     on=["Patient_ID", "Age"],
+        #     how="left",
+        # )
 
-        self.merged_data = m_data
-        self.merged_data.reset_index(drop=True, inplace=True)
-        visualize_tumor_stability(
-            data, output_dir, stability_threshold, change_threshold
-        )
+        # self.merged_data = m_data
+        # self.merged_data.reset_index(drop=True, inplace=True)
+        # visualize_tumor_stability(
+        #     data, output_dir, stability_threshold, change_threshold
+        # )
         print("\t\tSaved tumor stability plots.")
 
     def printout_stats(self, output_file_path, prefix):
@@ -2543,13 +2559,13 @@ class TumorAnalysis:
             self.trajectories(prefix, output_dir=output_stats)
 
             # Tumor stability
-            self.analyze_tumor_stability(
-                data=self.merged_data,
-                output_dir=output_stats,
-                volume_weight=correlation_cfg.VOLUME_WEIGHT,
-                growth_weight=correlation_cfg.GROWTH_WEIGHT,
-                change_threshold=correlation_cfg.CHANGE_THRESHOLD,
-            )
+            # self.analyze_tumor_stability(
+            #     data=self.merged_data,
+            #     output_dir=output_stats,
+            #     volume_weight=correlation_cfg.VOLUME_WEIGHT,
+            #     growth_weight=correlation_cfg.GROWTH_WEIGHT,
+            #     change_threshold=correlation_cfg.CHANGE_THRESHOLD,
+            # )
 
             if self.merged_data.isnull().values.any():
                 print(self.merged_data)

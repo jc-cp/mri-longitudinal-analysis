@@ -20,12 +20,12 @@ COHORT = "CBTN"
 LIMIT_LOADING = 30
 
 # Variables for the dimensionality reduction
-USE_UMAP = False
-USE_TSNE = False
+USE_UMAP = True
+USE_TSNE = True
 
 # Attributes to be used for clustering
 N_CLUSTERS = 3
-KMEANS_VERBOSE = True
+KMEANS_VERBOSE = False
 KMEANS_METRIC = "dtw"
 
 # Plotting
