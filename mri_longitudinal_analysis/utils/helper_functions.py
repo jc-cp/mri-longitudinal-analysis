@@ -1029,6 +1029,19 @@ def plot_individual_trajectories(
     - freq_days (int): Frequency in days for calculating median trajectories.
     """
     plt.figure(figsize=(10, 6))
+    
+    if column == "Volume Change" or column == "Volume Change Rate":
+        mean = np.mean(plot_data[column])
+        std = np.std(plot_data[column])
+        if column == "Volume Change":
+            factor = 2.5
+        elif column == "Volume Change Rate":
+            factor = 0.25
+        threshold = mean + factor * std
+        plot_data = plot_data[plot_data[column] <= threshold]
+        plot_data = plot_data[plot_data[column] >= -threshold]
+
+
     plot_data = plot_data[plot_data["Time since First Scan"] <= time_limit]
     num_patients = plot_data["Patient_ID"].nunique()    
     max_time = plot_data["Time since First Scan"].max()
