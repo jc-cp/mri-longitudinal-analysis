@@ -1,22 +1,26 @@
 """Script containing some additonal functions used thorughout the other main scripts."""
+import os
 import warnings
 from math import isfinite
-import os
+
+import matplotlib.lines as lines
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.optimize import curve_fit
-from scipy.stats import norm, zscore, pearsonr, spearmanr, chi2_contingency, ttest_ind, f_oneway, pointbiserialr, kruskal, fisher_exact, mannwhitneyu
-from statsmodels.stats.multitest import multipletests
-import statsmodels.api as sm
-from statsmodels.stats.outliers_influence import variance_inflation_factor
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.metrics import r2_score
-from sklearn.neighbors import NearestNeighbors
-import matplotlib.pyplot as plt
-import matplotlib.lines as lines
 import seaborn as sns
+import statsmodels.api as sm
 from cfg.utils import helper_functions_cfg
+from scipy.optimize import curve_fit
+from scipy.stats import (chi2_contingency, f_oneway, fisher_exact, kruskal,
+                         mannwhitneyu, norm, pearsonr, pointbiserialr,
+                         spearmanr, ttest_ind, zscore)
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import auc, r2_score, roc_auc_score, roc_curve
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import StandardScaler
+from statsmodels.stats.multitest import multipletests
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 ######################################
 # SMOOTHING and FILTERING OPERATIONS #
@@ -1121,3 +1125,291 @@ def plot_individual_trajectories(
         print(f"\t\tSaved tumor {column} trajectories plot by category: {category_column}.")
     else:
         print(f"\t\tSaved tumor {column} trajectories plot for all patients.")
+
+
+##################################
+# TUMOR STABILITY CLASSIFICATION #
+##################################
+def normalize_index(index):
+    return (index - index.min()) / (index.max() - index.min())
+
+def calculate_percentage_volume_change(data):
+    first_volume = data.groupby('Patient_ID')['Volume'].first()
+    last_volume = data.groupby('Patient_ID')['Volume'].last()
+    percentage_change = ((last_volume - first_volume) / first_volume) * 100
+    return percentage_change.to_dict()
+
+def calculate_intra_tumor_variability_index(data):
+    cv = data.groupby('Patient_ID')['Volume'].std() / data.groupby('Patient_ID')['Volume'].mean()
+    return cv
+    #return np.log1p(cv) # log-scale for visualization
+    
+def calculate_intra_tumor_growth_index(data):
+    data['Volume Change Rate'] = data.groupby('Patient_ID')['Volume'].pct_change()
+    avg_growth_rate = data.groupby('Patient_ID')['Volume Change Rate'].mean()
+    return avg_growth_rate
+    #return np.log1p(avg_growth_rate)
+
+def calculate_inter_tumor_variability_index(data):
+    cv_per_time = data.groupby('Time since First Scan')['Volume'].std() / data.groupby('Time since First Scan')['Volume'].mean()
+    return cv_per_time # cv = coefficient of variation, having different values for each time point
+
+def calculate_inter_tumor_growth_index(data):
+    avg_growth_rate_per_time = data.groupby('Time since First Scan')['Volume Change Rate'].mean()
+    return avg_growth_rate_per_time
+
+def calculate_stability_index(data, intra_var_weight=0.8, intra_growth_weight=0.2, inter_var_weight=0, inter_growth_weight=0):
+    print(data.columns)
+    percentage_volume_change = calculate_percentage_volume_change(data)
+    intra_var_index = calculate_intra_tumor_variability_index(data)
+    intra_growth_index = calculate_intra_tumor_growth_index(data)
+    inter_var_index = calculate_inter_tumor_variability_index(data)
+    inter_growth_index = calculate_inter_tumor_growth_index(data)
+    
+    # Volume percentage change
+    data['Volume Percentage Change'] = data['Patient_ID'].map(percentage_volume_change)
+    data['Volume Percentage Change'] = data['Volume Percentage Change'].clip(lower=-150, upper=300)
+    data['Volume Percentage Change'] = normalize_index(data['Volume Percentage Change'])
+
+    # Intra-tumor indices
+    data['Intra-Tumor Variability Index'] = data['Patient_ID'].map(intra_var_index)
+    data['Intra-Tumor Variability Index'] = normalize_index(data['Intra-Tumor Variability Index'])
+    data['Intra-Tumor Growth Index'] = data['Patient_ID'].map(intra_growth_index)
+    data['Intra-Tumor Growth Index'] = normalize_index(data['Intra-Tumor Growth Index'])
+    
+    # Inter-tumor indices
+    data['Inter-Tumor Variability Index'] = inter_var_index
+    data['Inter-Tumor Growth Index'] = inter_growth_index
+    print(data['Inter-Tumor Variability Index'].describe())
+    print(data['Inter-Tumor Growth Index'].describe())
+    data['Inter-Tumor Variability Index'] = normalize_index(data['Inter-Tumor Variability Index'])
+    data['Inter-Tumor Growth Index'] = normalize_index(data['Inter-Tumor Growth Index'])
+    print(data['Inter-Tumor Variability Index'].describe())
+    print(data['Inter-Tumor Growth Index'].describe())
+    
+    data['Stability Index'] = (
+        intra_var_weight * data['Intra-Tumor Variability Index'] +
+        intra_growth_weight * data['Intra-Tumor Growth Index'] +
+        inter_var_weight * data['Inter-Tumor Variability Index'] + 
+        inter_growth_weight * data['Inter-Tumor Growth Index']
+    )
+    
+    data['Predicted Classification'] = pd.cut(data['Stability Index'], bins=[-float('inf'), 0.1, 0.4, float('inf')], labels=['Stable', 'Progressor', 'Regressor'])
+    
+    return data
+
+def visualize_stability_index(data, output_dir):
+    classifications = data['Patient Classification'].unique()
+    palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
+    color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
+    
+    plt.figure(figsize=(14, 8))
+    
+    plt.subplot(2, 2, 1)
+    sns.histplot(x='Stability Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    plt.title('Distribution of Stability Index')
+    
+    plt.subplot(2, 2, 2)
+    for classification in classifications:
+        subset = data[data['Patient Classification'] == classification]
+        first_patient_plotted = False
+        for patient_id in subset['Patient_ID'].unique():
+            patient_data = subset[subset['Patient_ID'] == patient_id]
+            plt.plot(patient_data['Time since First Scan'], patient_data['Normalized Volume'], alpha=0.7, color=color_mapping[classification], label=classification if not first_patient_plotted else "" ) 
+            first_patient_plotted = True
+    plt.title('Tumor Volume over Time')
+    plt.xlabel('Time since First Scan')
+    plt.ylabel('Volume')
+    plt.legend()
+    
+    plt.subplot(2, 2, 3)
+    sns.boxplot(x='Patient Classification', y='Stability Index', data=data, palette=color_mapping)
+    plt.title('Stability Index Distribution by Patient Classification')
+    
+    plt.subplot(2, 2, 4)
+    sns.heatmap(pd.crosstab(data['Patient Classification'], data['Predicted Classification'], normalize='index'), annot=True, cmap='YlGnBu')
+    plt.title('Patient Classification vs. Predicted Classification')
+    
+    plt.tight_layout()
+    output_file = os.path.join(output_dir, 'stability_index_visualization.png')
+    plt.savefig(output_file, dpi=300)
+
+def visualize_individual_indexes(data, output_dir):
+    classifications = data['Patient Classification'].unique()
+    palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
+    color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
+    plt.figure(figsize=(18, 14))
+    
+    plt.subplot(6, 2, 1)
+    sns.histplot(x='Intra-Tumor Variability Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    plt.title('Distribution of Intra-Tumor Variability Index')
+    
+    plt.subplot(6, 2, 2)
+    sns.histplot(x='Intra-Tumor Growth Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    plt.title('Distribution of Intra-Tumor Growth Index')
+    
+    plt.subplot(6, 2, 3)
+    sns.histplot(x='Inter-Tumor Variability Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    plt.title('Distribution of Inter-Tumor Variability Index')
+    
+    plt.subplot(6, 2, 4)
+    sns.histplot(x='Inter-Tumor Growth Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    plt.title('Distribution of Inter-Tumor Growth Index')
+    
+    plt.subplot(6, 2, 5)
+    sns.scatterplot(x='Intra-Tumor Variability Index', y='Intra-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    plt.title('Intra-Tumor Variability vs. Growth')
+    
+    plt.subplot(6, 2, 6)
+    sns.scatterplot(x='Intra-Tumor Variability Index', y='Inter-Tumor Variability Index', hue='Patient Classification', data=data, palette=color_mapping)
+    plt.title('Intra-Tumor Variability vs. Inter-Tumor Variability')
+    
+    plt.subplot(6, 2, 7)
+    sns.scatterplot(x='Intra-Tumor Growth Index', y='Inter-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    plt.title('Intra-Tumor Growth vs. Inter-Tumor Growth')
+    
+    plt.subplot(6, 2, 8)
+    sns.scatterplot(x='Inter-Tumor Variability Index', y='Inter-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    plt.title('Inter-Tumor Variability vs. Growth')
+    
+    plt.subplot(6, 2, 9)
+    sns.scatterplot(x='Stability Index', y='Intra-Tumor Variability Index', hue='Patient Classification', data=data, palette=color_mapping)
+    plt.title('Intra-Tumor Variability vs. Stability Index')
+    
+    plt.subplot(6, 2, 10)
+    sns.scatterplot(x='Stability Index', y='Intra-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    plt.title('Intra-Tumor Growth vs. Stability Index')
+    
+    plt.subplot(6, 2, 11)
+    sns.scatterplot(x='Stability Index', y='Inter-Tumor Variability Index', hue='Patient Classification', data=data, palette=color_mapping)
+    plt.title('Inter-Tumor Variability CV vs. Stability Index')
+    
+    plt.subplot(6, 2, 12)
+    sns.scatterplot(x='Stability Index', y='Inter-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    plt.title('Inter-Tumor Growth CV vs. Stability Index')
+    
+    plt.tight_layout()
+    output_file = os.path.join(output_dir, 'stability_individual_indexes.png')
+    plt.savefig(output_file, dpi=300)
+    
+def visualize_ind_indexes_distrib(data, output_dir):
+    classifications = data['Patient Classification'].unique()
+    palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
+    color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
+    
+    fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+    sns.boxplot(x='Patient Classification', y='Intra-Tumor Variability Index', data=data, ax=axs[0, 0], palette=color_mapping)
+    sns.boxplot(x='Patient Classification', y='Intra-Tumor Growth Index', data=data, ax=axs[0, 1], palette=color_mapping)
+    sns.boxplot(x='Patient Classification', y='Inter-Tumor Variability Index', data=data, ax=axs[1, 0], palette=color_mapping)
+    sns.boxplot(x='Patient Classification', y='Inter-Tumor Growth Index', data=data, ax=axs[1, 1], palette=color_mapping)
+
+    plt.tight_layout()
+    output_file = os.path.join(output_dir, 'ind_stability_indexes_distrib.png')
+    plt.savefig(output_file, dpi=300)
+    
+def visualize_volume_change(data, output_dir):
+    classifications = data['Patient Classification'].unique()
+    palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
+    color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
+
+    plt.figure(figsize=(12, 6))
+
+    plt.subplot(1, 2, 1)
+    for classification in classifications:
+        subset = data[data['Patient Classification'] == classification]
+        sns.kdeplot(subset['Volume Percentage Change'], label=classification, color=color_mapping[classification], shade=True, alpha=0.7)
+    
+    plt.title('Distribution of Volume Percentage Change by Patient Classification')
+    plt.xlabel('Volume Percentage Change')
+    plt.ylabel('Density')
+    plt.legend()
+    
+    plt.subplot(1, 2, 2)
+    sns.boxplot(x='Patient Classification', y='Volume Percentage Change', data=data, palette=color_mapping)
+    plt.title('Volume Percentage Change Distribution by Patient Classification')
+    plt.xlabel('Patient Classification')
+    plt.ylabel('Volume Percentage Change')
+    plt.legend()
+
+    plt.tight_layout()
+    output_file = os.path.join(output_dir, 'volume_change_distribution.png')
+    plt.savefig(output_file, dpi=300)
+    
+def roc_curve_and_auc(data, output_dir):
+    classifications = data['Patient Classification'].unique()
+    palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
+    color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
+    data = data.dropna(subset=['Patient Classification', 'Stability Index'])
+    
+    true_labels = data['Patient Classification']
+    classes = data['Patient Classification'].unique()
+    predicted_probabilities = data['Stability Index']
+    fpr = {}
+    tpr = {}
+    roc_auc = {}
+    
+    
+    for cls in classes:
+        binary_labels = (true_labels == cls).astype(int)
+        fpr[cls], tpr[cls], _ = roc_curve(binary_labels, predicted_probabilities)
+        roc_auc[cls] = auc(fpr[cls], tpr[cls])
+    
+    plt.figure(figsize=(10, 6))
+    for cls in classes:
+        plt.plot(fpr[cls], tpr[cls], color=color_mapping[cls], label=f'{cls} (AUC={roc_auc[cls]:.2f})')
+    plt.plot([0, 1], [0, 1], linestyle='--', color='gray')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC Curve')
+    plt.legend()
+    plt.tight_layout()
+    output_file = os.path.join(output_dir, 'roc_curve.png')
+    plt.savefig(output_file, dpi=300)
+    
+def grid_search_weights(data):
+
+    print(data[['Intra-Tumor Variability Index', 'Intra-Tumor Growth Index', 'Inter-Tumor Variability Index', 'Inter-Tumor Growth Index']].describe())
+    param_grid = [
+        {'intra_var_weight': 0.3, 'intra_growth_weight': 0.3, 'inter_var_weight': 0.2, 'inter_growth_weight': 0.2},
+        {'intra_var_weight': 0.4, 'intra_growth_weight': 0.4, 'inter_var_weight': 0.1, 'inter_growth_weight': 0.1},
+        {'intra_var_weight': 0.45, 'intra_growth_weight': 0.45, 'inter_var_weight': 0.05, 'inter_growth_weight': 0.05},
+        {'intra_var_weight': 0.59, 'intra_growth_weight': 0.29, 'inter_var_weight': 0.01, 'inter_growth_weight': 0.01},
+        {'intra_var_weight': 0.7, 'intra_growth_weight': 0.3, 'inter_var_weight': 0, 'inter_growth_weight': 0},
+        {'intra_var_weight': 0.3, 'intra_growth_weight': 0.7, 'inter_var_weight': 0, 'inter_growth_weight': 0},
+        {'intra_var_weight': 0.59, 'intra_growth_weight': 0.29, 'inter_var_weight': 0.01, 'inter_growth_weight': 0.01},
+        {'intra_var_weight': 0.45, 'intra_growth_weight': 0.45, 'inter_var_weight': 0.05, 'inter_growth_weight': 0.05},
+        # Add more parameter combinations to the grid
+        ]
+
+    
+    X_train, X_val, y_train, y_val = train_test_split(data, data['Patient Classification'], test_size=0.2, random_state=42)
+    print(X_train.shape, X_val.shape, y_train.shape, y_val.shape)
+    print(f"y_train unique values and counts: {np.unique(y_train, return_counts=True)}")
+    print(f"y_val unique values and counts: {np.unique(y_val, return_counts=True)}")
+    best_params = None
+    best_auc = 0
+    for params in param_grid:
+        X_train_stability = calculate_stability_index(X_train, **params)
+        X_val_stability = calculate_stability_index(X_val, **params)
+        print(f"X_train_stability shape: {X_train_stability.shape}")
+        print(f"X_val_stability shape: {X_val_stability.shape}")
+        X_val_stability = X_val_stability.dropna(subset=['Stability Index'])  # Remove rows with NaN values
+        
+        if X_val_stability.empty:
+            print(f"Skipping parameter set: {params} due to empty validation data after removing NaN values.")
+            continue
+        print(f"X_val_stability shape after removing NaN values: {X_val_stability.shape}")
+        print(f"y_val unique values and counts after removing NaN values: {np.unique(y_val[X_val_stability.index], return_counts=True)}")
+        
+        y_val = y_val[X_val_stability.index]  # Update the corresponding labels
+        print(f"y_val values: {y_val.values}")
+        print(f"X_val_stability['Stability Index'] values: {X_val_stability['Stability Index'].values}")
+        
+        auc_value = roc_auc_score(y_val, X_val_stability['Stability Index'], average='macro', multi_class='ovo')
+        
+        if auc_value > best_auc:
+            best_auc = auc_value
+            best_params = params
+    
+    print(f"\t\tBest parameters: {best_params}")
+    print(f"\t\tBest ROC AUC: {best_auc}")
