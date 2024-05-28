@@ -42,7 +42,7 @@ from utils.helper_functions import (
     plot_individual_trajectories,
     #calculate_percentage_change,
     #visualize_tumor_stability,
-    consistency_check,
+    #consistency_check,
     kruskal_wallis_test,
     fisher_exact_test,
     logistic_regression_analysis,
@@ -88,22 +88,22 @@ class TumorAnalysis:
         self.reference_categories = {}
         print("Step 0: Initializing TumorAnalysis class...")
 
-        self.validate_files(
-            data_paths_["clinical_data_paths"], data_paths_["volumes_data_paths"]
-        )
+
         patient_ids_volumes = self.load_volumes_data(data_paths_["volumes_data_paths"])
         if self.cohort == "JOINT":
+            self.validate_files(list(data_paths_["clinical_data_paths"].values()), data_paths_["volumes_data_paths"])
             self.load_clinical_data(
                 data_paths_["clinical_data_paths"], patient_ids_volumes
             )
         else:
+            self.validate_files(data_paths_["clinical_data_paths"], data_paths_["volumes_data_paths"])
             if self.cohort == "BCH":
                 _ = self.load_clinical_data_bch(
-                    data_paths_["clinical_data_paths"]["bch"], patient_ids_volumes
+                    data_paths_["clinical_data_paths"][0], patient_ids_volumes
                 )
             elif self.cohort == "CBTN":
                 _ = self.load_clinical_data_cbtn(
-                    data_paths_["clinical_data_paths"]["cbtn"], patient_ids_volumes
+                    data_paths_["clinical_data_paths"][0], patient_ids_volumes
                 )
         self.merge_data()
         self.aggregate_summary_statistics()
@@ -123,7 +123,7 @@ class TumorAnalysis:
         """
         missing_files = []
 
-        for _, clinical_data_path in clinical_data_paths.items():
+        for clinical_data_path in clinical_data_paths:
             if not os.path.exists(clinical_data_path):
                 missing_files.append(clinical_data_path)
 
@@ -280,6 +280,7 @@ class TumorAnalysis:
         ]
         print(f"\tFiltered clinical data has length {len(self.clinical_data_reduced)}.")
 
+        self.clinical_data_reduced["Dataset"] = "BCH"
         print("\tParsed clinical data.")
         clinical_data_bch = self.clinical_data_reduced
         return clinical_data_bch
@@ -363,6 +364,7 @@ class TumorAnalysis:
             f"\tFiltered CBTN clinical data has length {len(self.clinical_data_reduced)}."
         )
 
+        self.clinical_data_reduced["Dataset"] = "CBTN"
         print("\tParsed CBTN clinical data.")
         clinical_data_cbtn = self.clinical_data_reduced
         return clinical_data_cbtn
@@ -377,12 +379,10 @@ class TumorAnalysis:
             bch_clinical_data = self.load_clinical_data_bch(
                 clinical_data_paths["bch"], patient_ids_volumes
             )
-            bch_clinical_data["Dataset"] = "BCH"
         if "cbtn" in clinical_data_paths:
             cbtn_clinical_data = self.load_clinical_data_cbtn(
                 clinical_data_paths["cbtn"], patient_ids_volumes
             )
-            cbtn_clinical_data["Dataset"] = "CBTN"
 
         if self.cohort == "JOINT":
             # Concatenate BCH and CBTN clinical data
@@ -633,10 +633,11 @@ class TumorAnalysis:
 
         This function updates the `self.merged_data` attribute with the merged DataFrame.
         """
-        self.volumes_data["Volumes Follow-Up Time"] = self.volumes_data[
-            "Follow-Up Time"
-        ]
-        self.volumes_data = self.volumes_data.drop(columns=["Follow-Up Time"])
+        if "Follow-Up Time" in self.volumes_data.columns:
+            self.volumes_data["Volumes Follow-Up Time"] = self.volumes_data[
+                "Follow-Up Time"
+            ]
+            self.volumes_data = self.volumes_data.drop(columns=["Follow-Up Time"])
 
         if self.cohort == "JOINT":
             self.merged_data = pd.merge(
@@ -670,6 +671,10 @@ class TumorAnalysis:
                 how="right",
             )
             self.merged_data = self.merged_data.drop(columns=[column])
+            if "Volumes Follow-Up Time" in self.merged_data.columns:
+                self.merged_data["Follow-Up Time"] = self.merged_data["Volumes Follow-Up Time"]
+                self.merged_data = self.merged_data.drop(columns=["Volumes Follow-Up Time"])
+        
         self.merged_data["Age Group"] = self.merged_data.apply(
             categorize_age_group, axis=1
         ).astype("category")
@@ -771,7 +776,7 @@ class TumorAnalysis:
             "Age Group at Progression",
             "BRAF Status",
             "Sex",
-            "Tumor Classification",
+            #"Tumor Classification",
             "Received Treatment",
         ]
         numerical_vars = [
@@ -868,11 +873,12 @@ class TumorAnalysis:
         ##############################################
         ##### Cohort Table with basic statistics #####
         ##############################################
-        print("\t\tCreating cohort table:")
-        cohort_table = self.create_cohort_table(
-            categorical_vars=categorical_vars, continuous_vars=numerical_vars
-        )
-        print(cohort_table)
+        if self.cohort == "JOINT":
+            print("\t\tCreating cohort table:")
+            cohort_table = self.create_cohort_table(
+                categorical_vars=categorical_vars, continuous_vars=numerical_vars
+            )
+            print(cohort_table)
 
         ####################################################################
         ##### Univariate analysis, logistic regression and forest plot #####
@@ -2566,6 +2572,7 @@ class TumorAnalysis:
             #     growth_weight=correlation_cfg.GROWTH_WEIGHT,
             #     change_threshold=correlation_cfg.CHANGE_THRESHOLD,
             # )
+            #consistency_check(self.merged_data)
 
             if self.merged_data.isnull().values.any():
                 print(self.merged_data)
@@ -2583,9 +2590,6 @@ class TumorAnalysis:
                 output_dir=output_correlations,
             )
             # self.perform_logistic_regression()
-
-            # Last consistency check
-            consistency_check(self.merged_data)
 
             step_idx += 1
 
@@ -2632,9 +2636,9 @@ if __name__ == "__main__":
         }
     else:
         data_paths = {
-            "clinical_data_paths": correlation_cfg.CLINICAL_CSV_PATHS[
+            "clinical_data_paths": [correlation_cfg.CLINICAL_CSV_PATHS[
                 correlation_cfg.COHORT.lower()
-            ],
+            ]],
             "volumes_data_paths": [
                 correlation_cfg.VOLUMES_DATA_PATHS[correlation_cfg.COHORT.lower()]
             ],
