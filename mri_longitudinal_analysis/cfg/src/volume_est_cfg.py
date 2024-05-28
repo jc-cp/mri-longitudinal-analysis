@@ -11,13 +11,13 @@ JOINT = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/final_datas
 # If test data is being used or not
 TEST_DATA = False
 # Current dataset being used
-BCH_DATA = True
+BCH_DATA = False
 CBTN_DATA = False
-JOINT_DATA = False
+JOINT_DATA = True
 NUMBER_TOTAL_CBTN_PATIENTS = 43
 NUMBER_TOTAL_BCH_PATIENTS = 61
 NUMBER_TOTAL_JOINT_PATIENTS = 104
-SEG_DIR = BCH # CHANGE THIS LINE FOR CORRESPONDING DATASETS
+SEG_DIR = JOINT # CHANGE THIS LINE FOR CORRESPONDING DATASETS
 OUTPUT_DIR = SEG_DIR / "output"
 PLOTS_DIR = OUTPUT_DIR / "volume_plots"
 CSV_DIR = OUTPUT_DIR / "time_series"

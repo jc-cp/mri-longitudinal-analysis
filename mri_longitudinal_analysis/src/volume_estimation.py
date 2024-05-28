@@ -21,10 +21,8 @@ from utils.helper_functions import (
     weighted_median,
     prefix_zeros_to_six_digit_ids,
     compute_95_ci,
-    fit_exponential,
-    fit_linear,
 )
-from scipy.stats import shapiro, norm
+from scipy.stats import shapiro, norm, linregress
 import ruptures as rpt
 
 
@@ -57,9 +55,9 @@ class VolumeEstimator:
         self.kernel_smoothing_data = defaultdict(list)
         self.window_smoothing_data = defaultdict(list)
         self.moving_average_data = defaultdict(list)
-        self.volume_growth_rate = defaultdict(list)
-        self.volume_growth_pattern = defaultdict(list)
-        self.volume_growth_type = defaultdict(list)
+        self.volume_change_rate = defaultdict(list)
+        self.volume_change_pattern = defaultdict(list)
+        self.volume_change_type = defaultdict(list)
 
         os.makedirs(volume_est_cfg.OUTPUT_DIR, exist_ok=True)
         os.makedirs(volume_est_cfg.PLOTS_DIR, exist_ok=True)
@@ -253,7 +251,10 @@ class VolumeEstimator:
         """
         if previous is None:
             previous = 0
-        return ((current - previous) / previous) * 100 if previous != 0 else 0
+        
+        volume_change = current - previous
+        percentage = (volume_change / previous) * 100 if previous != 0 else 0
+        return volume_change, percentage
 
     @staticmethod
     def get_identifier(file_name):
@@ -340,7 +341,7 @@ class VolumeEstimator:
             print("\tAdded sliding window smoothing and moving average data!")
 
         # Additionally, process the volume rate data
-        self.volume_growth_rate = self.calculate_volume_growth_rate(self.filtered_data)
+        self.volume_change_rate = self.calculate_volume_change_rate(self.filtered_data)
         print("\tAdded volume rate data!")
 
     def process_scans(self, all_scans):
@@ -648,29 +649,29 @@ class VolumeEstimator:
         scan_data = self.filtered_data
 
         # Calculate volume changes for each patient
-        growth_rate = []
+        change_rate = []
         for _, scans in scan_data.items():
             for i in range(1, len(scans)):
                 prev_vol = scans[i - 1][1]  # Previous volume
                 curr_vol = scans[i][1]  # Current volume
-                growth_rate.append(curr_vol - prev_vol)
+                change_rate.append(curr_vol - prev_vol)
 
         # Compute the 95% confidence interval
-        lower, upper = compute_95_ci(growth_rate)
-        print(f"\t95% CI for volume growth: ({lower:.2f}, {upper:.2f})")
+        lower, upper = compute_95_ci(change_rate)
+        print(f"\t95% CI for volume change: ({lower:.2f}, {upper:.2f})")
 
-        volume_growth_rates = [
+        volume_change_rates = [
             rate[1]
-            for sublist in self.volume_growth_rate.values()
+            for sublist in self.volume_change_rate.values()
             for rate in sublist
             if rate[1] is not None
         ]
 
-        lower, upper = compute_95_ci(volume_growth_rates)
+        lower, upper = compute_95_ci(volume_change_rates)
         # Calculate mean and standard deviation
-        print(f"\t95% CI for volume growth rate: {lower:.2f}, {upper:.2f}")
+        print(f"\t95% CI for volume change rate: {lower:.2f}, {upper:.2f}")
 
-    def calculate_volume_growth_rate(self, scans):
+    def calculate_volume_change_rate(self, scans):
         """
         Calculates the rate of volume change (normalized by time span) for each patient.
 
@@ -774,34 +775,46 @@ class VolumeEstimator:
                 sort_column = "Age" if not volume_est_cfg.TEST_DATA else "Date"
                 df.sort_values(by=sort_column)
 
-                # Calculate additional columns
+                # Calculate normalized volume
                 df["Normalized Volume"] = (
                     df["Volume"] / initial_volume if initial_volume else 0
                 )
+                df["Normalized Volume Median"] = df["Normalized Volume"].median()
+                df["Normalized Volume Avg"] = df["Normalized Volume"].mean()
+                df["Normalized Volume Std"] = df["Normalized Volume"].std()
 
-                df["Volume Growth[%]"] = df["Volume"].diff()
-                df["Volume Growth[%] Avg"] = df["Volume Growth[%]"].mean()
-                df["Volume Growth[%] Std"] = df["Volume Growth[%]"].std()
+                # Calculate volume change
+                df["Volume Change"] = df["Volume"].diff()
+                df["Volume Change Median"] = df["Volume Change"].median()
+                df["Volume Change Avg"] = df["Volume Change"].mean()
+                df["Volume Change Std"] = df["Volume Change"].std()
+                df['Volume Change Pct'] = df['Volume'].pct_change() * 100
+                df['Volume Change Pct Median'] = df['Volume Change Pct'].median()
+                df['Volume Change Pct Avg'] = df['Volume Change Pct'].mean()
+                df['Volume Change Pct Std'] = df['Volume Change Pct'].std() 
 
-                df["Volume Growth[%] Rate"] = df["Age"].map(
+                # Add volume change rate
+                df["Volume Change Rate"] = df["Age"].map(
                     lambda age, pid=patient_id: next(
-                        (x[1] for x in self.volume_growth_rate[pid] if x[0] == age),
+                        (x[1] for x in self.volume_change_rate[pid] if x[0] == age),
                         None,
                     )
                 )
-                df["Volume Growth[%] Rate Avg"] = df["Volume Growth[%] Rate"].mean()
-                df["Volume Growth[%] Rate Std"] = df["Volume Growth[%] Rate"].std()
+                df["Volume Change Rate Median"] = df["Volume Change Rate"].median()
+                df["Volume Change Rate Avg"] = df["Volume Change Rate"].mean()
+                df["Volume Change Rate Std"] = df["Volume Change Rate"].std()
+                df["Volume Change Rate Pct"] = df["Volume Change Rate"].pct_change() * 100
+                df["Volume Change Rate Pct Median"] = df["Volume Change Rate Pct"].median()
+                df["Volume Change Rate Pct Avg"] = df["Volume Change Rate Pct"].mean()
+                df["Volume Change Rate Pct Std"] = df["Volume Change Rate Pct"].std()
 
-                analysis_results = self.analyze_growth_rates(df)
-                growth_pattern = self.calculate_growth_pattern(
-                    df, analysis_results["thresholds"]
-                )
-                growth_type = self.calculate_growth_type(
-                    df, analysis_results["thresholds"]
-                )
-                df["Growth Pattern"] = growth_pattern
-                df["Growth Type"] = growth_type
+                # Analyze change variables
+                analysis_results = self.analyze_change_rates(df)
+                df["Change Pattern"] = self.calculate_change_speed(df, analysis_results["thresholds"])
+                df["Change Type"] = self.calculate_change_type(df, analysis_results["thresholds"])
+                df["Change Trend"] = self.calculate_change_trend(df)
 
+                
                 if not volume_est_cfg.TEST_DATA:
                     df["Days Between Scans"] = df["Age"].diff()
                     if volume_est_cfg.CBTN_DATA or volume_est_cfg.JOINT_DATA:
@@ -825,14 +838,21 @@ class VolumeEstimator:
                         "Volume",
                         "Normalized Volume",
                         "Baseline Volume",
-                        "Volume Growth[%]",
-                        "Volume Growth[%] Avg",
-                        "Volume Growth[%] Std",
-                        "Volume Growth[%] Rate",
-                        "Volume Growth[%] Rate Avg",
-                        "Volume Growth[%] Rate Std",
-                        "Growth Pattern",
-                        "Growth Type",
+                        "Volume Change",
+                        "Volume Change Avg",
+                        "Volume Change Std",
+                        "Volume Change Pct",
+                        "Volume Change Pct Avg",
+                        "Volume Change Pct Std",
+                        "Volume Change Rate",
+                        "Volume Change Rate Avg",
+                        "Volume Change Rate Std",
+                        "Volume Change Rate Pct",
+                        "Volume Change Rate Pct Avg",
+                        "Volume Change Rate Pct Std",
+                        "Change Pattern",
+                        "Change Type",
+                        "Change Trend",
                     ]
                     if not volume_est_cfg.TEST_DATA
                     else [
@@ -841,14 +861,21 @@ class VolumeEstimator:
                         "Volume",
                         "Normalized Volume",
                         "Baseline Volume",
-                        "Volume Growth[%]",
-                        "Volume Growth[%] Avg",
-                        "Volume Growth[%] Std",
-                        "Volume Growth[%] Rate",
-                        "Volume Growth[%] Rate Avg",
-                        "Volume Growth[%] Rate Std",
-                        "Growth Pattern",
-                        "Growth Type",
+                        "Volume Change",
+                        "Volume Change Avg",
+                        "Volume Change Std",
+                        "Volume Change Pct",
+                        "Volume Change Pct Avg",
+                        "Volume Change Pct Std",
+                        "Volume Change Rate",
+                        "Volume Change Rate Avg",
+                        "Volume Change Rate Std",
+                        "Volume Change Rate Pct",
+                        "Volume Change Rate Pct Avg",
+                        "Volume Change Rate Pct Std",
+                        "Change Pattern",
+                        "Change Type",
+                        "Change Trend",
                     ]
                 )
                 df = df[columns_order]
@@ -857,56 +884,51 @@ class VolumeEstimator:
                 df.to_csv(csv_file_path, index=False)
 
     @staticmethod
-    def calculate_growth_pattern(df, thresholds):
-        """Classify the growth pattern based on the average volume growth rate."""
+    def calculate_change_speed(df, thresholds):
+        """Classify the change speed based on the average volume change rate."""
 
-        avg_growth_rate = df["Volume Growth[%] Rate Avg"].iloc[0]
+        avg_change_rate = df["Volume Change Rate Pct Avg"].iloc[0]
 
-        if avg_growth_rate > thresholds["rapid"]:
+        if avg_change_rate > thresholds["rapid"]:
             return "rapid"
-        elif avg_growth_rate > thresholds["moderate"]:
+        elif avg_change_rate > thresholds["moderate"]:
             return "moderate"
         return "slow"
 
     @staticmethod
-    def calculate_growth_type(df, thresholds):
+    def calculate_change_type(df, thresholds):
         """
-        Calculate the growth type for a given patient based on the variability and pattern of volume growth rates.
+        Calculate the change type for a given patient based on the variability and pattern of volume change rates.
         """
-        df_clean = df.dropna(subset=["Age", "Volume Growth[%] Rate"])
+        df_clean = df.dropna(subset=["Age", "Volume Change Rate"])
 
         x = df_clean["Age"].values
-        y = df_clean["Volume Growth[%] Rate"].values
-        std_dev_growth_rate = np.std(y)
+        y = df_clean["Volume Change Rate"].values
 
-        # Linear and exponential fit
-        linear_r2 = fit_linear(x, y)
-        exponential_r2 = fit_exponential(x, y)
-
+        # linear regression
+        _, _, r_value, _, _ = linregress(x, y)
+        r_squared = r_value**2
+        
         # Classify based on best fit
-        if std_dev_growth_rate >= thresholds["high_var"]:
-            return "sporadic"
-        elif linear_r2 > exponential_r2 and linear_r2 >= thresholds["r2"]:
-            return "linear"
-        elif exponential_r2 > linear_r2 and exponential_r2 >= thresholds["r2"]:
-            return "exponential"
+        if r_squared >= thresholds["r2"]:
+            return "Linear"
         else:
-            return "unclassified"
+            return "Non-linear"
 
     @staticmethod
-    def analyze_growth_rates(df):
+    def analyze_change_rates(df):
         """
-        Analyze the growth rates for normality and statistical properties and use
-        the distribution to automate threshold setting for growth pattern categorization.
+        Analyze the change rates for normality and statistical properties and use
+        the distribution to automate threshold setting for change speed categorization.
 
         Parameters:
-            df (pandas.DataFrame): DataFrame containing the growth rate data.
+            df (pandas.DataFrame): DataFrame containing the change rate data.
 
         Returns:
             dict: Statistical analysis results including normality test, descriptive statistics,
-                and dynamically calculated thresholds for growth pattern categorization.
+                and dynamically calculated thresholds for change speed categorization.
         """
-        rates = df["Volume Growth[%] Rate"].dropna()
+        rates = df["Volume Change Rate"].dropna()
         stats = rates.describe()
 
         # Normality test
@@ -943,6 +965,20 @@ class VolumeEstimator:
 
         return analysis_results
 
+    @staticmethod
+    def calculate_change_trend(df):
+        """
+        Classify the trend of the volume change rate as increasing, decreasing, or stable.
+        """
+        trend = np.sign(np.mean(df['Volume Change Rate Avg']))
+        if trend > 0:
+            trend_type = "Increasing"
+        elif trend < 0:
+            trend_type = "Decreasing"
+        else:
+            trend_type = "Stable"
+        return trend_type
+        
     ############################
     # Plotting-related methods #
     ############################
@@ -977,14 +1013,15 @@ class VolumeEstimator:
         if ages is None:
             ages = list(range(len(volumes)))
 
-        volume_changes = [
+        _ , volume_change_pct = zip(*[
             self.calculate_volume_change(volumes[i - 1], vol)
             for i, vol in enumerate(volumes[1:], 1)
-        ]
-        volume_changes.insert(0, 0)
+        ])
+        volume_change_pct = list(volume_change_pct)
+        volume_change_pct.insert(0, 0)
 
         for i, (age, volume, volume_change) in enumerate(
-            zip(ages, volumes, volume_changes)
+            zip(ages, volumes, volume_change_pct)
         ):
             a_x.text(
                 age,
@@ -1146,7 +1183,7 @@ class VolumeEstimator:
         window_size=None,
     ):
         """
-        Plots and saves the normalized volume data for a single patient, signifying 25% growth and shrinkage.
+        Plots and saves the normalized volume data for a single patient, signifying 25% change and shrinkage.
         """
         fig, ax1 = self.setup_plot_base(normalize=True)
 
@@ -1205,114 +1242,6 @@ class VolumeEstimator:
             )
         )
         plt.close(fig)
-
-    def plot_normalized_data_old(
-        self,
-        data_type,
-        output_path,
-        patient_id,
-        dates,
-        volumes,
-        ages=None,
-        has_dates=True,
-    ):
-        """
-        Plots and saves the normalized volume data for a single patient.
-        Args:
-            data_type (str): The type of data ('raw', 'filtered', etc.)
-            output_path (str): The directory where plots should be saved.
-            patient_id (str): The ID of the patient.
-            dates (list): List of dates.
-            volumes (list): List of normalized volumes.
-            ages (list, optional): List of ages. Defaults to None.
-        """
-        fig, ax1 = self.setup_plot_base(normalize=True)
-
-        patient_data = self.clinical_data[
-            self.clinical_data["Patient_ID"] == int(patient_id)
-        ]
-        if not patient_data.empty:
-            dates = [d.replace(tzinfo=None) for d in dates]
-
-            treatment_date = patient_data["Date First Treatment"].iloc[0]
-            treatment_date = pd.to_datetime(treatment_date, format="%Y-%m-%d").replace(
-                tzinfo=None
-            )
-
-            initial_volume = volumes[0] if volumes[0] not in [0, np.nan] else 1
-            normalized_volumes = [v / initial_volume for v in volumes]
-
-            if treatment_date:
-                first_post_treatment_index = next(
-                    (i for i, date in enumerate(dates) if date >= treatment_date),
-                    len(dates),
-                )
-
-                # Split the data into pre-treatment and post-treatment
-                pre_treatment_dates = dates[
-                    : first_post_treatment_index + 1
-                ]  # Includes the last point before treatment
-                pre_treatment_volumes = normalized_volumes[
-                    : first_post_treatment_index + 1
-                ]
-
-                post_treatment_dates = dates[
-                    first_post_treatment_index:
-                ]  # Starts from the overlapping point
-                post_treatment_volumes = normalized_volumes[first_post_treatment_index:]
-
-                # Plot pre-treatment data in blue
-                ax1.plot(
-                    pre_treatment_dates,
-                    pre_treatment_volumes,
-                    color="tab:blue",
-                    marker="o",
-                    linestyle="-",
-                )
-
-                # Plot post-treatment data in grey, starting with the overlapping point
-                ax1.plot(
-                    post_treatment_dates,
-                    post_treatment_volumes,
-                    color="grey",
-                    marker="o",
-                    linestyle="-",
-                )
-                ax1.axvline(
-                    x=treatment_date,
-                    color="red",
-                    linestyle="--",
-                    label="Treatment Date",
-                )
-            else:
-                # Plot all data in blue if no treatment date
-                print("here")
-                ax1.plot(
-                    dates,
-                    normalized_volumes,
-                    color="tab:blue",
-                    marker="o",
-                    linestyle="-",
-                )
-
-            self.add_volume_change_to_plot(ax1, dates, normalized_volumes)
-
-            if has_dates:
-                self.add_date_to_plot(ax1, ages, volumes)
-
-            ax1.legend(loc="best")
-            plt.title(f"Patient ID: {patient_id} - Normalized Volume {data_type}")
-            fig.set_tight_layout(True)
-            age_range = f"{min(ages)}_{max(ages)}"
-            plt.savefig(
-                os.path.join(
-                    output_path,
-                    f"normalized_volume_{data_type}_{patient_id}_{age_range}.png",
-                )
-            )
-            plt.close(fig)
-        else:
-            return
 
     def plot_comparison(self, output_path):
         """

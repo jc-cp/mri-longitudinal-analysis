@@ -1,31 +1,17 @@
 """Script containing some additonal functions used thorughout the other main scripts."""
 import os
-import os
 import warnings
 from math import isfinite
 
 import matplotlib.lines as lines
 import matplotlib.pyplot as plt
 
-import matplotlib.lines as lines
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import statsmodels.api as sm
 from cfg.utils import helper_functions_cfg
-import seaborn as sns
-import statsmodels.api as sm
-from cfg.utils import helper_functions_cfg
 from scipy.optimize import curve_fit
-from scipy.stats import (chi2_contingency, f_oneway, fisher_exact, kruskal,
-                         mannwhitneyu, norm, pearsonr, pointbiserialr,
-                         spearmanr, ttest_ind, zscore)
-from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.metrics import auc, r2_score, roc_auc_score, roc_curve
-from sklearn.model_selection import train_test_split
-from sklearn.neighbors import NearestNeighbors
-from sklearn.preprocessing import StandardScaler
 from scipy.stats import (chi2_contingency, f_oneway, fisher_exact, kruskal,
                          mannwhitneyu, norm, pearsonr, pointbiserialr,
                          spearmanr, ttest_ind, zscore)
@@ -947,8 +933,8 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     classifications = data["Classification"].unique()
     #pylint: disable=unused-variable
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
-    #colors = [palette[1], palette[2], palette[0]]
-    colors =  ["blue", "red", "green"]
+    colors = [palette[0], palette[1], palette[2]]
+    #colors =  ["blue", "red", "green"]
     for classification, color in zip(classifications, colors):
         class_data = data[data["Classification"] == classification]
         first_patient_plotted = False
