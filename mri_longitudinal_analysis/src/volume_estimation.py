@@ -821,7 +821,7 @@ class VolumeEstimator:
                         df["Date"] = "N/A"
                         df["Scan_ID"] = df[
                             "Age"
-                        ]  # TODO: in joint data will lead to problems
+                        ]
                     else:
                         df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d/%m/%Y")
                         df["Scan_ID"] = pd.to_datetime(

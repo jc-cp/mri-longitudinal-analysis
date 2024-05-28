@@ -134,14 +134,9 @@ def normalize_data(data):
     return [(x - min_val) / (max_val - min_val) for x in data]
 
 
-def exponential_func(x, a, b, c):
-    """ Describe an exponential function."""
-    return a * np.exp(b * x) + c
-
 ######################################
 # STATISTICAL TESTS and CORRELATIONS #
 ######################################
-
 
 def pearson_correlation(x_var, y_var):
     """
@@ -931,7 +926,6 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     # Unique classifications & palette
     data = data[data["Time since First Scan"] <= 4000]
     classifications = data["Classification"].unique()
-    #pylint: disable=unused-variable
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
     colors = [palette[0], palette[1], palette[2]]
     #colors =  ["blue", "red", "green"]
@@ -1052,25 +1046,26 @@ def plot_individual_trajectories(
         median_palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(categories))
         legend_handles = []
 
-        #pylint: disable=unused-variable
+        median_lines = False
         for (category, patient_color), median_color in zip(
             zip(categories, patient_palette), median_palette
         ):
             category_data = plot_data[plot_data[category_column] == category]
-            median_data_category = (
-                category_data.groupby(
-                    pd.cut(
-                        category_data["Time since First Scan"],
-                        pd.interval_range(
-                            start=0,
-                            end=max_time,
-                            freq=median_freq,
-                        ),
-                    )
-                )[column]
-                .median()
-                .reset_index()
-            )
+            if median_lines:
+                median_data_category = (
+                    category_data.groupby(
+                        pd.cut(
+                            category_data["Time since First Scan"],
+                            pd.interval_range(
+                                start=0,
+                                end=max_time,
+                                freq=median_freq,
+                            ),
+                        )
+                    )[column]
+                    .median()
+                    .reset_index()
+                )
             legend_handles.append(
                 lines.Line2D([], [], color=patient_color, label=f"{category_column} {category}")
             )
@@ -1083,14 +1078,15 @@ def plot_individual_trajectories(
                     alpha=0.5,
                     linewidth=1,
                 )
-            # sns.lineplot(
-            #     x=median_data_category["Time since First Scan"].apply(lambda x: x.mid),
-            #     y=column,
-            #     data=median_data_category,
-            #     color=median_color,
-            #     linestyle="--",
-            #     label=f"{category_column} {category} Median Trajectory",
-            # )
+            if median_lines:
+                sns.lineplot(
+                    x=median_data_category["Time since First Scan"].apply(lambda x: x.mid),
+                    y=column,
+                    data=median_data_category,
+                    color=median_color,
+                    linestyle="--",
+                    label=f"{category_column} {category} Median Trajectory",
+                )
 
         sns.lineplot(
             x=median_data["Time since First Scan"].apply(lambda x: x.mid),
@@ -1311,7 +1307,7 @@ def visualize_ind_indexes_distrib(data, output_dir):
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
     color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
     
-    fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+    _, axs = plt.subplots(2, 2, figsize=(12, 8))
     sns.boxplot(x='Patient Classification', y='Intra-Tumor Variability Index', data=data, ax=axs[0, 0], palette=color_mapping)
     sns.boxplot(x='Patient Classification', y='Intra-Tumor Growth Index', data=data, ax=axs[0, 1], palette=color_mapping)
     sns.boxplot(x='Patient Classification', y='Inter-Tumor Variability Index', data=data, ax=axs[1, 0], palette=color_mapping)
