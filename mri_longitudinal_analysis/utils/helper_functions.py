@@ -567,6 +567,33 @@ def calculate_vif(X, checks=False):
     print("\tVIF Calculation Results:")
     print(vif_data)
 
+
+def cumulative_stats(group, variable):
+    group[f"{variable} CumMean"] = group[variable].expanding().mean()
+    group[f"{variable} CumMedian"] = group[variable].expanding().median()
+    group[f"{variable} CumStd"] = group[variable].expanding().std().fillna(0)
+    return group
+
+
+def rolling_stats(group, variable, window_size=3, min_periods=1):
+    group[f"{variable} RollMean"] = (
+        group[variable]
+        .rolling(window=window_size, min_periods=min_periods)
+        .mean()
+    )
+    group[f"{variable} RollMedian"] = (
+        group[variable]
+        .rolling(window=window_size, min_periods=min_periods)
+        .median()
+    )
+    group[f"{variable} RollStd"] = (
+        group[variable]
+        .rolling(window=window_size, min_periods=min_periods)
+        .std()
+        .fillna(0)
+    )
+    return group
+
 #######################################
 # DATA HANDLING and SIMPLE OPERATIONS #
 #######################################

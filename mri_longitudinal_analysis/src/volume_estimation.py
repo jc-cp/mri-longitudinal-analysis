@@ -22,7 +22,10 @@ from utils.helper_functions import (
     prefix_zeros_to_six_digit_ids,
     compute_95_ci,
 )
-from scipy.stats import shapiro, norm, linregress
+from scipy.stats import linregress
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import auc
 import ruptures as rpt
 
 
@@ -775,6 +778,16 @@ class VolumeEstimator:
                 sort_column = "Age" if not volume_est_cfg.TEST_DATA else "Date"
                 df.sort_values(by=sort_column)
 
+                # calculate age stats
+                df["Age Median"] = df["Age"].median()
+                df["Age Avg"] = df["Age"].mean()
+                df["Age Std"] = df["Age"].std() 
+
+                # Calculate volume stats
+                df["Volume Median"] = df["Volume"].median()
+                df["Volume Avg"] = df["Volume"].mean()
+                df["Volume Std"] = df["Volume"].std()
+
                 # Calculate normalized volume
                 df["Normalized Volume"] = (
                     df["Volume"] / initial_volume if initial_volume else 0
@@ -809,11 +822,18 @@ class VolumeEstimator:
                 df["Volume Change Rate Pct Std"] = df["Volume Change Rate Pct"].std()
 
                 # Analyze change variables
-                analysis_results = self.analyze_change_rates(df)
-                df["Change Pattern"] = self.calculate_change_speed(df, analysis_results["thresholds"])
-                df["Change Type"] = self.calculate_change_type(df, analysis_results["thresholds"])
+                df["Change Speed"] = self.calculate_change_speed(df)
+                df["Change Type"] = self.calculate_change_type(df)
                 df["Change Trend"] = self.calculate_change_trend(df)
-
+                df["Change Acceleration"] = self.calculate_change_acceleration(df)
+                
+                # Other variables
+                df["Relative Volume Change Pct"] = self.calculate_relative_volume_change_pct(df)
+                df["Cumulative Volume Change Pct"] = self.calculate_cumulative_relative_volume_change_pct(df)
+                df["AUC"] = self.calculate_auc(df)
+                df["Coefficient of Variation"] = self.calculate_volume_coefficient_of_variation(df)
+                df["Rolling Volume Change Average"] = self.calculate_rolling_average_volume_change(df)
+                
                 
                 if not volume_est_cfg.TEST_DATA:
                     df["Days Between Scans"] = df["Age"].diff()
@@ -836,46 +856,80 @@ class VolumeEstimator:
                         "Age",
                         "Days Between Scans",
                         "Volume",
+                        "Volume Median",
+                        "Volume Avg",
+                        "Volume Std",
                         "Normalized Volume",
+                        "Normalized Volume Median",
+                        "Normalized Volume Avg",
+                        "Normalized Volume Std",
                         "Baseline Volume",
                         "Volume Change",
+                        "Volume Change Median",
                         "Volume Change Avg",
                         "Volume Change Std",
                         "Volume Change Pct",
+                        "Volume Change Pct Median",
                         "Volume Change Pct Avg",
                         "Volume Change Pct Std",
                         "Volume Change Rate",
+                        "Volume Change Rate Median",
                         "Volume Change Rate Avg",
                         "Volume Change Rate Std",
                         "Volume Change Rate Pct",
+                        "Volume Change Rate Pct Median",
                         "Volume Change Rate Pct Avg",
                         "Volume Change Rate Pct Std",
-                        "Change Pattern",
+                        "Change Speed",
                         "Change Type",
                         "Change Trend",
+                        "Change Acceleration",
+                        "Relative Volume Change Pct",
+                        "Cumulative Volume Change Pct",
+                        "AUC",
+                        "Coefficient of Variation",
+                        "Rolling Volume Change Average",
+                        
+                        
                     ]
                     if not volume_est_cfg.TEST_DATA
                     else [
                         "Scan_ID",
                         "Date",
                         "Volume",
+                        "Volume Median",
+                        "Volume Avg",
+                        "Volume Std",
                         "Normalized Volume",
+                        "Normalized Volume Median",
+                        "Normalized Volume Avg",
+                        "Normalized Volume Std",
                         "Baseline Volume",
                         "Volume Change",
+                        "Volume Change Median",
                         "Volume Change Avg",
                         "Volume Change Std",
                         "Volume Change Pct",
+                        "Volume Change Pct Median",
                         "Volume Change Pct Avg",
                         "Volume Change Pct Std",
                         "Volume Change Rate",
+                        "Volume Change Rate Median",
                         "Volume Change Rate Avg",
                         "Volume Change Rate Std",
                         "Volume Change Rate Pct",
+                        "Volume Change Rate Pct Median",
                         "Volume Change Rate Pct Avg",
                         "Volume Change Rate Pct Std",
-                        "Change Pattern",
+                        "Change Speed",
                         "Change Type",
                         "Change Trend",
+                        "Change Acceleration",
+                        "Relative Volume Change Pct",
+                        "Cumulative Volume Change Pct",
+                        "AUC",
+                        "Coefficient of Variation",
+                        "Rolling Volume Change Average",
                     ]
                 )
                 df = df[columns_order]
@@ -884,87 +938,37 @@ class VolumeEstimator:
                 df.to_csv(csv_file_path, index=False)
 
     @staticmethod
-    def calculate_change_speed(df, thresholds):
+    def calculate_change_speed(df):
         """Classify the change speed based on the average volume change rate."""
 
         avg_change_rate = df["Volume Change Rate Pct Avg"].iloc[0]
 
-        if avg_change_rate > thresholds["rapid"]:
-            return "rapid"
-        elif avg_change_rate > thresholds["moderate"]:
+        if avg_change_rate < np.percentile(df["Volume Change Rate Pct"], 25):
+            return "slow"
+        elif avg_change_rate < np.percentile(df["Volume Change Rate Pct"], 75):
             return "moderate"
-        return "slow"
+        return "rapid"
 
     @staticmethod
-    def calculate_change_type(df, thresholds):
+    def calculate_change_type(df):
         """
         Calculate the change type for a given patient based on the variability and pattern of volume change rates.
         """
-        df_clean = df.dropna(subset=["Age", "Volume Change Rate"])
+        df_clean = df.dropna(subset=["Age", "Volume"])
 
         x = df_clean["Age"].values
-        y = df_clean["Volume Change Rate"].values
+        y = df_clean["Volume"].values
 
         # linear regression
         _, _, r_value, _, _ = linregress(x, y)
         r_squared = r_value**2
         
         # Classify based on best fit
-        if r_squared >= thresholds["r2"]:
+        if r_squared >= 0.8:
             return "Linear"
         else:
             return "Non-linear"
-
-    @staticmethod
-    def analyze_change_rates(df):
-        """
-        Analyze the change rates for normality and statistical properties and use
-        the distribution to automate threshold setting for change speed categorization.
-
-        Parameters:
-            df (pandas.DataFrame): DataFrame containing the change rate data.
-
-        Returns:
-            dict: Statistical analysis results including normality test, descriptive statistics,
-                and dynamically calculated thresholds for change speed categorization.
-        """
-        rates = df["Volume Change Rate"].dropna()
-        stats = rates.describe()
-
-        # Normality test
-        if len(rates) >= 3:
-            _, p_value = shapiro(rates)
-            normality = "normal" if p_value > 0.05 else "not normal"
-        else:
-            normality = "not normal"
-            p_value = None
-
-        if normality == "normal":
-            # Use mean and standard deviation for normal distribution
-            thresholds = {
-                "rapid": norm.ppf(0.75, loc=stats["mean"], scale=stats["std"]),
-                "moderate": norm.ppf(0.50, loc=stats["mean"], scale=stats["std"]),
-                "high_var": stats["std"] * 2,
-                "r2": 0.8,
-            }
-        else:
-            # Use percentiles for non-normal distribution
-            thresholds = {
-                "rapid": stats["75%"],
-                "moderate": stats["50%"],
-                "high_var": stats["std"] * 2,
-                "r2": 0.8,
-            }
-
-        analysis_results = {
-            "normality": normality,
-            "p_value": p_value,
-            "statistics": stats,
-            "thresholds": thresholds,
-        }
-
-        return analysis_results
-
+            
     @staticmethod
     def calculate_change_trend(df):
         """
@@ -972,13 +976,81 @@ class VolumeEstimator:
         """
         trend = np.sign(np.mean(df['Volume Change Rate Avg']))
         if trend > 0:
-            trend_type = "Increasing"
+            return "Increasing"
         elif trend < 0:
-            trend_type = "Decreasing"
+            return "Decreasing"
         else:
-            trend_type = "Stable"
-        return trend_type
+            return "Stable"
+         
+    @staticmethod
+    def calculate_change_acceleration(df):
+        """
+        Calcualte acceleration of the volume.
+        """
+        df_clean = df.dropna(subset=["Age", "Volume"])
+
+        x = df_clean["Age"].values.reshape(-1, 1)
+        y = df_clean["Volume"].values.reshape(-1, 1)
         
+        poly_features = PolynomialFeatures(degree=2)
+        x_poly = poly_features.fit_transform(x)
+        model = LinearRegression()
+        model.fit(x_poly, y)
+        quadratic_coef = model.coef_[0][2]
+        
+        # Classify based on best fit
+        if quadratic_coef > 0:
+            return "Increasing"
+        else:
+            return "Decreasing"
+    
+    @staticmethod
+    def calculate_relative_volume_change_pct(df):
+        """
+        Calculates relative volume change based on the baseline volume.
+        """
+        baseline_volume = df["Baseline Volume"].iloc[0]
+        relative_change = (df["Volume"] - baseline_volume) / baseline_volume * 100
+        return relative_change
+    
+    @staticmethod
+    def calculate_auc(df):
+        """
+        Calculates the area under the curve (AUC) for the volume data.
+        """
+        df_clean = df.dropna(subset=["Age", "Volume"])
+        x = df_clean["Age"].values
+        y = df_clean["Volume"].values
+        auc_value = auc(x, y)
+        return auc_value
+    
+    @staticmethod
+    def calculate_volume_coefficient_of_variation(df):
+        """"
+        Calculates the coefficient of variation for the volume data.
+        """
+        mean_volume = df["Volume Avg"]
+        std_volume = df["Volume Std"]
+        cv = std_volume / mean_volume
+        return cv
+    
+    @staticmethod
+    def calculate_rolling_average_volume_change(df, window_size=3):
+        """
+        Calculate the rolling average of the volume change based on a specified window size.
+        """
+        rolling_avg_change = df["Volume Change"].rolling(window=window_size).mean()
+        return rolling_avg_change
+    
+    @staticmethod
+    def calculate_cumulative_relative_volume_change_pct(df):
+        """
+        Calculate the cumulative average relative volume change percentage.
+        """
+        baseline_volume = df["Baseline Volume"].iloc[0]
+        relative_change_pct = (df["Volume"] - baseline_volume) / baseline_volume * 100
+        cumulative_relative_change_pct = relative_change_pct.cumsum()
+        return cumulative_relative_change_pct
     ############################
     # Plotting-related methods #
     ############################
