@@ -1578,8 +1578,15 @@ class TumorAnalysis:
             volume_change_trajectories_plot,
             plot_data=pre_treatment_data,
             column="Volume Change",
-            unit="%",
+            unit="mm^3",
         )
+        volume_change_pct_trajectories_plot = os.path.join(
+            output_dir, f"{prefix}_volume_change_pct_trajectories_plot.png")
+        plot_individual_trajectories(
+            volume_change_pct_trajectories_plot,
+            plot_data=pre_treatment_data,
+            column="Volume Change Pct",
+            unit="%",)
         volume_change_rate_trajectories_plot = os.path.join(
             output_dir, f"{prefix}_volume_change_rate_trajectories_plot.png"
         )
@@ -1587,8 +1594,15 @@ class TumorAnalysis:
             volume_change_rate_trajectories_plot,
             plot_data=pre_treatment_data,
             column="Volume Change Rate",
-            unit="% / day",
+            unit="mm^3 / day",
         )
+        volume_change_rate_pct_trajectories_plot = os.path.join(
+            output_dir, f"{prefix}_volume_change_rate_pct_trajectories_plot.png")
+        plot_individual_trajectories(
+            volume_change_rate_pct_trajectories_plot,
+            plot_data=pre_treatment_data,
+            column="Volume Change Rate Pct",
+            unit="% / day")
         normalized_volume_trajectories_plot = os.path.join(
             output_dir, f"{prefix}_normalized_volume_trajectories_plot.png"
         )

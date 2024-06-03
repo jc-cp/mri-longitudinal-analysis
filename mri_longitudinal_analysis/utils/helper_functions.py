@@ -1012,7 +1012,8 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
             # )
 
     num_patients = data["Patient_ID"].nunique()
-
+    plt.axhline(y=0.75, color='blue', linestyle="--", label="-25% Volume Change")
+    plt.axhline(y=1.25, color='red', linestyle="--", label="+25% Volume Change")
     plt.xlabel("Days Since First Scan")
     plt.ylabel(f"Tumor {column_name} [{unit}]")
     plt.title(f"Patient Trend Trajectories (N={num_patients})")
@@ -1037,22 +1038,20 @@ def plot_individual_trajectories(
     """
     plt.figure(figsize=(10, 6))
     
-    if column == "Volume Change" or column == "Volume Change Rate":
+    if column in ["Volume Change", "Volume Change Rate", "Volume Change Pct"]:
         mean = np.mean(plot_data[column])
         std = np.std(plot_data[column])
-        if column == "Volume Change":
+        if column in ["Volume Change", "Volume Change Pct"]:
             factor = 2.5
-        elif column == "Volume Change Rate":
+        elif column in ["Volume Change Rate"]:
             factor = 0.25
         threshold = mean + factor * std
         plot_data = plot_data[plot_data[column] <= threshold]
         plot_data = plot_data[plot_data[column] >= -threshold]
 
-
     plot_data = plot_data[plot_data["Time since First Scan"] <= time_limit]
     num_patients = plot_data["Patient_ID"].nunique()    
-    max_time = plot_data["Time since First Scan"].max()
-        
+    max_time = plot_data["Time since First Scan"].max()    
     # Get the median every 3 months
     median_data = (
         plot_data.groupby(
