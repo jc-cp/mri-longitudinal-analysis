@@ -14,7 +14,6 @@ from scipy.stats import shapiro, ttest_ind, chi2_contingency, mannwhitneyu, fish
 from cfg.src import correlation_cfg
 from cfg.utils.helper_functions_cfg import NORD_PALETTE
 from lifelines import KaplanMeierFitter, CoxPHFitter
-
 # from lifelines.statistics import proportional_hazard_test
 from lifelines.utils import concordance_index
 from utils.helper_functions import (
@@ -106,7 +105,7 @@ class TumorAnalysis:
                     data_paths_["clinical_data_paths"][0], patient_ids_volumes
                 )
         self.merge_data()
-        self.aggregate_summary_statistics()
+        self.check_data_consistency()
 
     def validate_files(self, clinical_data_paths, volumes_data_paths):
         """
@@ -208,32 +207,25 @@ class TumorAnalysis:
             self.clinical_data["MRI Date"], dayfirst=True
         )
 
-        self.clinical_data["Age at First Diagnosis"] = (
+        self.clinical_data["Age at First Diagnosis"] = pd.to_numeric((
             self.clinical_data["Date First Diagnosis"]
             - self.clinical_data["Date of Birth"]
-        ).dt.days
-
-        self.clinical_data["Date First Treatment"] = pd.to_datetime(
-            self.clinical_data["First Treatment"], dayfirst=True
-        )
-
-        self.clinical_data["Age at First Treatment"] = (
-            self.clinical_data["Date First Treatment"]
-            - self.clinical_data["Date of Birth"]
-        ).dt.days
+        ).dt.days, errors='coerce')
 
         self.clinical_data["Date of last clinical follow-up"] = pd.to_datetime(
             self.clinical_data["Date of last clinical follow-up"], dayfirst=True
         )
 
-        self.clinical_data["Age at Last Clinical Follow-Up"] = np.minimum(
-            (
-                self.clinical_data["Date of last clinical follow-up"]
-                - self.clinical_data["Date of Birth"]
-            ).dt.days,
-            self.clinical_data["Age at First Treatment"].fillna(np.inf),
+        self.clinical_data["Age at Last Clinical Follow-Up"] = pd.to_numeric((self.clinical_data["Date of last clinical follow-up"]
+                - self.clinical_data["Date of Birth"]).dt.days, errors='coerce')
+
+        self.clinical_data["Date First Treatment"] = pd.to_datetime(
+            self.clinical_data["First Treatment"], dayfirst=True
         )
 
+        self.clinical_data["Age at First Treatment"] = pd.to_numeric((self.clinical_data["Date First Treatment"]
+            - self.clinical_data["Date of Birth"]).dt.days, errors='coerce')
+            
         self.clinical_data["Received Treatment"] = (
             self.clinical_data["Age at First Treatment"]
             .notna()
@@ -242,25 +234,11 @@ class TumorAnalysis:
 
         self.clinical_data["Treatment Type"] = self.extract_treatment_types_bch()
 
-        self.clinical_data["Age Difference"] = (
-            self.clinical_data["Age at Last Clinical Follow-Up"]
-            - self.clinical_data["Age at First Diagnosis"]
-        )
-
-        self.clinical_data["Follow-Up"] = self.clinical_data["Follow-Up"]
-
         self.clinical_data["Follow-Up Time"] = np.where(
             self.clinical_data["Follow-Up"].notna(),
             self.clinical_data["Follow-Up"],
-            self.clinical_data["Age Difference"],
-        )
-        self.clinical_data["Time to Treatment"] = np.where(
-            self.clinical_data["Age at First Treatment"].notna(),
-            (
-                self.clinical_data["Age at First Treatment"]
-                - self.clinical_data["Age at First Diagnosis"]
-            ),
-            self.clinical_data["Age Difference"],
+            (self.clinical_data["Age at Last Clinical Follow-Up"]
+            - self.clinical_data["Age at First Diagnosis"]),
         )
 
         # Apply the type conversions according to the dictionary
@@ -329,9 +307,8 @@ class TumorAnalysis:
         )
 
         # Age Last Clinical Follow Up
-        self.clinical_data["Age at Last Clinical Follow-Up"] = self.clinical_data[
-            "Age at Last Known Clinical Status"
-        ]
+        self.clinical_data["Age at Last Clinical Follow-Up"] = pd.to_numeric(self.clinical_data[
+            "Age at Last Known Clinical Status"], errors="coerce")
 
         # BRAF Status
         self.clinical_data["BRAF Status"] = self.clinical_data[
@@ -426,6 +403,8 @@ class TumorAnalysis:
 
         data_frames = []
         total_files = 0
+        age_at_last_scan = {}
+        age_at_first_scan = {}
         for volumes_data_path in volumes_data_paths:
             all_files = [f for f in os.listdir(volumes_data_path) if f.endswith(".csv")]
             print(f"\tVolume data found: {len(all_files)}.")
@@ -446,12 +425,16 @@ class TumorAnalysis:
                     patient_df["Date"] = pd.to_datetime(
                         patient_df["Date"], format="%d/%m/%Y"
                     )
-
+                age_at_last_scan[patient_id] = patient_df["Age"].max()
+                age_at_first_scan[patient_id] = patient_df["Age"].min()
+            
                 data_frames.append(patient_df)
 
         print(f"\tTotal volume data files found: {total_files}.")
 
         self.volumes_data = pd.concat(data_frames, ignore_index=True)
+        self.age_at_last_scan = age_at_last_scan
+        self.age_at_first_scan = age_at_first_scan
 
         if self.cohort in ["CBTN", "JOINT"]:
             follow_up_times = {}
@@ -474,18 +457,9 @@ class TumorAnalysis:
 
         # Patient IDs in volumes data
         patient_ids_volumes = set(self.volumes_data["Patient_ID"].unique())
-
-        self.volumes_data = self.volumes_data.rename(
-            columns={
-                "Volume Growth[%]": "Volume Change",
-                "Volume Growth[%] Avg": "Volume Change Avg",
-                "Volume Growth[%] Std": "Volume Change Std",
-                "Volume Growth[%] Rate": "Volume Change Rate",
-                "Volume Growth[%] Rate Avg": "Volume Change Rate Avg",
-                "Volume Growth[%] Rate Std": "Volume Change Rate Std",
-            }
-        )
-
+    	
+        self.volumes_data['Age'] = pd.to_numeric(self.volumes_data['Age'], errors='coerce')
+        
         if self.volumes_data.isna().any().any():
             self.volumes_data.fillna(0.0, inplace=True)
         return patient_ids_volumes
@@ -526,43 +500,46 @@ class TumorAnalysis:
 
         Updates self.clinical_data with the columns:
         [Age at First Diagnosis, Treatment Type,
-        Received Treatment, Time to Treatment, Age at First Treatment]
+        Received Treatment, Age at First Treatment]
         """
 
         # Extract the first age recorded in volumes data for each patient
-        first_age_volumes = self.volumes_data.groupby("Patient_ID")["Age"].min()
-
+        min_ages = self.volumes_data.groupby('Patient_ID')['Age'].min().reset_index()
+        min_ages.columns = ['Patient_ID', 'First Age']
+        
         # Initialize new columns in clinical_data
         self.clinical_data["Age at First Diagnosis"] = None
         self.clinical_data["Treatment Type"] = None
         self.clinical_data["Received Treatment"] = None
-        self.clinical_data["Time to Treatment"] = None
         self.clinical_data["Age at First Treatment"] = None
-
         # Loop through each patient in clinical_data
         for idx, row in self.clinical_data.iterrows():
             patient_id = str(row["CBTN Subject ID"])
-            age_at_event = int(row["Age at Event Days"])
             surgery = row["Surgery"]
             chemotherapy = row["Chemotherapy"]
             radiation = row["Radiation"]
-            efsur = row["Event Free Survival"]
-            osur = row["Overall Survival"]
-            efsur = int(efsur) if str(efsur).isnumeric() else float("inf")
-            osur = int(osur) if str(osur).isnumeric() else float("inf")
+            age_at_first_treatment = row["Age at Treatment"]
+            age_at_first_diagnosis = row["Age at Diagnosis"]
+            
 
-            # Age at First Diagnosis
-            if surgery == "Yes":
-                age_at_first_diagnosis = int(
-                    first_age_volumes.get(patient_id, age_at_event)
-                )
+            if patient_id in min_ages['Patient_ID'].values:
+                first_age = min_ages[min_ages["Patient_ID"] == patient_id]["First Age"].values[0]
             else:
-                age_at_first_diagnosis = age_at_event
-
+                continue
+            
+            # Age at First Diagnosis
+            if np.isnan(age_at_first_diagnosis) or age_at_first_diagnosis > first_age:
+                age_at_first_diagnosis = int(first_age)
+                
             self.clinical_data.at[
                 idx, "Age at First Diagnosis"
             ] = age_at_first_diagnosis
 
+            # Age at First Treatment
+            if np.isnan(age_at_first_treatment):
+                age_at_first_treatment = self.clinical_data.at[idx, "Age at Last Clinical Follow-Up"]
+            self.clinical_data.at[idx, "Age at First Treatment"] = age_at_first_treatment
+            
             # Treatment Type
             treatments = []
             if surgery == "Yes":
@@ -582,48 +559,16 @@ class TumorAnalysis:
             received_treatment = "Yes" if treatments else "No"
             self.clinical_data.at[idx, "Received Treatment"] = received_treatment
 
-            # Time to Treatment and Age at First Treatment
-            if received_treatment == "Yes":
-                age_at_radiation_start = row["Age at Radiation Start"]
-                age_at_chemotherapy_start = row["Age at Chemotherapy Start"]
-                age_at_radiation_start = (
-                    int(age_at_radiation_start)
-                    if str(age_at_radiation_start).isnumeric()
-                    else float("inf")
-                )
-                age_at_chemotherapy_start = (
-                    int(age_at_chemotherapy_start)
-                    if str(age_at_chemotherapy_start).isnumeric()
-                    else float("inf")
-                )
-                age_at_first_treatment = min(
-                    age_at_chemotherapy_start, age_at_radiation_start, age_at_event
-                )
-
-                self.clinical_data.at[
-                    idx, "Age at First Treatment"
-                ] = age_at_first_treatment
-                self.clinical_data.at[idx, "Time to Treatment"] = (
-                    age_at_first_treatment - age_at_first_diagnosis
-                )
-
+                
         self.clinical_data["Age at First Diagnosis"] = pd.to_numeric(
             self.clinical_data["Age at First Diagnosis"], errors="coerce"
         )
+        self.clinical_data["Age at First Treatment"].fillna(self.clinical_data["Age at Last Clinical Follow-Up"], inplace=True)               
         self.clinical_data["Age at Last Clinical Follow-Up"] = np.minimum(
             pd.to_numeric(
                 self.clinical_data["Age at Last Clinical Follow-Up"], errors="coerce"
             ),
-            self.clinical_data["Age at First Treatment"].fillna(np.inf),
-        )
-
-        # Fill missing values
-        self.clinical_data.fillna(
-            {
-                "Time to Treatment": 0,
-                "Age at First Treatment": age_at_first_diagnosis,
-            },
-            inplace=True,
+            self.clinical_data["Age at First Treatment"],
         )
 
     def merge_data(self):
@@ -678,84 +623,66 @@ class TumorAnalysis:
         self.merged_data["Age Group"] = self.merged_data.apply(
             categorize_age_group, axis=1
         ).astype("category")
-        self.merged_data["Growth Pattern"] = self.merged_data["Growth Pattern"].astype(
+        self.merged_data["Change Speed"] = self.merged_data["Change Speed"].astype(
             "category"
         )
-        self.merged_data["Growth Type"] = self.merged_data["Growth Type"].astype(
+        self.merged_data["Change Type"] = self.merged_data["Change Type"].astype(
             "category"
         )
+        self.merged_data["Change Trend"] = self.merged_data["Change Trend"].astype("category")
+        self.merged_data["Change Acceleration"] = self.merged_data["Change Acceleration"].astype("category")
         self.merged_data["Dataset"] = self.merged_data["Dataset"].astype("category")
         self.merged_data["Histology"] = self.merged_data["Histology"].astype("category")
         # self.merged_data["Patient_ID"] = self.merged_data["Patient_ID"].astype("string")
         self.merged_data["Treatment Type"] = self.merged_data["Treatment Type"].astype(
             "category"
         )
+        self.merged_data['Age Median'] = self.merged_data.groupby('Patient_ID')['Age'].transform('median')
+        self.merged_data['Follow-Up Time Median'] = self.merged_data.groupby('Patient_ID')['Follow-Up Time'].transform('median')
+        self.merged_data['Days Between Scans Median'] = self.merged_data.groupby('Patient_ID')['Days Between Scans'].transform('median')
         self.merged_data.reset_index(drop=True, inplace=True)
         print(
             f"\tMerged clinical and volume data. Final data has length {len(self.merged_data)} and unique patients {self.merged_data['Patient_ID'].nunique()}."
         )
 
-    def aggregate_summary_statistics(self):
+    def check_data_consistency(self):
         """
-        Calculate summary statistics for specified columns in the merged data.
-
-        This function updates the `self.merged_data` with new columns for mean,
-        median, and standard deviation for each of the specified columns.
+        Check the consistency of the data after processing and merging.
         """
+        columns_to_check = ["Age at First Diagnosis", "Age at Last Clinical Follow-Up"]
+        for column in columns_to_check:
+            assert not self.merged_data[column].isnull().any(), f"Column '{column}' contains NaN values."
+        print("\tAge columns have no NaN values.")
+        
+        for patient_id, age_at_last_scan in self.age_at_last_scan.items():
+            mask_patient = self.merged_data[self.merged_data["Patient_ID"] == patient_id]
+            age_at_last_clinical_follow_up = mask_patient["Age at Last Clinical Follow-Up"].values[0]
+            if not age_at_last_clinical_follow_up == age_at_last_scan:
+                #print(f"For patient {patient_id}, 'Age at Last Clinical Follow-Up' ({age_at_last_clinical_follow_up}) should be the same as 'Age at Last Scan' ({age_at_last_scan}).")
+                self.merged_data.loc[self.merged_data["Patient_ID"] == patient_id, "Age at Last Clinical Follow-Up"] = age_at_last_scan
+                #print(f"Updated 'Age at Last Clinical Follow-Up' to {age_at_last_clinical_follow_up}.")
+        print("\tData consistency for 'Age at Last Clinical Follow-Up' == 'Age at Last Scan' passed.")
 
-        def cumulative_stats(group, variable):
-            group[f"{variable} CumMean"] = group[variable].expanding().mean()
-            group[f"{variable} CumMedian"] = group[variable].expanding().median()
-            group[f"{variable} CumStd"] = group[variable].expanding().std().fillna(0)
-            return group
+        for patient_id, age_at_first_scan in self.age_at_first_scan.items():
+            mask_patient = self.merged_data[self.merged_data["Patient_ID"] == patient_id]
+            age_at_first_diagnosis = mask_patient["Age at First Diagnosis"].values[0]
+            if not age_at_first_diagnosis == age_at_first_scan:
+                #print(f"For patient {patient_id}, 'Age at First Diagnosis' ({age_at_first_diagnosis}) should be the same as 'Age at First Scan' ({age_at_first_scan}).")
+                self.merged_data.loc[self.merged_data["Patient_ID"] == patient_id, "Age at First Diagnosis"] = age_at_first_scan
+                #print(f"Updated 'Age at Last Clinical Follow-Up' to {age_at_last_clinical_follow_up}.")
+        print("\tData consistency for 'Age at First Diagnosis' == 'Age at First Scan' passed.")
+        
+        # Check if "Age at Last Clinical Follow-Up" is the same as "Age at Treatment" if "Received Treatment" is True with an assertion
+        mask_treatment = self.merged_data["Received Treatment"] == 'Yes'
+        age_last_follow_up = self.merged_data.loc[mask_treatment, "Age at Last Clinical Follow-Up"]
+        age_first_treatment = self.merged_data.loc[mask_treatment, "Age at First Treatment"]
+        mismatch_mask = age_last_follow_up >= age_first_treatment
+        assert mismatch_mask.sum() == 0, f"'Age at Last Clinical Follow-Up' should be the same as 'Age at First Treatment'. Mismatches found:\n{self.merged_data.loc[mask_treatment & mismatch_mask, ['Patient_ID', 'Age at Last Clinical Follow-Up', 'Age at First Treatment']]}"
 
-        def rolling_stats(group, variable, window_size=3, min_periods=1):
-            group[f"{variable} RollMean"] = (
-                group[variable]
-                .rolling(window=window_size, min_periods=min_periods)
-                .mean()
-            )
-            group[f"{variable} RollMedian"] = (
-                group[variable]
-                .rolling(window=window_size, min_periods=min_periods)
-                .median()
-            )
-            group[f"{variable} RollStd"] = (
-                group[variable]
-                .rolling(window=window_size, min_periods=min_periods)
-                .std()
-                .fillna(0)
-            )
-            return group
-
-        # add rolling stats and cumulative stats for specified columns
-        for var in [
-            # "Volume",
-            "Normalized Volume",
-            "Volume Change",
-            # "Volume Change Rate",
-        ]:
-            grouped = self.merged_data.groupby("Patient_ID", as_index=False)
-            # self.merged_data = grouped.apply(cumulative_stats, var)
-            # self.merged_data.reset_index(drop=True, inplace=True)
-            self.merged_data = grouped.apply(rolling_stats, var)
-            self.merged_data.reset_index(drop=True, inplace=True)
-
-        time_varying_vars = [
-            "Age",
-            "Days Between Scans",
-            "Volume",
-            "Volume Change",
-            "Volume Change Rate",
-            "Follow-Up Time",
-        ]
-
-        for var in time_varying_vars:
-            median_column = f"{var} Median"
-            self.merged_data[median_column] = self.merged_data.groupby("Patient_ID")[
-                var
-            ].transform("median")
-        print("\tAdded rolling and accumulative summary statistics.")
+        print("\tAssertion for 'Age at First Treatment' == 'Age at Last Clinical Follow-Up' passed.")
+    
+        
+        print("\tData consistency check passed.")
 
     ###################################
     # DATA ANALYSIS AND VISUALIZATION #
@@ -1093,21 +1020,7 @@ class TumorAnalysis:
             "Age": "days",
             "Age Group": "days",
             "Date": "date",
-            "Time to Treatment": "days",
             "Volume": "mm³",
-            "Volume RollMean": "mm³",
-            "Volume RollMedian": "mm³",
-            "Volume RollStd": "mm³",
-            "Volume CumMean": "mm³",
-            "Volume CumMedian": "mm³",
-            "Volume CumStd": "mm³",
-            "Volume Change": "%",
-            "Volume Change RollMean": "%",
-            "Volume Change RollMedian": "%",
-            "Volume Change RollStd": "%",
-            "Volume Change CumMean": "%",
-            "Volume Change CumMedian": "%",
-            "Volume Change CumStd": "%",
             "Baseline Volume": "mm³",
         }
 
@@ -1822,7 +1735,7 @@ class TumorAnalysis:
         # # Calculate the Stability Index using weighted scores
         # data["Stability Index"] = (
         #     volume_weight * data["Volume Stability Score"]
-        #     + growth_weight * data["Growth Stability Score"]
+        #     + growth_weight * data["Change Stability Score"]
         # )
 
         # # Normalize the Stability Index to have a mean of 1

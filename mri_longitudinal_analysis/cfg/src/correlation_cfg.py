@@ -187,16 +187,15 @@ BCH_DTYPE_MAPPING = {
     #"Tumor Progression": "category",
     "Received Treatment": "category",
     "Follow-Up Time": "int",
-    "Time to Treatment": "int",
     "Histology": "category",
+    
 }
 
 BCH_DATETIME_COLUMNS = [
     "Age at First Diagnosis",
     "Age at First Treatment",
     #"Age at First Progression",
-    "Age at Last Clinical Follow-Up",
-]
+    "Age at Last Clinical Follow-Up",]
 
 CBTN_DTYPE_MAPPING = {
     "CBTN Subject ID": "string",
@@ -208,7 +207,6 @@ CBTN_DTYPE_MAPPING = {
     #"Tumor Progression": "category",
     "Received Treatment": "category",
     # "Follow-up Time": "int",          # provided through the volume data csv's and the ages
-    "Time to Treatment": "int",
     "Histology": "category",
 }
 
