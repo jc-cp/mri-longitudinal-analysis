@@ -647,7 +647,7 @@ def save_for_deep_learning(df: pd.DataFrame, output_dir, prefix):
         print("No data to save.")
 
 
-def categorize_age_group(data, debug=False):
+def categorize_age_group(data, column, debug=False):
     """
     Categorize patients according to an age group for more thorough analysis.
     """
@@ -658,7 +658,7 @@ def categorize_age_group(data, debug=False):
         print(data["Age"].median())
         print(data["Age"].std())
 
-    age = data["Age"] / 365  # Convert age to years
+    age = data[column] / 365  # Convert age to years
 
     if age <= 2:
         return "Infant"
@@ -672,6 +672,28 @@ def categorize_age_group(data, debug=False):
         return "Young Adult"
 
 
+def categorize_time_since_first_diagnosis(data):
+    """
+    Function that calculates the time since first diagnosis and categorizes in years.
+    """
+    age_at_diagnosis = data["Age at First Diagnosis"] / 365
+    age = data["Age"] /365
+    time_since_diagnosis = age - age_at_diagnosis
+    
+    if time_since_diagnosis <= 1:
+        return "0-1 years"
+    elif time_since_diagnosis <= 3:
+        return "1-3 years"
+    elif time_since_diagnosis <= 5:
+        return "3-5 years"
+    elif time_since_diagnosis <= 7:
+        return "5-7 years"
+    elif time_since_diagnosis <= 10:
+        return "7-10 years"
+    else:
+        return "10+ years"
+    
+    
 def calculate_group_norms_and_stability(data, volume_column, volume_change_column):
     """
     Calculate group-wise statistics for each age group based on the
