@@ -436,14 +436,14 @@ class ArimaPrediction:
         plt.plot(future_index, forecast_mean, label="Future Forecast", color="red")
 
         # Adjusted confidence intervals plot
-        plt.fill_between(
-            future_index,
-            lower_bounds,
-            upper_bounds,
-            color="pink",
-            alpha=0.3,
-            label="95% Confidence Interval",
-        )
+        fan_chart_colors = ['#ff0000', '#ff4040', '#ff7373', '#ffaaaa', '#ffe0e0']
+        num_intervals = len(fan_chart_colors)
+        interval_step = (upper_bounds - lower_bounds) / num_intervals
+        
+        for i in range(num_intervals):
+            lower = forecast_mean - (i + 1) * interval_step
+            upper = forecast_mean + (i + 1) * interval_step
+            plt.fill_between(future_index, lower, upper, color=fan_chart_colors[i], alpha=0.1)
 
         plt.title("ARIMA Forecast with Confidence Intervals")
         plt.legend()
@@ -813,8 +813,8 @@ class ArimaPrediction:
         """
         n_steps = len(data)
         # Forecast proportionally based on data length.
-        # This takes 1% of data length as forecast steps. Adjust as needed.
-        return max(1, int(n_steps * 0.25))
+        # This takes 25% of data length as forecast steps. Adjust as needed.
+        return max(1, int(n_steps * 0.75))
 
     def invert_differencing(self, history, forecast, d_order=1):
         """
