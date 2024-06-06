@@ -3,18 +3,20 @@ This script provides functionality for ARIMA-based time series prediction.
 It supports loading data from .csv files.
 """
 import os
-import matplotlib.pyplot as plt
 import warnings
+from math import sqrt
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from math import sqrt
-from pmdarima import auto_arima
 from cfg.src import arima_cfg
 from pandas.plotting import autocorrelation_plot
-from sklearn.metrics import mean_squared_error
+from pmdarima import auto_arima
+from scipy.interpolate import Akima1DInterpolator  # , PchipInterpolator, CubicSpline
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.stattools import adfuller, pacf, acf
-
+from statsmodels.tools.sm_exceptions import ConvergenceWarning
+from statsmodels.tsa.stattools import acf, adfuller, pacf
 
 class TimeSeriesDataHandler:
     """Loads time-series data and processes it for the prediction."""
@@ -59,48 +61,89 @@ class TimeSeriesDataHandler:
             for filename in os.listdir(self.directory):
                 if filename.endswith(".csv"):
                     filepath = os.path.join(self.directory, filename)
-                    ts_data = pd.read_csv(filepath, usecols=[0, 1], parse_dates=[0], index_col=0)
-                    yield ts_data.squeeze(), os.path.splitext(filename)[0]
-        elif os.path.isfile(self.directory) and self.directory.endswith(".csv"):
-            ts_data = pd.read_csv(self.directory, usecols=[0, 1], parse_dates=[0], index_col=0)
-            yield ts_data.squeeze(), os.path.splitext(self.directory)[0]
+                    ts_data = pd.read_csv(
+                        filepath,
+                        dtype={"Age": np.int64, "Volume": np.float64},
+                        parse_dates=["Age"],
+                        infer_datetime_format=False,
+                    )
+                    yield ts_data, os.path.splitext(filename)[0]
 
-    def process_and_interpolate_series(self, series_list, file_names, freq=1):
+    def process_and_interpolate_series(
+        self,
+        dataframe_list: list[pd.DataFrame],
+        file_names: list[str],
+        freq=arima_cfg.INTERPOLATION_FREQ,
+    ) -> list[pd.DataFrame]:
         """
-        Process and interpolate the series with 'Age' as an integer index representing days.
+        Process and interpolate the series, keeping the original 'Age' structure intact
+        and interpolating missing 'Volume' values.
 
-        :param series_list: List of loaded time series data as DataFrames.
-        :param file_names: List of filenames.
-        :param freq: Frequency for interpolation (default is 1, representing daily data).
-        :return: List of processed and interpolated series.
+        Parameters:
+        - dataframe_list: List of DataFrames with 'Age' and 'Volume' columns.
+        - file_names: List of file names corresponding to each series for identification.
+        - freq: Not used in this corrected version, intended for defining interpolation frequency.
+        - max_gap: Maximum gap for 'Age' to perform interpolation.
+
+        Returns:
+        - processed_series_list: List of DataFrames with interpolated 'Volume' data.
         """
         processed_series_list = []
 
-        for idx, ts_data in enumerate(series_list):
+        for idx, df in enumerate(dataframe_list):
             print(f"\tInterpolating data for: {file_names[idx]}")
-
-            if "Age" not in ts_data.columns or "Volume" not in ts_data.columns:
-                print(f"Warning: 'Age' or 'Volume' column missing in {file_names[idx]}")
+            if (
+                not isinstance(df, pd.DataFrame)
+                or "Age" not in df.columns
+                or "Volume" not in df.columns
+            ):
+                print(
+                    f"\tWarning: Either 'Age' or 'Volume' column is missing in {file_names[idx]}"
+                )
                 continue
-            
-            ts_data["Age"] = ts_data["Age"].astype(int)
-            original_data = ts_data.set_index("Age")['Volume'].dropna()
-            
-            # Generate a new index that fills in the missing days
-            new_index = range(ts_data["Age"].min(), ts_data["Age"].max() + freq, freq)
-            ts_data_complete = pd.DataFrame(index=new_index)
-            ts_data_complete = ts_data_complete.join(original_data).interpolate(method="linear")
-            ts_data_complete.fillna(method='ffill', inplace=True)
-            ts_data_complete.fillna(method='bfill', inplace=True)
 
-            processed_series_list.append(ts_data_complete)
-            patient_folder_path = self.ensure_patient_folder_exists(file_names[idx])
-            filename = os.path.join(patient_folder_path, f"{file_names[idx]}_interpolated_vs_original.png")
-            self.plot_original_and_interpolated(original_data, ts_data_complete, file_names[idx], filename)
-                        
+            df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce")
+            df.dropna(
+                subset=["Volume"], inplace=True
+            )  # Drop rows where 'Volume' is NaN after conversion
+            df.sort_values(by="Age", inplace=True)
+            # Ensure there are enough points for interpolation
+            if df.shape[0] < 2:
+                print(
+                    f"\tNot enough data points for interpolation in {file_names[idx]}"
+                )
+                continue
+
+            min_age, max_age = df["Age"].min(), df["Age"].max()
+            all_ages = np.arange(min_age, max_age + 1, freq)
+
+            # Use specific interpolator # PCHIP or CubicSpline also popssible
+            interpolator = Akima1DInterpolator(df["Age"], df["Volume"])
+            interpolated_volumes = interpolator(all_ages)
+            interpolated_volumes = np.clip(
+                interpolated_volumes, a_min=0, a_max=None
+            )  # Ensure non-negativity
+            df_interpolated = pd.DataFrame(
+                {"Age": all_ages, "Volume": interpolated_volumes}
+            ).sort_values(by="Age")
+
+            processed_series_list.append(df_interpolated)
+
+            # Plotting before and after interpolation
+            patient_id = file_names[idx]
+            patient_folder_path = self.ensure_patient_folder_exists(patient_id)
+            filename = os.path.join(
+                patient_folder_path, f"{patient_id}_interpolated_vs_original.png"
+            )
+            self.plot_original_and_interpolated(
+                df, df_interpolated, file_names[idx], filename
+            )
+
         return processed_series_list
 
-    def process_series(self, series_list, arima_pred, file_names, target_column="Volume"):
+    def process_series(
+        self, series_list, arima_pred, file_names, target_column="Volume"
+    ):
         """
         Main method to handle series for csv data.
         :param series_list: List of series data.
@@ -108,16 +151,20 @@ class TimeSeriesDataHandler:
         :param file_names: List of filenames
         """
         for idx, ts_data in enumerate(series_list):
-            volume_ts = ts_data[target_column]
+            volume_ts = ts_data[[target_column, 'Age']]
             print(f"Preliminary check for patient: {file_names[idx]}")
             if arima_cfg.PLOTTING:
                 print(f"\tCreating Autocorrelation plot for: {file_names[idx]}")
                 arima_pred.generate_plot(volume_ts, "autocorrelation", file_names[idx])
                 print(f"\tCreating Partial Autocorrelation plot for: {file_names[idx]}")
-                arima_pred.generate_plot(volume_ts, "partial_autocorrelation", file_names[idx])
+                arima_pred.generate_plot(
+                    volume_ts, "partial_autocorrelation", file_names[idx]
+                )
 
             print("\tChecking stationarity through ADF test.")
-            is_stat = self.perform_dickey_fuller_test(data=volume_ts, patient_id=file_names[idx])
+            is_stat = self.perform_dickey_fuller_test(
+                data=volume_ts, patient_id=file_names[idx]
+            )
             if is_stat:
                 print(f"\tPatient {file_names[idx]} is stationary.")
             else:
@@ -127,9 +174,9 @@ class TimeSeriesDataHandler:
             arima_pred.arima_prediction(
                 data=volume_ts, patient_id=file_names[idx], is_stationary=is_stat
             )
-        #arima_pred.save_forecasts_to_csv()
-        #arima_pred.save_patient_metrics_to_csv()
-        #arima_pred.print_and_save_cohort_summary()
+            # arima_pred.test_arima(volume_ts)
+        arima_pred.save_forecasts_to_csv()
+        arima_pred.print_and_save_cohort_summary()
 
     def ensure_patient_folder_exists(self, patient_id):
         """Ensure that a folder for the patient's results exists. If not, create it."""
@@ -141,10 +188,12 @@ class TimeSeriesDataHandler:
     def perform_dickey_fuller_test(self, data, patient_id):
         """Performing Dickey Fuller test to see the stationarity of series."""
         patient_folder_path = self.ensure_patient_folder_exists(patient_id)
-        adf_test_file_path = os.path.join(patient_folder_path, f"{patient_id}_adf_test.txt")
-
+        adf_test_file_path = os.path.join(
+            patient_folder_path, f"{patient_id}_adf_test.txt"
+        )
+        volume_data = data["Volume"]
         # Augmented Dickey-Fuller test
-        result = adfuller(data)
+        result = adfuller(volume_data)
         adf_stat = result[0]
         p_value = result[1]
         used_lag = result[2]
@@ -166,9 +215,11 @@ class TimeSeriesDataHandler:
                 " used_lags)\n"
             )
             for key, value in critical_values.items():
-                file.write(f"Critical Value ({key}) for patient {patient_id}: {value}\n")
+                file.write(
+                    f"Critical Value ({key}) for patient {patient_id}: {value}\n"
+                )
             file.write(f"IC Best for patient {patient_id}: {icbest}\n")
-            
+
             if is_stationary:
                 file.write(f"The series is stationary for patient {patient_id}.\n")
             else:
@@ -177,18 +228,28 @@ class TimeSeriesDataHandler:
         return is_stationary
 
     @staticmethod
-    def plot_original_and_interpolated(original_data, interpolated_data, patient_id, filename):
+    def plot_original_and_interpolated(
+        original_data, interpolated_data, patient_id, filename
+    ):
         """
         Plots the original and interpolated data for a given patient.
         """
         plt.figure(figsize=(10, 6))
-        plt.plot(original_data, 'bo-', label='Original Data')
-        plt.plot(interpolated_data, 'r*-', label='Interpolated Data')
+        plt.plot(
+            original_data["Age"], original_data["Volume"], "bo-", label="Original Data"
+        )
+        plt.plot(
+            interpolated_data["Age"],
+            interpolated_data["Volume"],
+            "r*-",
+            label="Interpolated Data",
+        )
         plt.title(f"Original vs. Interpolated Data for {patient_id}")
-        plt.xlabel('Age')
-        plt.ylabel('Volume')
+        plt.xlabel("Age")
+        plt.ylabel("Volume")
         plt.legend()
         plt.savefig(filename)
+
 
 class ArimaPrediction:
     """
@@ -238,6 +299,38 @@ class ArimaPrediction:
     ############
     # Plotting #
     ############
+    def plot_differencing_effect(
+        self, patient_id, original_series, d_value, max_diff=3
+    ):
+        """
+        Differentiates the original series and plots the differenced series.
+        """
+        _, ax = plt.subplots(max_diff + 1, 1, figsize=(10, 5 * (max_diff + 1)))
+
+        # Original Series
+        ax[0].plot(original_series, label="Original Series")
+        ax[0].set_title("Original Series")
+        ax[0].legend()
+
+        # Differenced Series
+        differenced_series = original_series.copy()
+        for d in range(1, max_diff + 1):
+            differenced_series = differenced_series.diff().dropna()
+            adf_result = adfuller(differenced_series)
+            ax[d].plot(differenced_series, label=f"Differenced Series (d={d_value})")
+            ax[d].set_title(
+                f"Step{d}- Differenced Series (p-value={adf_result[1]:.4f})"
+            )
+            ax[d].legend()
+
+        patient_folder_path = self.ensure_patient_folder_exists(patient_id)
+        figure_path = os.path.join(
+            patient_folder_path, f"{patient_id}_differentiating.png"
+        )
+
+        plt.tight_layout()
+        plt.savefig(figure_path)
+        plt.close()
 
     def custom_plot_pacf(self, data):
         """
@@ -253,8 +346,9 @@ class ArimaPrediction:
         Returns:
         None. The function directly plots the PACF using matplotlib.
         """
-        nlags = min(len(data) // 2 - 1, 40)
-        values, confint = pacf(data, nlags=nlags, alpha=0.05)
+        volume_data, _ = data["Volume"], data["Age"]
+        nlags = min(len(volume_data) // 2 - 1, 40)
+        values, confint = pacf(volume_data, nlags=nlags, alpha=0.05)
         x = range(len(values))
 
         plt.figure(figsize=(10, 6))
@@ -302,73 +396,138 @@ class ArimaPrediction:
         plt.close()
 
     def _save_arima_fig(
-        self, stationary_data, rolling_index, rolling_predictions, forecast_mean, forecast_steps, conf_int, patient_id
+        self,
+        data,
+        rolling_predictions,
+        forecast_mean,
+        forecast_steps,
+        lower_bounds,
+        upper_bounds,
+        patient_id,
+        split_idx,
     ):
         """
         Plot the historical data, rolling forecasts, future forecasts, and adjusted confidence intervals.
         """
         # Historical data plot
         plt.figure(figsize=(12, 6))
-        plt.plot(stationary_data, label='Historical Data', color='blue')
+        plt.plot(data['Age'], data['Volume'], label="Historical Data", color="blue")
 
-        # Rolling forecasts plot
-        plt.plot(rolling_index, rolling_predictions, label='Rolling Forecasts', color='green', linestyle='--')
-
+        if rolling_predictions:
+            rolling_index = data['Age'].iloc[split_idx:split_idx + len(rolling_predictions)]
+            plt.plot(
+                rolling_index,
+                rolling_predictions,
+                label="Rolling Forecasts",
+                color="green",
+                linestyle="--",
+            )
+            
         # Future forecasts plot
-        last_age = stationary_data.index[-1]
-        future_ages = np.arange(last_age + 1, last_age + 1 + forecast_steps)  # Generate future ages
-        plt.plot(future_ages, forecast_mean, label='Future Forecast', color='red')
+        last_age = data['Age'].iloc[-1]
+        future_index = np.arange(last_age + 1, last_age + 1 + forecast_steps)
+        # Match the length of the future_index with the forecast_mean
+        min_len = min(len(future_index), len(forecast_mean), len(lower_bounds), len(upper_bounds))
+        future_index = future_index[:min_len]
+        forecast_mean = forecast_mean[:min_len]
+        lower_bounds = lower_bounds[:min_len]
+        upper_bounds = upper_bounds[:min_len]
+        
+        plt.plot(future_index, forecast_mean, label="Future Forecast", color="red")
 
         # Adjusted confidence intervals plot
-        lower_bounds, upper_bounds = conf_int  # Assuming conf_int is a tuple of (lower_bounds, upper_bounds)
-        plt.fill_between(future_ages, lower_bounds, upper_bounds, color='pink', alpha=0.3, label='95% Confidence Interval')
+        plt.fill_between(
+            future_index,
+            lower_bounds,
+            upper_bounds,
+            color="pink",
+            alpha=0.3,
+            label="95% Confidence Interval",
+        )
 
         plt.title("ARIMA Forecast with Confidence Intervals")
         plt.legend()
         patient_folder_path = self.ensure_patient_folder_exists(patient_id)
-        figure_path = os.path.join(patient_folder_path, f"{patient_id}_forecast_plot.png")
-        plt.savefig(figure_path)
+        figure_path = os.path.join(
+            patient_folder_path, f"{patient_id}_forecast_plot.png"
+        )
+        plt.ylabel("Volume [mm3]")
+        plt.xlabel("Age [days]")
+        plt.savefig(figure_path, dpi=300)
         plt.close()
 
-    def adjust_confidence_intervals(self, original_series, forecast_mean, conf_int, d_value):
+    def _adjust_confidence_intervals(
+        self, original_series, forecast_mean, conf_int, d_value
+    ):
         """
         Adjust the confidence intervals based on the inverted forecast mean.
-        This function assumes conf_int is an array with shape (2, forecast_steps),
-        where the first row contains the lower bounds, and the second row contains the upper bounds.
+        This function assumes conf_int is an dataframe.
         """
         if d_value > 0:
-            # Invert the differencing for the forecast mean to get the last actual value
-            last_actual_value = original_series.iloc[-1]
+            last_observation = original_series.iloc[-1]
+            # Assuming forecast_mean is a series and conf_int is a DataFrame
+            first_forecast_value = forecast_mean[0]
+            offset = last_observation - first_forecast_value
 
-            # Calculate the differences for lower and upper bounds relative to the forecast mean
-            lower_bound_diff = conf_int[0, :] - forecast_mean
-            upper_bound_diff = conf_int[1, :] - forecast_mean
+            # Invert differencing for the confidence interval
+            lower_ci = self.invert_differencing(
+                original_series[-d_value:], conf_int.iloc[:, 0], d_value
+            )
+            upper_ci = self.invert_differencing(
+                original_series[-d_value:], conf_int.iloc[:, 1], d_value
+            )
 
-            # Apply the differences to the last actual value to approximate the original scale
-            adjusted_lower_bounds = last_actual_value + lower_bound_diff.cumsum()
-            adjusted_upper_bounds = last_actual_value + upper_bound_diff.cumsum()
-
-            return adjusted_lower_bounds, adjusted_upper_bounds
+            lower_ci = lower_ci - offset
+            upper_ci = upper_ci - offset
+            return lower_ci, upper_ci
         else:
-            # If no differencing was applied, use the confidence intervals as is
-            return conf_int[0, :], conf_int[1, :]
+            return conf_int.iloc[:, 0], conf_int.iloc[:, 1]
 
     #################
     # Main function #
     #################
+
+    def test_arima(self, data):
+        """
+        Test function.
+        """
+        # split into train and test sets
+        X = data.values
+        size = int(len(X) * 0.66)
+        train, test = X[0:size], X[size : len(X)]
+        history = [x for x in train]
+        predictions = list()
+        # walk-forward validation
+        for t in range(len(test)):
+            model = ARIMA(history, order=(0, 2, 1))
+            model_fit = model.fit()
+            output = model_fit.forecast()
+            yhat = output[0]
+            predictions.append(yhat)
+            obs = test[t]
+            history.append(obs)
+            # print('predicted=%f, expected=%f' % (yhat, obs))
+        # evaluate forecasts
+        rmse = sqrt(mean_squared_error(test, predictions))
+        print("Test RMSE: %.3f" % rmse)
+        # plot forecasts against actual outcomes
+        plt.plot(test, color="blue")
+        plt.plot(predictions, color="red")
+        plt.savefig("test_arima.png")
 
     def arima_prediction(
         self,
         data,
         patient_id,
         is_stationary=False,
-        p_value=None,
-        d_value=None,
-        q_value=None,
+        autoarima=True,
+        p_value=0,
+        d_value=0,
+        q_value=0,
         forecast_steps=3,
         p_range=range(5),
         q_range=range(5),
-        rolling_forecast_size=0.8
+        rolling_forecast_size=0.8,
     ):
         """Actual arima prediction method. Gets the corresponding
         p,d,q values from analysis and performs a prediction."""
@@ -376,59 +535,87 @@ class ArimaPrediction:
         # Make series stationary and gets the differencing d_value
         if not is_stationary:
             stationary_data, d_value = self._make_series_stationary(data)
-            print("\tMade data stationary!")
+            self.plot_differencing_effect(patient_id, data["Volume"], d_value)
+            print("\tMade data stationary! D-value:", d_value)
+            if d_value > 1:
+                d_value = 1
 
         else:
-            stationary_data = data
+            stationary_data = data["Volume"]
             d_value = 0
 
-        # Get range for p_value from partial correlation
-        if p_value is None:
-            suggested_p_value = self._determine_p_from_pacf(stationary_data)
-            print("\tSuggested p_value:", suggested_p_value)
-            p_range = range(max(0, suggested_p_value - 2), suggested_p_value + 3)
-            print("\tGotten p_range!")
-
-        # Get range for q_value from auto correlation
-        if q_value is None:
-            suggested_q_value = self._determine_q_from_acf(stationary_data)
-            print("\tSuggested q_value:", suggested_q_value)
-            q_range = range(max(0, suggested_q_value - 2), suggested_q_value + 3)
-            print("\tGotten q_range!")
-
         try:
-            # Split the data 
+            # Split the data
+            original_index = stationary_data.index
             split_idx = int(len(stationary_data) * rolling_forecast_size)
             training_data = stationary_data.iloc[:split_idx]
             testing_data = stationary_data.iloc[split_idx:]
-            
-            # Get the best ARIMA order based on training data
-            if p_value is None or q_value is None:
+
+            # other values
+            p_value, max_p = self._determine_p_from_pacf(stationary_data)
+            q_value, max_q = self._determine_q_from_acf(stationary_data)
+
+            rolling_predictions = []
+            accumulated_diffs = []
+            if autoarima:
+                auto_model = auto_arima(
+                    training_data,
+                    start_p=p_value,
+                    start_q=q_value,
+                    max_p=max_p,
+                    max_q=max_q,
+                    d=d_value,
+                    seasonal=False,
+                    trace=True,
+                    error_action="ignore",
+                    suppress_warnings=True,
+                    stepwise=True,
+                    scoring="mse",
+                    information_criterion="aic",
+                    with_intercept="auto",
+                )
+                best_order = auto_model.order
+            else:
+                print("\tSuggested p_value: ", p_value)
+                p_range = range(max(0, p_value - 2), p_value + 3)
+                print("\tp_range: ", p_range)
+                print("\tSuggested q_value:", q_value)
+                q_range = range(max(0, q_value - 2), q_value + 3)
+                print("\tq_range: ", q_range)
+
+                # Get the best ARIMA order based on training data
                 p_value, d_value, q_value = self.find_best_arima_order(
                     training_data, p_range, d_value, q_range
                 )
                 best_order = (p_value, d_value, q_value)
                 print(f"\tBest ARIMA order: ({p_value}, {d_value}, {q_value})")
 
-            # Rolling forecast
-            rolling_predictions = []
-            rolling_index = []
-            train_model = ARIMA(training_data, order=best_order)
-            train_model_fit = train_model.fit()
-            for t in range(len(testing_data)):
-                yhat = train_model_fit.forecast()
-                yhat = self.invert_differencing(training_data, yhat, d_value)
-                print(f"\tForecast for patient {patient_id} is {yhat}.")
+            if d_value > 0:
+                trend_option = "n"  # No trend
+            else:
+                trend_option = "c"  # Include a constant as trend
 
-                rolling_index.append(testing_data.index[t])
-                rolling_predictions.append(yhat)
-                new_observation = pd.Series([testing_data.iloc[t]], index=[testing_data.index[t]])
-                train_model_fit = train_model_fit.append(new_observation, refit=True)
-            
-            # RMSE
-            rmse = sqrt(mean_squared_error(testing_data, rolling_predictions))
-            print(f'\tRolling Forecast RMSE for patient {patient_id}: {rmse}')
-                        
+            for t in range(len(testing_data)):
+                train_model = ARIMA(training_data, order=best_order, trend=trend_option)
+                train_model_fit = train_model.fit()
+                yhat = train_model_fit.get_forecast(steps=1)
+                yhat = yhat.predicted_mean.iloc[0]
+                accumulated_diffs.append(yhat)
+                if len(accumulated_diffs) == d_value:
+                    diff_data = data["Volume"].iloc[split_idx + t - d_value + 1 : split_idx + t + 1]
+                    yhat = self.invert_differencing(
+                        diff_data,
+                        accumulated_diffs,
+                        d_value,
+                    )
+                    rolling_predictions.append(yhat[-1])
+                    accumulated_diffs.pop(0)
+                    # print(f"\tForecast for patient {patient_id} is {yhat}.")
+
+                next_index = original_index[split_idx + t]
+                new_observation = pd.Series(testing_data.iloc[t], index=[next_index])
+                training_data = pd.concat([training_data, new_observation])
+
             # Final model fitting
             final_model = ARIMA(stationary_data, order=best_order)
             final_model_fit = final_model.fit()
@@ -439,9 +626,12 @@ class ArimaPrediction:
             bic = final_model_fit.bic
             hqic = final_model_fit.hqic
 
+            residuals = ""
             if arima_cfg.DIAGNOSTICS:
                 self._diagnostics(final_model_fit, patient_id)
-                print(f"ARIMA model summary for patient {patient_id}:\n{final_model_fit.summary()}")
+                # print(
+                #     f"ARIMA model summary for patient {patient_id}:\n{final_model_fit.summary()}"
+                # )
                 # Plot residual errors
                 residuals = final_model_fit.resid
                 self.generate_plot(residuals, "residuals", patient_id)
@@ -450,17 +640,41 @@ class ArimaPrediction:
                 print(f"AIC: {aic}, BIC: {bic}, HQIC: {hqic}")
 
             # Forecast and plotting
-            forecast_steps = self._get_adaptive_forecast_steps(stationary_data)
+            forecast_steps = self._get_adaptive_forecast_steps(data["Volume"])
             forecast = final_model_fit.get_forecast(steps=forecast_steps)
             forecast_mean = forecast.predicted_mean
             stderr = forecast.se_mean
             conf_int = forecast.conf_int()
-            forecast_mean = self.invert_differencing(stationary_data, forecast_mean, d_value)
-            conf_int = self.adjust_confidence_intervals(stationary_data, forecast_mean, conf_int, d_value)
-            
+            forecast_mean = self.invert_differencing(
+                data["Volume"][-d_value:], forecast_mean, d_value
+            )[: len(conf_int)]
+            (upper_b, lower_b) = self._adjust_confidence_intervals(
+                data["Volume"], forecast_mean, conf_int, d_value
+            )
             # Save forecasts plots
-            self._save_arima_fig(stationary_data, rolling_index, rolling_predictions, forecast_mean, forecast_steps, conf_int, patient_id)
+            self._save_arima_fig(
+                data,
+                rolling_predictions,
+                forecast_mean,
+                forecast_steps,
+                lower_b,
+                upper_b,
+                patient_id,
+                split_idx,
+            )
+            print("Figure with forecast saved!")
 
+            # Metrics
+            actual_observed_values = data["Volume"].iloc[
+                split_idx : split_idx + len(rolling_predictions)
+            ].values
+            mse = mean_squared_error(actual_observed_values, rolling_predictions)
+            rmse = sqrt(mse)
+            mae = mean_absolute_error(actual_observed_values, rolling_predictions)
+            print(f"\tRolling Forecast MSE for patient {patient_id}: {mse}")
+            print(f"\tRolling Forecast RMSE for patient {patient_id}: {rmse}")
+            print(f"\tRolling Forecast MAE for patient {patient_id}: {mae}")
+            
             # Saving to df
             self.cohort_summary[patient_id] = {
                 "forecast_mean": forecast_mean.tolist(),
@@ -470,8 +684,13 @@ class ArimaPrediction:
                 "bic": bic,
                 "hqic": hqic,
                 "residuals": residuals,
+                "training_data": data["Volume"].iloc[:split_idx].tolist(),
+                "validation_data": data["Volume"].iloc[split_idx:].tolist(),
+                "rolling_predictions": rolling_predictions,
+                "mse": mse,
+                "rmse": rmse,
+                "mae": mae,
             }
-
             self.update_cohort_metrics(aic, bic, hqic)
 
         except (IOError, ValueError) as error:
@@ -490,21 +709,18 @@ class ArimaPrediction:
         Returns the differenced series until it becomes stationary or reaches max
         allowed differencing.
         """
+        volume_data = data["Volume"]
         d_value = 0  # Track differencing order
-        result = adfuller(data)
+        result = adfuller(volume_data)
         p_value = result[1]
 
         while p_value >= 0.05 and d_value < max_diff:
-            data = data.diff().dropna()
-            result = adfuller(data)
+            volume_data = volume_data.diff().dropna()
+            result = adfuller(volume_data)
             p_value = result[1]
             d_value += 1
 
-        if p_value < 0.01 and d_value > 0:
-            data = data.diff(-1).dropna()  # Inverse the last differencing
-            d_value -= 1
-
-        return data, d_value
+        return volume_data, d_value
 
     def _determine_p_from_pacf(self, data, alpha=0.05):
         """
@@ -512,21 +728,24 @@ class ArimaPrediction:
         Parameters:
         - data: Time series data.
         - alpha: Significance level for PACF.
-
-        Returns:
-        - p value
         """
 
-        pacf_vals, confint = pacf(data, alpha=alpha, nlags=min(len(data) // 2 - 1, 40), method="ywmle")
-        significant_lags = np.where((pacf_vals > confint[:, 1]) | (pacf_vals < confint[:, 0]))[0]
-        
+        pacf_vals, confint = pacf(
+            data, alpha=alpha, nlags=min(len(data) // 2 - 1, 40), method="ywmle"
+        )
+        significant_lags = np.where(
+            (pacf_vals > confint[:, 1]) | (pacf_vals < confint[:, 0])
+        )[0]
+
         # Exclude lag 0 which always significant
         significant_lags = significant_lags[significant_lags > 0]
-        
+
         if significant_lags.size > 0:
             # Return the first significant lag as p
-            return significant_lags[0] - 1  # Adjusting index to lag
-        return 1
+            p_val = significant_lags[-1] - 1
+            max_p = significant_lags.max()
+            return p_val, max_p  # Adjusting index to lag
+        return 1, 1
 
     def _determine_q_from_acf(self, data, alpha=0.05):
         """
@@ -538,17 +757,23 @@ class ArimaPrediction:
         Returns:
         - q value
         """
-        acf_vals, confint = acf(data, alpha=alpha, nlags=min(len(data) // 2 - 1, 10), fft=True)
+        acf_vals, confint = acf(
+            data, alpha=alpha, nlags=min(len(data) // 2 - 1, 10), fft=True
+        )
 
-        significant_lags = np.where((acf_vals > confint[:, 1]) | (acf_vals < confint[:, 0]))[0]
-        
+        significant_lags = np.where(
+            (acf_vals > confint[:, 1]) | (acf_vals < confint[:, 0])
+        )[0]
+
         # Exclude lag 0 which always significant
         significant_lags = significant_lags[significant_lags > 0]
-        
+
         if significant_lags.size > 0:
             # Return the first significant lag as q
-            return significant_lags[0] - 1  # Adjusting index to lag
-        return 1
+            q_value = significant_lags[-1] - 1
+            max_q = significant_lags.max()
+            return q_value, max_q
+        return 1, 1
 
     def find_best_arima_order(self, stationary_data, p_range, d_value, q_range):
         """
@@ -588,79 +813,81 @@ class ArimaPrediction:
         """
         n_steps = len(data)
         # Forecast proportionally based on data length.
-        # This takes 25% of data length as forecast steps. Adjust as needed.
+        # This takes 1% of data length as forecast steps. Adjust as needed.
         return max(1, int(n_steps * 0.25))
 
-    def invert_differencing(self, original_series, diff_values, d_order=1):
+    def invert_differencing(self, history, forecast, d_order=1):
         """
         Invert the differencing process for ARIMA forecasted values.
 
         Parameters:
-        - original_series: The original time series data.
-        - diff_values: The forecasted differenced values.
-        - d_order: The order of differencing applied.
+        - history: The original time series data.
+        - forecast: The forecasted differenced values.
+        - d_value: The order of differencing applied.
 
         Returns:
         - A list of integrated forecasted values.
         """
         if d_order == 0:
-            return diff_values
+            return forecast  # Directly return the forecast for no differencing
 
         if d_order == 1:
-            last_value = original_series.iloc[-1]
-            # Build a new series combining the last original value with the forecasted values
-            integrated = np.r_[last_value, diff_values].cumsum()
-            return integrated[1:]
+            last_value = history.iloc[-1]
+            return np.cumsum(np.insert(forecast, 0, last_value))
 
-        # If d_order > 1, apply the function recursively
-        else:
-            integrated = self.invert_differencing(
-                original_series, diff_values, d_order=1
-            )
-            return self.invert_differencing(
-                original_series, integrated, d_order=d_order - 1
-            )
+        # For d_order=2 and above
+        if d_order >= 2:
+            forecast = np.insert(forecast, 0, [history.iloc[-d] for d in range(d_order, 0, -1)])
+            for d in range(d_order):
+                forecast = np.cumsum(forecast)
+            return forecast[d_order:]
 
     ##################
     # Output methods #
     ##################
+    def _diagnostics(self, model_fit, patient_id):
+        """Saves the diagnostics plot."""
+        model_fit.plot_diagnostics(figsize=(12, 8))
+        plt.savefig(
+            os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_diagnostics_plot.png")
+        )
+        plt.close()
 
     def save_forecasts_to_csv(self):
         """Save the forecast to a .csv file."""
         forecast_df_list = []
 
         for patient_id, metrics in self.cohort_summary.items():
-            forecast_df = pd.DataFrame(metrics["forecast_mean"], columns=["forecast_mean"])
-            forecast_df["stderr"] = metrics["stderr"]
-            forecast_df["lower_ci"] = metrics["CI"].iloc[:, 0]
-            forecast_df["upper_ci"] = metrics["CI"].iloc[:, 1]
-            forecast_df["patient_id"] = patient_id  # Add patient_id as a column for reference
+            forecast_df = pd.DataFrame({
+                'Forecast': [metrics['forecast_mean']],
+                'Stderr': [metrics['stderr']],
+                'Lower CI': [metrics['CI'].iloc[:, 0].values],
+                'Upper CI': [metrics['CI'].iloc[:, 1].values],
+                'Patient_ID': [patient_id],
+                'Validation Data': [metrics['validation_data'][-len(metrics['forecast_mean']):]],  
+                'Rolling Predictions': [metrics['rolling_predictions']],
+                'MSE': [metrics['mse']],
+                'RMSE': [metrics['rmse']],
+                'MAE': [metrics['mae']],
+                "AIC": [metrics['aic']],
+                "BIC": [metrics['bic']],
+                "HQIC": [metrics['hqic']],
+                })
+            
             forecast_df_list.append(forecast_df)
 
         # Concatenate all individual DataFrames into one
         all_forecasts_df = pd.concat(forecast_df_list, ignore_index=True)
-        filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.csv")
+        filename = os.path.join(
+            arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.csv"
+        )
         all_forecasts_df.to_csv(filename, index=False)
-
-    def _diagnostics(self, model_fit, patient_id):
-        """Saves the diagnostics plot."""
-        model_fit.plot_diagnostics(figsize=(12, 8))
-        plt.savefig(os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_diagnostics_plot.png"))
-        plt.close()
 
     def update_cohort_metrics(self, aic, bic, hqic):
         """Updates the cohort metrics."""
         self.cohort_metrics["aic"].append(aic)
         self.cohort_metrics["bic"].append(bic)
         self.cohort_metrics["hqic"].append(hqic)
-
-    def save_patient_metrics_to_csv(self):
-        """Saves individual patient metrics to a CSV file."""
-        patient_metrics_df = pd.DataFrame.from_dict(self.cohort_summary, orient="index")
-        patient_metrics_df.reset_index(inplace=True)
-        patient_metrics_df.rename(columns={"index": "patient_id"}, inplace=True)
-        filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_patient_metrics.csv")
-        patient_metrics_df.to_csv(filename)
 
     def print_and_save_cohort_summary(self):
         """Calculates and prints/saves cohort-wide summary statistics."""
@@ -681,7 +908,9 @@ class ArimaPrediction:
         summary_df = pd.DataFrame(summary_data)
 
         print(summary_df)
-        filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.csv")
+        filename = os.path.join(
+            arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.csv"
+        )
         summary_df.to_csv(filename)
 
     def ensure_patient_folder_exists(self, patient_id):
@@ -693,11 +922,26 @@ class ArimaPrediction:
 
 
 if __name__ == "__main__":
-    warnings.filterwarnings("ignore", message="An unsupported index was provided and will be ignored when e.g. forecasting.")
+    warnings.filterwarnings(
+        "ignore",
+        message="An unsupported index was provided and will be ignored when e.g. forecasting.",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message="No supported index is available. Prediction results will be given with an integer index beginning at `start`.",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message="No supported index is available. In the next version, calling this method in a model without a supported index will result in an exception.",
+    )
+    warnings.simplefilter("ignore", ConvergenceWarning)
+
     arima_prediction = ArimaPrediction()
 
     print("Starting ARIMA:")
-    ts_handler = TimeSeriesDataHandler(arima_cfg.TIME_SERIES_DIR, arima_cfg.LOADING_LIMIT)
+    ts_handler = TimeSeriesDataHandler(
+        arima_cfg.TIME_SERIES_DIR_COHORT, arima_cfg.LOADING_LIMIT
+    )
     ts_data_list, filenames = ts_handler.load_data()
     print("\tData loaded!")
     interp_series = ts_handler.process_and_interpolate_series(ts_data_list, filenames)
