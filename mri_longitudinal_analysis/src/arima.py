@@ -151,30 +151,32 @@ class TimeSeriesDataHandler:
         :param file_names: List of filenames
         """
         for idx, ts_data in enumerate(series_list):
-            volume_ts = ts_data[[target_column, 'Age']]
-            print(f"Preliminary check for patient: {file_names[idx]}")
-            if arima_cfg.PLOTTING:
-                print(f"\tCreating Autocorrelation plot for: {file_names[idx]}")
-                arima_pred.generate_plot(volume_ts, "autocorrelation", file_names[idx])
-                print(f"\tCreating Partial Autocorrelation plot for: {file_names[idx]}")
-                arima_pred.generate_plot(
-                    volume_ts, "partial_autocorrelation", file_names[idx]
+            try:
+                volume_ts = ts_data[[target_column, 'Age']]
+                print(f"Preliminary check for patient: {file_names[idx]}")
+                if arima_cfg.PLOTTING:
+                    print(f"\tCreating Autocorrelation plot for: {file_names[idx]}")
+                    arima_pred.generate_plot(volume_ts, "autocorrelation", file_names[idx])
+                    print(f"\tCreating Partial Autocorrelation plot for: {file_names[idx]}")
+                    arima_pred.generate_plot(
+                        volume_ts, "partial_autocorrelation", file_names[idx]
+                    )
+
+                print("\tChecking stationarity through ADF test.")
+                is_stat = self.perform_dickey_fuller_test(
+                    data=volume_ts, patient_id=file_names[idx]
                 )
+                if is_stat:
+                    print(f"\tPatient {file_names[idx]} is stationary.")
+                else:
+                    print(f"\tPatient {file_names[idx]} is not stationary.")
 
-            print("\tChecking stationarity through ADF test.")
-            is_stat = self.perform_dickey_fuller_test(
-                data=volume_ts, patient_id=file_names[idx]
-            )
-            if is_stat:
-                print(f"\tPatient {file_names[idx]} is stationary.")
-            else:
-                print(f"\tPatient {file_names[idx]} is not stationary.")
-
-            print("Starting prediction:")
-            arima_pred.arima_prediction(
+                print("Starting prediction:")
+                arima_pred.arima_prediction(
                 data=volume_ts, patient_id=file_names[idx], is_stationary=is_stat
             )
-            # arima_pred.test_arima(volume_ts)
+            except (ValueError, KeyError) as error:
+                print(f"An error occurred: {error}")
         arima_pred.save_forecasts_to_csv()
         arima_pred.print_and_save_cohort_summary()
 
@@ -201,7 +203,6 @@ class TimeSeriesDataHandler:
         critical_values = result[4]
         icbest = result[5]
         is_stationary = p_value < 0.05
-
         with open(
             adf_test_file_path,
             "w",
@@ -415,10 +416,27 @@ class ArimaPrediction:
 
         if rolling_predictions:
             rolling_index = data['Age'].iloc[split_idx:split_idx + len(rolling_predictions)]
+            rolling_lower_bounds = []
+            rolling_upper_bounds = []
+            for i in range(len(rolling_predictions)):
+                rolling_std = np.std(rolling_predictions[:i+1])
+                rolling_lower_bounds.append(rolling_predictions[i] - 1.96 * rolling_std)
+                rolling_upper_bounds.append(rolling_predictions[i] + 1.96 * rolling_std)
+            
+            rolling_fan_chart_colors = ['#00ff00', '#40ff40', '#73ff73', '#aaffaa', '#e0ffe0']
+            num_intervals = len(rolling_fan_chart_colors)
+            interval_step = (np.array(rolling_upper_bounds) - np.array(rolling_lower_bounds)) / num_intervals
+            
+            rolling_index = data['Age'].iloc[split_idx:split_idx + len(rolling_predictions)]
+            for i in range(num_intervals):
+                lower = np.array(rolling_predictions) - (i + 1) * interval_step
+                upper = np.array(rolling_predictions) + (i + 1) * interval_step
+                plt.fill_between(rolling_index, lower, upper, color=rolling_fan_chart_colors[i], alpha=0.3)
+            
             plt.plot(
                 rolling_index,
                 rolling_predictions,
-                label="Rolling Forecasts",
+                label="Rolling Predictions",
                 color="green",
                 linestyle="--",
             )
