@@ -5,7 +5,7 @@ It supports loading data from .csv files.
 import os
 import warnings
 from math import sqrt
-
+import arch
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -401,6 +401,7 @@ class ArimaPrediction:
         data,
         rolling_predictions,
         forecast_mean,
+        forecast_combined,
         forecast_steps,
         lower_bounds,
         upper_bounds,
@@ -448,21 +449,23 @@ class ArimaPrediction:
         min_len = min(len(future_index), len(forecast_mean), len(lower_bounds), len(upper_bounds))
         future_index = future_index[:min_len]
         forecast_mean = forecast_mean[:min_len]
+        forecast_combined = forecast_combined[:min_len]
         lower_bounds = lower_bounds[:min_len]
         upper_bounds = upper_bounds[:min_len]
         
         plt.plot(future_index, forecast_mean, label="Future Forecast", color="red")
-
+        plt.plot(future_index, forecast_combined, label="Future Forecast with GARCH", color="orange")
+        
         # Adjusted confidence intervals plot
         fan_chart_colors = ['#ff0000', '#ff4040', '#ff7373', '#ffaaaa', '#ffe0e0']
         num_intervals = len(fan_chart_colors)
-        interval_step = (upper_bounds - lower_bounds) / num_intervals
+        interval_step = (upper_bounds - lower_bounds) / num_intervals * 0.001
         
         for i in range(num_intervals):
             lower = forecast_mean - (i + 1) * interval_step
             upper = forecast_mean + (i + 1) * interval_step
             plt.fill_between(future_index, lower, upper, color=fan_chart_colors[i], alpha=0.1)
-
+        
         plt.title("ARIMA Forecast with Confidence Intervals")
         plt.legend()
         patient_folder_path = self.ensure_patient_folder_exists(patient_id)
@@ -637,21 +640,21 @@ class ArimaPrediction:
             # Final model fitting
             final_model = ARIMA(stationary_data, order=best_order)
             final_model_fit = final_model.fit()
+            residuals = final_model_fit.resid
             print(f"\tModel fit for patient {patient_id}.")
-
+            model_garch = arch.arch_model(residuals, vol="Garch", p=p_value, q=q_value) 
+            result_garch = model_garch.fit()
+            
             # Metrics
             aic = final_model_fit.aic
             bic = final_model_fit.bic
             hqic = final_model_fit.hqic
-
-            residuals = ""
             if arima_cfg.DIAGNOSTICS:
                 self._diagnostics(final_model_fit, patient_id)
                 # print(
                 #     f"ARIMA model summary for patient {patient_id}:\n{final_model_fit.summary()}"
                 # )
                 # Plot residual errors
-                residuals = final_model_fit.resid
                 self.generate_plot(residuals, "residuals", patient_id)
                 self.generate_plot(residuals, "density", patient_id)
                 print(residuals.describe())
@@ -660,12 +663,16 @@ class ArimaPrediction:
             # Forecast and plotting
             forecast_steps = self._get_adaptive_forecast_steps(data["Volume"])
             forecast = final_model_fit.get_forecast(steps=forecast_steps)
+            forecast_garch = result_garch.forecast(horizon=forecast_steps)
+            forecast_garch_var = forecast_garch.variance.values[-1, :]
             forecast_mean = forecast.predicted_mean
+            forecast_combined = forecast_mean + forecast_garch_var
             stderr = forecast.se_mean
             conf_int = forecast.conf_int()
             forecast_mean = self.invert_differencing(
                 data["Volume"][-d_value:], forecast_mean, d_value
             )[: len(conf_int)]
+            forecast_combined = self.invert_differencing(data["Volume"][-d_value:], forecast_combined, d_value)[: len(conf_int)]
             (upper_b, lower_b) = self._adjust_confidence_intervals(
                 data["Volume"], forecast_mean, conf_int, d_value
             )
@@ -674,6 +681,7 @@ class ArimaPrediction:
                 data,
                 rolling_predictions,
                 forecast_mean,
+                forecast_combined,
                 forecast_steps,
                 lower_b,
                 upper_b,
