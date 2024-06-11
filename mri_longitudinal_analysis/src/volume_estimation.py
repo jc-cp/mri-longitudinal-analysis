@@ -1018,9 +1018,9 @@ class VolumeEstimator:
         """
         Calculates the area under the curve (AUC) for the volume data.
         """
-        df_clean = df.dropna(subset=["Age", "Volume"])
+        df_clean = df.dropna(subset=["Age", "Normalized Volume"])
         x = df_clean["Age"].values
-        y = df_clean["Volume"].values
+        y = df_clean["Normalized Volume"].values
         auc_value = auc(x, y)
         return auc_value
     

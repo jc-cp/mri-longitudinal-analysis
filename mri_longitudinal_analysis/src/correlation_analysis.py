@@ -54,7 +54,8 @@ from utils.helper_functions import (
     visualize_ind_indexes_distrib,
     visualize_volume_change, 
     #grid_search_weights,
-    categorize_time_since_first_diagnosis
+    categorize_time_since_first_diagnosis,
+    plot_histo_distributions
 )
 
 
@@ -625,6 +626,7 @@ class TumorAnalysis:
         self.merged_data["Age Group"] = self.merged_data.apply( lambda x: categorize_age_group(x, column="Age"), axis=1).astype("category")
         self.merged_data["Age Group at Diagnosis"] = self.merged_data.apply(lambda x: categorize_age_group(x, column="Age at First Diagnosis"), axis=1).astype("category")
         self.merged_data["Time Period Since Diagnosis"] = self.merged_data.apply(categorize_time_since_first_diagnosis, axis=1).astype("category")
+        self.merged_data["Baseline Volume cm3"] = self.merged_data["Baseline Volume"] / 1000
         self.merged_data["Change Speed"] = self.merged_data["Change Speed"].astype(
             "category"
         )
@@ -702,17 +704,17 @@ class TumorAnalysis:
             "Symptoms",
             "Histology",
             "Treatment Type",
-            "Age Group at Progression",
+            # "Age Group at Progression",
             "Age Group at Diagnosis",
             "BRAF Status",
             "Sex",
             #"Tumor Classification",
             "Received Treatment",
-            "Time Period Since Diagnosis at Progression",
+            "Time Since Diagnosis",
             #"Change Speed",
-            #"Change Type",
-            #"Change Trend",
-            #"Change Acceleration",
+            "Change Type",
+            "Change Trend",
+            "Change Acceleration",
         ]
         numerical_vars = [
             "Age",
@@ -736,73 +738,73 @@ class TumorAnalysis:
         # for full blown out comparison uncomment the following lines
         correlation_dir = os.path.join(output_dir, "correlations")
         os.makedirs(correlation_dir, exist_ok=True)
-        for num_var in numerical_vars:
-            for cat_var in categorical_vars:
-                if self.merged_data[cat_var].nunique() == 2:
-                    self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type="t-test",
-                    )
-                    self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type="point-biserial",
-                    )
-                else:
-                    self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type=None,
-                    )
+        # for num_var in numerical_vars:
+        #     for cat_var in categorical_vars:
+        #         if self.merged_data[cat_var].nunique() == 2:
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type="t-test",
+        #             )
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type="point-biserial",
+        #             )
+        #         else:
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type=None,
+        #             )
             
-            filtered_vars = [
-                var
-                for var in numerical_vars
-                if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
-            ]
-            for other_num_var in filtered_vars:
-                if other_num_var != num_var:
-                    self.analyze_correlation(
-                        num_var,
-                        other_num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type="Spearman",
-                    )
-                    self.analyze_correlation(
-                        num_var,
-                        other_num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type="Pearson",
-                    )
+        #     filtered_vars = [
+        #         var
+        #         for var in numerical_vars
+        #         if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
+        #     ]
+        #     for other_num_var in filtered_vars:
+        #         if other_num_var != num_var:
+        #             self.analyze_correlation(
+        #                 num_var,
+        #                 other_num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type="Spearman",
+        #             )
+        #             self.analyze_correlation(
+        #                 num_var,
+        #                 other_num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type="Pearson",
+        #             )
         
-        aggregated_data = (
-            self.merged_data.sort_values("Age").groupby("Patient_ID", as_index=False).last()
-        )
-        for cat_var in categorical_vars:
-            for other_cat_var in categorical_vars:
-                if cat_var != other_cat_var:
-                    self.analyze_correlation(
-                        cat_var,
-                        other_cat_var,
-                        aggregated_data,
-                        prefix,
-                        correlation_dir,
-                        test_type=None
-                    )
+        # aggregated_data = (
+        #     self.merged_data.sort_values("Age").groupby("Patient_ID", as_index=False).last()
+        # )
+        # for cat_var in categorical_vars:
+        #     for other_cat_var in categorical_vars:
+        #         if cat_var != other_cat_var:
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 other_cat_var,
+        #                 aggregated_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type=None
+        #             )
 
         ##############################################
         ##### Cohort Table with basic statistics #####
@@ -824,13 +826,16 @@ class TumorAnalysis:
             "BRAF Status",
             "Sex",
             "Received Treatment",
-            "Baseline Volume",
-            "Treatment Type",
-            "Age Median",
-            "Age Group at Progression",
+            "Baseline Volume cm3",
+            #"Treatment Type",
+            #"Age Median",
+            #"Age Group at Progression",
             "Age Group at Diagnosis",
-            "Time Period Since Diagnosis at Progression",
-            "Change Speed",
+            "Time Since Diagnosis",
+            #"Change Speed",
+            "Coefficient of Variation",
+            "Relative Volume Change Pct",
+            #"Cumulative Volume Change Pct",
             "Change Type",
             "Change Trend",
             "Change Acceleration",
@@ -862,23 +867,22 @@ class TumorAnalysis:
                 "BRAF Status",
                 "Sex",
                 "Received Treatment",
+                "Age Group at Diagnosis",
+                "Time Since Diagnosis",
+            ],
+            [   
+                "Volume Change Rate",
+                "Volume Change",
+                "Volume",
+                "Baseline Volume cm3",
+                "Coefficient of Variation",
+                "Relative Volume Change Pct",
+                "Cumulative Volume Change Pct",
+                "Change Type",
+                "Change Trend",
+                "Change Acceleration",
             ],  # Categorical variables
-            [
-                "Age at First Diagnosis",
-                "Age at Last Clinical Follow-Up",
-                "Age Median",
-            ],  # Age-related variables
-            [
-                "Baseline Volume",
-                "Volume Median",
-                "Volume Change Median",
-                "Volume Change Rate Median",
-            ],  # Volume-related variables
-            [
-                "Follow-Up Time Median",
-                "Days Between Scans Median",
-            ],  # Time-related variables
-            ["Treatment Type", "Received Treatment"],  # Treatment-related variables
+
         ]
         pooled_results_multi = pd.DataFrame(
             columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]
@@ -894,7 +898,7 @@ class TumorAnalysis:
                 analysis_type="Multivariate",
                 combo=combo,
             )
-            # pooled_results_multi = pd.DataFrame(columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]) # enable to clear up th epooled results and not have a cumulative forest plot
+            pooled_results_multi.drop(pooled_results_multi.index, inplace=True) # enable to clear up th epooled results and not have a cumulative forest plot
         print("\t\tMulti-variate Analysis done! Forest Plots saved.")
 
     def analyze_correlation(
@@ -1273,7 +1277,7 @@ class TumorAnalysis:
         plt.subplots_adjust(left=0.3, right=0.7)
         ax.set_xscale("log")
         ax.set_xlim(left=0.01, right=100)
-        ax.set_xlabel("<-- Lower TPL | Higher TPL -->")
+        ax.set_xlabel("<-- Lower Risk of Progression | Higher Risk of Progression -->")
         ax.axvline(x=1, linestyle="--", color="blue", lw=1)
 
         # Categories handling and colors
@@ -1431,8 +1435,9 @@ class TumorAnalysis:
 
         if analysis_type == "Multivariate":
             combo_str = "_".join(combo)
+            combo_len = len(combo_str)
             output_file = os.path.join(
-                output_dir, f"{analysis_type}_{combo_str}_forest_plot.png"
+                output_dir, f"{analysis_type}_{combo_len}_forest_plot.png"
             )
         else:
             output_file = os.path.join(output_dir, f"{analysis_type}_forest_plot.png")
@@ -1959,7 +1964,7 @@ class TumorAnalysis:
 
         print(f"\t\tSaved summary statistics to {file_path}.")
 
-    def generate_plots(self, output_dir):
+    def generate_distribution_plots(self, output_dir):
         """
         Violin plots.
         """
@@ -2130,7 +2135,7 @@ class TumorAnalysis:
         self.merged_data = pd.merge(
             self.merged_data, progression_data, on="Patient_ID", how="left"
         )
-        self.merged_data["Time Period Since Diagnosis at Progression"] = self.merged_data["Time Period Since Diagnosis at Progression"].astype("category")
+        self.merged_data["Time Since Diagnosis"] = self.merged_data["Time Since Diagnosis"].astype("category")
         self.merged_data["Age Group at Progression"] = self.merged_data["Age Group at Progression"].astype("category")
         analysis_data_pre = pd.merge(
             analysis_data_pre,
@@ -2289,14 +2294,18 @@ class TumorAnalysis:
             time_gap = 0
             age_group_at_progression = group["Age Group"].iloc[-1]
 
+        time_to_progression_years = time_to_progression / 365.25
+        time_gap_years = time_gap / 365.25
         return pd.Series(
             {
                 "Age at First Progression": age_at_first_progression,
                 "Age Group at Progression": age_group_at_progression,
                 "Age at Volume Change": age_at_volume_change,
                 "Time to Progression": time_to_progression,
+                "Time to Progression Years": time_to_progression_years,
                 "Time Gap": time_gap,
-                "Time Period Since Diagnosis at Progression": time_period_since_diagnosis_at_progression,
+                "Time Gap Years": time_gap_years,
+                "Time Since Diagnosis": time_period_since_diagnosis_at_progression,
             }
         )
 
@@ -2569,7 +2578,8 @@ class TumorAnalysis:
             # Descriptive statistics for table1 in paper
             self.printout_stats(prefix=prefix, output_file_path=output_stats)
             if self.cohort == "JOINT":
-                self.generate_plots(output_dir=output_stats)
+                self.generate_distribution_plots(output_dir=output_stats)
+            plot_histo_distributions(self.merged_data, output_dir=output_stats)
 
             # Correlations between variables
             self.analyze_pre_treatment(
