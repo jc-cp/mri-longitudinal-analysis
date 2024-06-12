@@ -710,7 +710,6 @@ class TumorAnalysis:
             "Sex",
             #"Tumor Classification",
             "Received Treatment",
-            "Time Since Diagnosis",
             #"Change Speed",
             "Change Type",
             "Change Trend",
@@ -831,7 +830,6 @@ class TumorAnalysis:
             #"Age Median",
             #"Age Group at Progression",
             "Age Group at Diagnosis",
-            "Time Since Diagnosis",
             #"Change Speed",
             "Coefficient of Variation",
             "Relative Volume Change Pct",
@@ -868,7 +866,8 @@ class TumorAnalysis:
                 "Sex",
                 "Received Treatment",
                 "Age Group at Diagnosis",
-                "Time Since Diagnosis",
+                "Baseline Volume cm3",
+                "Coefficient of Variation",
             ],
             [   
                 "Volume Change Rate",
@@ -1970,85 +1969,74 @@ class TumorAnalysis:
         """
         data = self.merged_data.copy()
         sns.set_palette(NORD_PALETTE)
-
-        # Create a figure with subplots
-        _, axs = plt.subplots(2, 2, figsize=(13, 10))
-
+        # Create a figure with subplots in a single column
+        _, axs = plt.subplots(4, 1, figsize=(8, 18))
         # Violin plot for "Follow-Up Time" distribution per dataset
-        sns.violinplot(x="Dataset", y="Follow-Up Time", data=data, ax=axs[0, 0])
-        axs[0, 0].set_title("Distribution of Follow-Up Time")
-        axs[0, 0].set_xlabel("Dataset")
-        axs[0, 0].set_ylabel("Follow-Up Time [days]")
-
+        data["Follow-Up Time (Years)"] = data["Follow-Up Time"] / 365.25
+        sns.boxplot(x="Dataset", y="Follow-Up Time (Years)", data=data, ax=axs[0])
+        axs[0].set_title("Distribution of Follow-Up Time")
+        axs[0].set_xlabel("Dataset")
+        axs[0].set_ylabel("Follow-Up Time [days]")
         # Violin plot for number of scans per patient per dataset
         scans_per_patient = (
             self.merged_data.groupby(["Dataset", "Patient_ID"])
             .size()
             .reset_index(name="Number of Scans")
         )
-        # if scans_per_patient["Number of Scans"] == 0:
-        scans_per_patient.loc[
-            scans_per_patient["Number of Scans"] == 0, "Number of Scans"
-        ] = 3
+        # Filter out patients with less than 3 scans
+        scans_per_patient = scans_per_patient[scans_per_patient["Number of Scans"] >= 3]
         sns.violinplot(
-            x="Dataset", y="Number of Scans", data=scans_per_patient, ax=axs[0, 1]
+            x="Dataset", y="Number of Scans", data=scans_per_patient, ax=axs[1]
         )
         sns.stripplot(
             x="Dataset",
             y="Number of Scans",
             data=scans_per_patient,
-            ax=axs[0, 1],
+            ax=axs[1],
             color="black",
             size=3,
             alpha=0.5,
         )
-        axs[0, 1].set_title("Distribution of Number of Scans per Patient")
-        axs[0, 1].set_xlabel("Dataset")
-        axs[0, 1].set_ylabel("Number of Scans")
-
+        axs[1].set_title("Distribution of Number of Scans per Patient")
+        axs[1].set_xlabel("Dataset")
+        axs[1].set_ylabel("Number of Scans")
         # Violin plot for follow-up interval distribution per dataset
-        sns.violinplot(y="Dataset", x="Days Between Scans", data=data, ax=axs[1, 0])
-        axs[1, 0].set_title("Distribution of Follow-Up Intervals")
-        axs[1, 0].set_ylabel("Dataset")
-        axs[1, 0].set_xlabel("Time Between Scans [days]")
-        # Bar plot for progression classification per dataset
+        sns.violinplot(y="Dataset", x="Days Between Scans", data=data, ax=axs[2])
+        axs[2].set_title("Distribution of Follow-Up Intervals")
+        axs[2].set_ylabel("Dataset")
+        axs[2].set_xlabel("Time Between Scans [days]")
+        # Stacked bar plot for progression classification per dataset
         classification_counts = (
             data.groupby(["Dataset", "Patient Classification"]).size().unstack()
         )
-        colors = [NORD_PALETTE[2], NORD_PALETTE[1], NORD_PALETTE[0]]
-        # colors = ["red","blue", "green"]
-
+        colors = [NORD_PALETTE[1], NORD_PALETTE[0], NORD_PALETTE[2]]
         classification_percentages = (
             classification_counts.div(classification_counts.sum(axis=1), axis=0) * 100
         )
-        classification_counts.plot(kind="bar", ax=axs[1, 1], color=colors)
-        axs[1, 1].set_title("Patient Classification per Dataset")
-        axs[1, 1].set_xlabel("Dataset")
-        axs[1, 1].set_xticklabels(axs[1, 1].get_xticklabels(), rotation=0, ha="center")
-        axs[1, 1].set_ylabel("Count")
-        axs[1, 1].legend(title="Patient Classification")
-
-        # Add percentages at the top of each bar
-        for i, p in enumerate(axs[1, 1].patches):
-            dataset_idx = i // classification_counts.shape[1]
-            class_idx = i % classification_counts.shape[1]
-            if class_idx < classification_percentages.shape[1]:
-                axs[1, 1].annotate(
-                    f"{classification_percentages.iloc[dataset_idx, class_idx]:.1f}%",
-                    (p.get_x() + p.get_width() / 2.0, p.get_height()),
-                    ha="center",
-                    va="bottom",
-                    fontsize=8,
-                    rotation=0,
-                )
-
+        classification_percentages.plot(kind="barh", ax=axs[3], color=colors, stacked=True)
+        axs[3].set_title("Patient Classification per Dataset")
+        axs[3].set_ylabel("Dataset")
+        axs[3].set_xlabel("Percentage")
+        axs[3].legend(title="Patient Classification", loc="center", ncol=3, fancybox=True, shadow=True)
+        # Add percentages at the center of each bar
+        for _, p in enumerate(axs[3].patches):
+            width, height = p.get_width(), p.get_height()
+            x, y = p.get_xy()
+            axs[3].text(
+                x + width / 2,
+                y + height / 2,
+                f"{width:.1f}%",
+                ha="center",
+                va="center",
+                color="white",
+                fontsize=12,
+            )
         # Adjust the spacing between subplots
         plt.tight_layout()
-
         # Display the plot
         file_name = os.path.join(output_dir, "dataset_comparison.png")
-        plt.savefig(file_name, dpi=300)
-
+        plt.savefig(file_name, dpi=300)    
+    
     def create_cohort_table(self, categorical_vars, continuous_vars):
         """
         Create a table comparing the two cohorts based on the variables of interest.

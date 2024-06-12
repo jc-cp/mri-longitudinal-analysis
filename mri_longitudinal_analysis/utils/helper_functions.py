@@ -970,13 +970,19 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     - data: DataFrame containing patient growth data and classifications.
     - output_filename: Name of the file to save the plot.
     """
-    plt.figure(figsize=(15, 8))
-
+    plt.figure(figsize=(10, 8))
+    if column_name == "Normalized Volume":
+        mean = np.mean(data[column_name])
+        std = np.std(data[column_name])
+        factor = 2.5
+        threshold = mean + factor * std
+        data = data[data[column_name] <= threshold]
+        data = data[data[column_name] >= -threshold]
     # Unique classifications & palette
     data = data[data["Time since First Scan"] <= 4000]
     classifications = data["Classification"].unique()
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
-    colors = [palette[0], palette[1], palette[2]]
+    colors = [palette[0], palette[1], "green"]
     #colors =  ["blue", "red", "green"]
     for classification, color in zip(classifications, colors):
         class_data = data[data["Classification"] == classification]
@@ -1020,22 +1026,10 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
                 label=f"{classification} Median",
                 linewidth=1.5,
             )
-            # Calculate and plot rolling median trajectory
-            # class_data = class_data.sort_values(by=["Time since First Scan"])
-            # class_data.set_index("Time since First Scan", inplace=True)
-            # rolling_median_data = class_data[column_name].expanding().median()
-            # sns.lineplot(
-            #     x=class_data.index,
-            #     y=rolling_median_data,
-            #     color=color,
-            #     linestyle="--",
-            #     label=f"{classification} Weighted Rolling Median",
-            #     linewidth=1.5,
-            # )
 
     num_patients = data["Patient_ID"].nunique()
-    plt.axhline(y=0.75, color='blue', linestyle="--", label="-25% Volume Change")
-    plt.axhline(y=1.25, color='red', linestyle="--", label="+25% Volume Change")
+    plt.axhline(y=0.75, color='blue', linestyle="-", label="-25% Volume Change")
+    plt.axhline(y=1.25, color='red', linestyle="-", label="+25% Volume Change")
     plt.xlabel("Days Since First Scan")
     plt.ylabel(f"Tumor {column_name} [{unit}]")
     plt.title(f"Patient Trend Trajectories (N={num_patients})")
@@ -1058,12 +1052,12 @@ def plot_individual_trajectories(
     - time_limit (int): Cutoff time in days for plotting data.
     - freq_days (int): Frequency in days for calculating median trajectories.
     """
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(10, 8))
     
-    if column in ["Volume Change", "Volume Change Rate", "Volume Change Pct"]:
+    if column in ["Normalized Volume","Volume Change", "Volume Change Rate", "Volume Change Pct"]:
         mean = np.mean(plot_data[column])
         std = np.std(plot_data[column])
-        if column in ["Volume Change", "Volume Change Pct"]:
+        if column in ["Normalized Volume", "Volume Change", "Volume Change Pct"]:
             factor = 2.5
         elif column in ["Volume Change Rate"]:
             factor = 0.25
@@ -1233,7 +1227,7 @@ def plot_histo_age_group(data, output_dir, age_groups, total_patients):
     plot_data['Total'] = plot_data.groupby('Age Group')['Count'].transform('sum')
 
     # Create the triple bar plot with total count annotations
-    plt.figure(figsize=(12, 10))
+    _, ax1 = plt.subplots(figsize=(8, 8))
     barplot = sns.barplot(x="Age Group", y="Count", hue="Status", data=plot_data, order=age_groups)
 
     # Add total count labels above bars
@@ -1245,15 +1239,18 @@ def plot_histo_age_group(data, output_dir, age_groups, total_patients):
                         xytext = (0, 9), 
                         textcoords = 'offset points')
 
-    plt.xlabel("Age Group")
-    plt.ylabel("Count")
-    plt.title("Patient Progression Status by Age Group")
-    plt.legend(title='Status')
+    ax1.set_xlabel("Age Group")
+    ax1.set_ylabel("Count")
+    ax1.set_title("Patient Progression Status by Age Group")
+    ax1.legend(title='Status')
     
     age_ranges = ["0-2", "2-5", "5-11", "11-18", "18+"]
-    ax2 = barplot.twiny()
+    ax2 = ax1.twiny()
     ax2.set_xticks(barplot.get_xticks())
     ax2.set_xticklabels(age_ranges)
+    ax2.xaxis.set_ticks_position("bottom")
+    ax2.xaxis.set_label_position("bottom")
+    ax2.spines["bottom"].set_position(("axes", -0.08))
     ax2.set_xlabel("Age Range (Years)")
     
     file_name = os.path.join(output_dir, "patient_progression_age_group.png")
@@ -1277,7 +1274,7 @@ def plot_histo_progression(data, output_dir, time_bins, total_patients):
     plot_data['Total'] = plot_data.groupby('Time Since Diagnosis')['Count'].transform('sum')
 
     # Create the triple bar plot with total count annotations
-    plt.figure(figsize=(12, 10))
+    plt.figure(figsize=(8, 6))
     barplot = sns.barplot(x="Time Since Diagnosis", y="Count", hue="Status", data=plot_data, order=time_bins)
 
     # Add total count labels above bars
