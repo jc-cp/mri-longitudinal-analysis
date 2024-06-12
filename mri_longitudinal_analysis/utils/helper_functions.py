@@ -1185,20 +1185,32 @@ def plot_histo_distributions(data, output_dir):
     """
     data = data.copy()
     
-    cv_distribution(data, output_dir)
-    
     data['Progressed'] = data.apply(lambda row: 1 if row['Age at First Progression'] < row['Age at Last Clinical Follow-Up'] else 0, axis=1)
     data['Previously Progressed'] = 0
     time_bins = ["0-1 years", "1-3 years", "3-5 years", "5-7 years", "7-10 years", "10+ years"]
     age_groups = ["Infant", "Preschool", "School Age", "Adolescent", "Young Adult"]
     total_patients = data['Patient_ID'].nunique()
+    cv_distribution(data, output_dir, age_groups=age_groups)
     plot_histo_progression(data, output_dir, time_bins, total_patients)    
     plot_histo_age_group(data, output_dir, age_groups, total_patients)
 
-def cv_distribution(data, output_dir):
+def cv_distribution(data, output_dir, age_groups):
     """
     Plot the distribution of the coefficient of variation.
     """
+    data["CV"] = data.groupby("Patient_ID")["Volume"].transform(lambda x: x.std() / x.mean())
+    plt.figure(figsize=(10, 8))
+
+    # Create boxplots for the coefficient of variation for each age group
+    sns.boxplot(x="Age Group", y="CV", data=data, order=age_groups)
+    plt.xlabel("Age Group")
+    plt.ylabel("Coefficient of Variation")
+    plt.title("Distribution of Coefficient of Variation by Age Group")
+    plt.tight_layout()
+    file_name_cv_ = os.path.join(output_dir, "coefficient_of_variation_by_age_group_boxplots.png")
+    plt.savefig(file_name_cv_, dpi=300)
+    plt.close()
+    
     cv_data = data.groupby("Patient_ID")["Coefficient of Variation"].first()
     plt.figure(figsize=(8, 6))
     sns.histplot(cv_data, bins=20, kde=True)
