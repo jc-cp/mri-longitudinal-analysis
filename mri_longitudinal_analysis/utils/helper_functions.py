@@ -1333,11 +1333,11 @@ def classify_patients_time_since_diagnosis(data, time_bins):
         bin_data.loc[bin_data['Patient_ID'].isin(patient_ids_previously_progressed), 'Previously Progressed'] = 1
         previously_progressed_count = len(patient_ids_previously_progressed)
 
-        total_count = not_progressed_count + progressed_count + previously_progressed_count        
-        print(f"Time Bin: {time_bin}, Total Count: {total_count}")
-        print(f"  Not Progressed: {not_progressed_count}")
-        print(f"  Progressed: {progressed_count}")
-        print(f"  Previously Progressed: {previously_progressed_count}")
+        #total_count = not_progressed_count + progressed_count + previously_progressed_count        
+        #print(f"Time Bin: {time_bin}, Total Count: {total_count}")
+        #print(f"  Not Progressed: {not_progressed_count}")
+        #print(f"  Progressed: {progressed_count}")
+        #print(f"  Previously Progressed: {previously_progressed_count}")
 
         classifications.append({
             'Time Since Diagnosis': time_bin,
@@ -1379,12 +1379,12 @@ def classify_patients_age_group(data, age_groups):
         group_data.loc[group_data['Patient_ID'].isin(patient_ids_previously_progressed), 'Previously Progressed'] = 1
         previously_progressed_count = len(patient_ids_previously_progressed)
 
-        total_count = not_progressed_count + progressed_count + previously_progressed_count
+        #total_count = not_progressed_count + progressed_count + previously_progressed_count
 
-        print(f"Age Group: {age_group}, Total Count: {total_count}")
-        print(f"  Not Progressed: {not_progressed_count}")
-        print(f"  Progressed: {progressed_count}")
-        print(f"  Previously Progressed: {previously_progressed_count}")
+        #print(f"Age Group: {age_group}, Total Count: {total_count}")
+        #print(f"  Not Progressed: {not_progressed_count}")
+        #print(f"  Progressed: {progressed_count}")
+        #print(f"  Previously Progressed: {previously_progressed_count}")
 
         classifications.append({
             'Age Group': age_group,

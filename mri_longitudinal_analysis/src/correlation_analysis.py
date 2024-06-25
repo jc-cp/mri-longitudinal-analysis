@@ -16,6 +16,7 @@ from cfg.src import correlation_cfg
 from cfg.utils.helper_functions_cfg import NORD_PALETTE
 from lifelines import KaplanMeierFitter, CoxPHFitter
 from lifelines.statistics import logrank_test, proportional_hazard_test
+from lifelines.plotting import add_at_risk_counts 
 from lifelines.utils import concordance_index
 from utils.helper_functions import (
     bonferroni_correction,
@@ -1724,9 +1725,9 @@ class TumorAnalysis:
         self,
         data,
         output_dir,
-        volume_weight=0.5,
-        growth_weight=0.5,
-        change_threshold=20,
+        #volume_weight=0.5,
+        #growth_weight=0.5,
+        #change_threshold=20,
     ):
         """
         Analyze the stability of tumors based on their growth rates and volume changes.
@@ -1832,6 +1833,16 @@ class TumorAnalysis:
             write_stat(f"\t\tMedian Age: {median_age} days")
             write_stat(f"\t\tMaximum Age: {max_age} days")
             write_stat(f"\t\tMinimum Age: {min_age} days")
+
+            # Days Between Scans
+            median_days_between_scans = self.merged_data["Days Between Scans"].median()
+            max_days_between_scans = self.merged_data["Days Between Scans"].max()
+            unique_days = self.merged_data["Days Between Scans"].unique()
+            next_smallest = min(day for day in unique_days if day > 0)
+
+            write_stat(f"\t\tMedian Days Between Scans: {median_days_between_scans} days")
+            write_stat(f"\t\tMaximum Days Between Scans: {max_days_between_scans} days")
+            write_stat(f"\t\tMinimum Days Between Scans: {next_smallest} days")
 
             # Sex, Received Treatment, Symptoms, Location,
             # Patient Classification, Treatment Type
@@ -2135,13 +2146,13 @@ class TumorAnalysis:
         analysis_data_pre["Event_Occurred"] = ~analysis_data_pre[
             "Age at First Progression"
         ].isna()
-        
         # Compare the results of both approaches and check if they match
         analysis_data_pre["Duration"] = np.where(
             analysis_data_pre["Event_Occurred"],
             analysis_data_pre["Time to Progression"],
             #analysis_data_pre["Age at First Progression"] - analysis_data_pre["Age at First Diagnosis"],
             analysis_data_pre["Follow-Up Time"],
+            #np.nan
         )
         
         analysis_data_pre = analysis_data_pre.dropna(
@@ -2155,7 +2166,7 @@ class TumorAnalysis:
                 )
             else:
                 self.kaplan_meier_analysis(analysis_data_pre, output_dir, prefix=prefix)
-                # self.cox_proportional_hazards_analysis(analysis_data_pre, output_dir)
+                self.cox_proportional_hazards_analysis(analysis_data_pre, output_dir)
 
     def kaplan_meier_analysis(self, data, output_dir, stratify_by=None, prefix=""):
         """
@@ -2163,25 +2174,45 @@ class TumorAnalysis:
         """
         surv_dir = os.path.join(output_dir, "survival_plots")
         os.makedirs(surv_dir, exist_ok=True)
-        analysis_data_pre = data.copy()
+        colors = sns.color_palette(NORD_PALETTE, n_colors=len(NORD_PALETTE))
         analysis_data_pre = data.drop_duplicates(subset=['Patient_ID'], keep='first')
         kmf = KaplanMeierFitter()
-        if stratify_by in analysis_data_pre.columns:
+
+        if stratify_by and stratify_by in analysis_data_pre.columns:
             unique_categories = analysis_data_pre[stratify_by].unique()
             if len(unique_categories) > 1:
                 groups = []
-                for category in analysis_data_pre[stratify_by].unique():
-                    category_data = analysis_data_pre[
-                        analysis_data_pre[stratify_by] == category
-                    ]
+                kmfs = []
+                fig, ax = plt.subplots(figsize=(8, 6))
+                for i, category in enumerate(unique_categories):
+                    category_data = analysis_data_pre[analysis_data_pre[stratify_by] == category]
+                    if category_data.empty:
+                        continue
+                    kmf = KaplanMeierFitter()
+
                     kmf.fit(
                         category_data["Duration"],
                         event_observed=category_data["Event_Occurred"],
                         label=str(category),
                     )
-                    ax = kmf.plot_survival_function(ci_show=True)
+                    kmf.plot_survival_function(ax=ax, ci_show=True, show_censors=True, color=colors[i % len(colors)])
+                    kmfs.append(kmf)
                     groups.append((category, category_data))
                 
+                plt.title(f"Stratified Survival Function by {stratify_by}", fontsize=14)
+                plt.xlabel("Days since Diagnosis", fontsize=12)
+                plt.ylabel("Survival Probability", fontsize=12)
+                plt.legend(title=stratify_by, loc="best", fontsize=10)
+                if kmfs:
+                    add_at_risk_counts(*kmfs, ax=ax)
+                
+                # Save the combined plot
+                survival_plot = os.path.join(surv_dir, f"{prefix}_survival_plot_category_{stratify_by}.png")
+                plt.tight_layout()
+                plt.savefig(survival_plot, dpi=300)
+                plt.close(fig)
+                print(f"\t\tSaved survival KaplanMeier curve for {stratify_by}.")
+
                 # Perform pairwise log-rank tests
                 pairwise_results = []
                 for (cat1, group1), (cat2, group2) in combinations(groups, 2):
@@ -2190,35 +2221,34 @@ class TumorAnalysis:
                         event_observed_A=group1["Event_Occurred"], event_observed_B=group2["Event_Occurred"]
                     )
                     p_value = result.p_value
-                    # Set a display threshold for very small p-values
                     display_p_value = "<0.001" if p_value < 0.001 else f"{p_value:.3f}"
                     pairwise_results.append((cat1, cat2, display_p_value))
                 
-                # Add annotations to file
+                # Save pairwise log-rank test results
                 results_file = os.path.join(surv_dir, f"{prefix}_pairwise_logrank_results_{stratify_by}.txt")
                 with open(results_file, "w", encoding='utf-8') as f:
                     f.write("Combination\tp-value\n")
                     for cat1, cat2, display_p_value in pairwise_results:
-                        f.write(f"{cat1} vs {cat2}\t{display_p_value}\n")              
-                plt.title(f"Stratified Survival Function by {stratify_by}")
+                        f.write(f"{cat1} vs {cat2}\t{display_p_value}\n")
         else:
+            fig, ax = plt.subplots(figsize=(8, 6))
             kmf.fit(
                 analysis_data_pre["Duration"],
                 event_observed=analysis_data_pre["Event_Occurred"],
             )
-            ax = kmf.plot_survival_function(ci_show=True)
+            kmf.plot_survival_function(ax=ax, ci_show=True, show_censors=True)
             ax.set_title("Survival function of Tumor Progression")
-
-        ax.set_xlabel("Days since Diagnosis")
-        ax.set_ylabel("Survival Probability")
-
-        survival_plot = os.path.join(
-            surv_dir, f"{prefix}_survival_plot_category_{stratify_by}.png"
-        )
-        plt.savefig(survival_plot, dpi=300)
-        plt.close()
-        print(f"\t\tSaved survival KaplanMeier curve for {stratify_by}.")
-
+            ax.set_xlabel("Days since Diagnosis")
+            ax.set_ylabel("Survival Probability")
+            add_at_risk_counts(kmf, ax=ax)
+            
+            # Save the plot
+            survival_plot = os.path.join(surv_dir, f"{prefix}_survival_plot.png")
+            plt.tight_layout()
+            plt.savefig(survival_plot, dpi=300)
+            plt.close(fig)
+            print("\t\tSaved survival KaplanMeier curve.")
+    
     def calculate_progression(self, group):
         """
         Calculate the age at first progression and time to progression for each patient.
@@ -2273,13 +2303,13 @@ class TumorAnalysis:
             else:
                 time_gap = 0
         else:
-            age_at_first_progression = group["Age at Last Clinical Follow-Up"].max()
-            age_at_volume_change = group["Age at Last Clinical Follow-Up"].max()
+            age_at_first_progression = np.nan
+            age_at_volume_change = np.nan
             time_period_since_diagnosis_numeric = group["Time Period Since Diagnosis"].map(category_mapping).astype(float)
             max_time_period_numeric = time_period_since_diagnosis_numeric.max()
             time_period_since_diagnosis_at_progression = inverse_mapping[max_time_period_numeric]
-            time_to_progression = group["Follow-Up Time"].max()
-            time_gap = 0
+            time_to_progression = np.nan
+            time_gap = np.nan
             age_group_at_progression = group["Age Group"].iloc[-1]
 
         time_to_progression_years = time_to_progression / 365.25
@@ -2304,28 +2334,25 @@ class TumorAnalysis:
         print("\tPerforming time-to-event analysis: Cox-Hazard Survival Analysis.")        
         analysis_data = data.copy()
         list_of_columns = [
-            "Follow-Up Time",
-            "Patient_ID",
-            "Date",
-            "Scan_ID",
-            "Dataset",
-            "Age at First Diagnosis",
-            "Age at First Treatment",
-            "Age at Last Clinical Follow-Up",
-            "Volume", 
-            "Volume Median", 
-            "Volume Avg", 
-            "Volume Std",
-            "Volume Change Rate",
-            "Volume Change Rate Median",
-            "Volume Change Rate Avg",
-            "Volume Change Rate Std",
-            "Volume Change Rate Pct",
-            "Volume Change Rate Pct Median",
-            "Volume Change Rate Pct Avg",
-            "Volume Change Rate Pct Std"]
-        analysis_data.drop(columns=list_of_columns, inplace=True)
-
+            "Location",
+            #"Symptoms",
+            "Histology",
+            "BRAF Status",
+            #"Sex",
+            #"Received Treatment",
+            #"Baseline Volume cm3",
+            #"Treatment Type",
+            #"Age Group at Diagnosis",
+            #"Coefficient of Variation",
+            #"Relative Volume Change Pct",
+            #"Change Type",
+            #"Change Trend",
+            #"Change Acceleration",
+            "Duration",
+            "Event_Occurred"
+        ]
+        
+        analysis_data.drop(columns=analysis_data.columns[~analysis_data.columns.isin(list_of_columns)], inplace=True)
         # Identify column types and adjust: continuous > scaling, categorical > encoding
         categorical_columns = analysis_data.select_dtypes(
             include=["category"]
@@ -2403,7 +2430,7 @@ class TumorAnalysis:
         print(analysis_data["Event_Occurred"].shape[0])
         c_index = concordance_index(
             analysis_data["Duration"],
-            -cph.predict_partial_hazard(analysis_data),
+            -cph.predict_expectation(analysis_data),
             analysis_data["Event_Occurred"],
         )
         plt.figure(figsize=(8, 6))
@@ -2425,9 +2452,10 @@ class TumorAnalysis:
             self.calculate_progression
         )
         time_gap_data = progression_data["Time Gap"].dropna()
-        time_gap_data = time_gap_data[
-            time_gap_data > 0
-        ]  # Filter out non-positive values
+        time_gap_data = time_gap_data[time_gap_data > 0]  # Filter out non-positive values
+        time_to_progression = progression_data["Time to Progression"].dropna()
+        time_to_progression = time_to_progression[time_to_progression > 0]  # Filter out non-positive values
+        
         _, ax = plt.subplots(figsize=(8, 6))
         sns.histplot(
             time_gap_data, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax
@@ -2458,6 +2486,33 @@ class TumorAnalysis:
         plt.close()
 
         print("\t\tSaved time gap plot.")
+
+        _, ax = plt.subplots(figsize=(8, 6))
+        sns.histplot(
+            time_to_progression, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax
+        )
+        plt.xlabel("Time to Progression (Days)")
+        plt.ylabel("Frequency")
+        plt.title("Distribution of Time to Progression")
+        mean_progression = np.mean(time_to_progression)
+        median_progression = np.median(time_to_progression)
+        ax.axvline(
+            mean_progression,
+            color="red",
+            linestyle="--",
+            label=f"Mean: {mean_progression:.2f} days",
+        )
+        ax.axvline(
+            median_progression,
+            color="green",
+            linestyle="--",
+            label=f"Median: {median_progression:.2f} days",
+        )
+        ax.legend()
+        time_to_progression_plot = os.path.join(surv_dir, "time_to_progression_plot.png")
+        plt.savefig(time_to_progression_plot, dpi=300)
+        plt.close()
+        print("\t\tSaved time to progression plot.")
 
     #################
     # MAIN ANALYSIS #
@@ -2533,10 +2588,10 @@ class TumorAnalysis:
                 "Location",
                 "Sex",
                 "BRAF Status",
-                "Age Group",
+                "Age Group at Diagnosis",
+                "Time Period Since Diagnosis",
                 "Symptoms",
                 "Histology",
-                "Treatment Type",
                 "Received Treatment",
                 None,
             ]
@@ -2570,10 +2625,10 @@ class TumorAnalysis:
             plot_histo_distributions(self.merged_data, output_dir=output_stats)
 
             # Correlations between variables
-            self.analyze_pre_treatment(
-                prefix=prefix,
-                output_dir=output_correlations,
-            )
+            #self.analyze_pre_treatment(
+            #    prefix=prefix,
+            #    output_dir=output_correlations,
+            #)
             # self.perform_logistic_regression()
 
             step_idx += 1
