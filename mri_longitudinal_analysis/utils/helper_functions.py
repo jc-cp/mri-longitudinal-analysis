@@ -548,27 +548,65 @@ def stepwise_selection(y, x):
     return selected_model
 
 
-def calculate_vif(X, checks=False):
+def calculate_vif(X, categorical_columns):
     """
     Calculate Variance Inflation Factor (VIF) for each variable in the DataFrame X.
     X should already have dummy variables for categorical features and should not contain the outcome variable.
     """
-    if checks:
-        # Convert non-numeric columns to numeric
-        X = X.apply(pd.to_numeric, errors='coerce')
-        # Drop columns with all missing values
-        X = X.dropna(axis=1, how='all')
-        
-    vif_data = pd.DataFrame({
-        'Variable': X.columns,
-        'VIF': [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
-    })
-
-    print("\tVIF Calculation Results:")
-    print(vif_data)
+    #print("Data types before VIF calculation:")
+    #print(X.dtypes)
+    #print("\nData description:")
+    #print(X.describe())
+    
+    # Convert boolean columns to integer
+    for col in X.select_dtypes(include=['bool']).columns:
+        X[col] = X[col].astype(int)
+    
+    # Replace inf values with NaN
+    X = X.replace([np.inf, -np.inf], np.nan)
+    X = X.dropna()
+    
+    #print("\nData types after conversion and cleaning:")
+    #print(X.dtypes)
+    #print("\nData shape after cleaning:", X.shape)
+    
+    # Identify dummy variables
+    dummy_columns = [col for col in X.columns if any(col.startswith(cat + '_') for cat in categorical_columns)]
+    
+    # Identify continuous variables
+    continuous_columns = [col for col in X.columns if col not in dummy_columns]
+    
+    vif_data = []
+    
+    # Calculate VIF for continuous variables
+    for i, col in enumerate(continuous_columns):
+        try:
+            vif = variance_inflation_factor(X[continuous_columns].values, i)
+            vif_data.append({'Variable': col, 'VIF': vif})
+        except ExceptionGroup as e:
+            print(f"Error calculating VIF for {col}: {e}")
+    
+    # Calculate VIF for each set of dummy variables
+    for cat in categorical_columns:
+        cat_dummies = [col for col in dummy_columns if col.startswith(cat + '_')]
+        if len(cat_dummies) > 1:  # We need at least 2 dummies to calculate VIF
+            try:
+                X_with_cat = X[continuous_columns + cat_dummies]
+                cat_vif = variance_inflation_factor(X_with_cat.values, len(continuous_columns))
+                vif_data.append({'Variable': cat, 'VIF': cat_vif})
+            except ExceptionGroup as e:
+                print(f"Error calculating VIF for {cat}: {e}")
+    
+    vif_df = pd.DataFrame(vif_data)
+    print("\nVIF Calculation Results:")
+    print(vif_df)
+    return vif_df
 
 
 def cumulative_stats(group, variable):
+    """
+    Calculates cumulative statistics for a given variable.
+    """
     group[f"{variable} CumMean"] = group[variable].expanding().mean()
     group[f"{variable} CumMedian"] = group[variable].expanding().median()
     group[f"{variable} CumStd"] = group[variable].expanding().std().fillna(0)
@@ -576,6 +614,9 @@ def cumulative_stats(group, variable):
 
 
 def rolling_stats(group, variable, window_size=3, min_periods=1):
+    """
+    Calculates rolling statistics for a given variable.
+    """
     group[f"{variable} RollMean"] = (
         group[variable]
         .rolling(window=window_size, min_periods=min_periods)

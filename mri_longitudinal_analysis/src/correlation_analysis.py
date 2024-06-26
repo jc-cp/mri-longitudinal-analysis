@@ -18,6 +18,7 @@ from lifelines import KaplanMeierFitter, CoxPHFitter
 from lifelines.statistics import logrank_test, proportional_hazard_test
 from lifelines.plotting import add_at_risk_counts 
 from lifelines.utils import concordance_index
+from sklearn.model_selection import KFold
 from utils.helper_functions import (
     bonferroni_correction,
     chi_squared_test,
@@ -47,7 +48,7 @@ from utils.helper_functions import (
     kruskal_wallis_test,
     fisher_exact_test,
     logistic_regression_analysis,
-    # calculate_vif,
+    calculate_vif,
     calculate_stability_index,
     visualize_stability_index,
     visualize_individual_indexes,
@@ -2154,7 +2155,7 @@ class TumorAnalysis:
             analysis_data_pre["Follow-Up Time"],
             #np.nan
         )
-        
+          
         analysis_data_pre = analysis_data_pre.dropna(
             subset=["Duration", "Event_Occurred"]
         )
@@ -2332,35 +2333,42 @@ class TumorAnalysis:
         Preprocess the data for Cox proportional hazards analysis.
         """
         print("\tPerforming time-to-event analysis: Cox-Hazard Survival Analysis.")        
-        analysis_data = data.copy()
+        analysis_data_pre = data.copy()
+
         list_of_columns = [
             "Location",
-            #"Symptoms",
+            "Symptoms",
             "Histology",
             "BRAF Status",
-            #"Sex",
-            #"Received Treatment",
+            "Sex",
+            "Received Treatment",
             #"Baseline Volume cm3",
             #"Treatment Type",
-            #"Age Group at Diagnosis",
+            "Age Group at Diagnosis",
             #"Coefficient of Variation",
             #"Relative Volume Change Pct",
-            #"Change Type",
-            #"Change Trend",
-            #"Change Acceleration",
+            "Change Type",
+            "Change Trend",
+            "Change Acceleration",
             "Duration",
-            "Event_Occurred"
+            "Event_Occurred",
+            
         ]
+        # reduce data to important columns
+        analysis_data = analysis_data_pre[list_of_columns]
         
-        analysis_data.drop(columns=analysis_data.columns[~analysis_data.columns.isin(list_of_columns)], inplace=True)
         # Identify column types and adjust: continuous > scaling, categorical > encoding
         categorical_columns = analysis_data.select_dtypes(
             include=["category"]
         ).columns.tolist()
-        analysis_data = pd.get_dummies(analysis_data, columns=categorical_columns)
-
+        for var in categorical_columns:
+            dummies = pd.get_dummies(analysis_data[var], prefix=var, drop_first=True)
+            analysis_data = pd.concat([analysis_data, dummies], axis=1)
+            analysis_data.drop(var, axis=1, inplace=True)
+        
+        continuous_columns = analysis_data.select_dtypes(include=[np.number]).columns
         print(f"\t\tTotal number of rows before filtering: {analysis_data.shape[0]}")
-        inf_mask = np.isinf(analysis_data).any(axis=1)
+        inf_mask = np.isinf(analysis_data[continuous_columns]).any(axis=1)
         if inf_mask.any():
             print(f"Warning: Removing {inf_mask.sum()} rows with infinite values.")
             analysis_data = analysis_data[~inf_mask]
@@ -2371,79 +2379,245 @@ class TumorAnalysis:
             analysis_data = analysis_data[~nan_rows]
             print(f"Total number of rows after NaN filtering: {analysis_data.shape[0]}")
 
-        # continuous_columns = analysis_data.select_dtypes(include=[np.number]).columns.difference(analysis_data.columns[analysis_data.columns.str.contains('_')]).tolist()
-        # scaler = StandardScaler()
-        # analysis_data[continuous_columns] = scaler.fit_transform(analysis_data[continuous_columns])
-
-        if (analysis_data["Duration"] <= 0).any():
-            raise ValueError(
-                "The 'Duration' column contains non-positive values. Please ensure all durations are positive."
-            )
-
-        # calculate_vif(analysis_data.drop(columns=["Duration", "Event_Occurred"]), checks=True)
+        #scaler = StandardScaler()
+        #analysis_data[continuous_columns] = scaler.fit_transform(analysis_data[continuous_columns])        
         # Handle missing values
         analysis_data = analysis_data.dropna(subset=["Duration", "Event_Occurred"])
 
-        return analysis_data
+        return analysis_data, list_of_columns
 
     def cox_proportional_hazards_analysis(self, data, output_dir):
         """
         Cox proportional hazards analysis for time-to-event data.
         """
-        analysis_data = self.preprocess_data_hz_model(data)
-        print(analysis_data.dtypes)
-
-        cph = CoxPHFitter(baseline_estimation_method="spline", n_baseline_knots=4)
+        analysis_data, list_columns = self.preprocess_data_hz_model(data)
+        analysis_data["Duration"] = analysis_data["Duration"] / 365.25
+        calculate_vif(analysis_data.drop(columns=["Duration", "Event_Occurred"]), list_columns)
+        cph = CoxPHFitter(baseline_estimation_method="breslow")
         cph.fit(analysis_data, duration_col="Duration", event_col="Event_Occurred")
-        # check = proportional_hazard_test(cph, analysis_data)
-        # check.print_summary()
         cph.print_summary()
 
-        # Visualize the survival curves
-        ax = cph.plot()
-        ax.set_title("Survival Curves from Cox Model")
-        ax.set_xlabel("Days since Diagnosis")
-        ax.set_ylabel("Survival Probability")
+        # Create a custom plot of hazard ratios
+        summary = cph.summary
+        hazard_ratios = summary['exp(coef)']
+        confidence_intervals = summary[['exp(coef) lower 95%', 'exp(coef) upper 95%']]
+        p_values = summary['p']
+
+        # New sorting logic
+        sorted_vars = [(var.split('_')[0], var) for var in hazard_ratios.index]
+        sorted_vars.sort(key=lambda x: (x[0], x[1]))
+        sorted_order = [var[1] for var in sorted_vars]
+        sorted_order = sorted_order[::-1]
+
+        # Reorder the data based on the new sorting
+        hazard_ratios = hazard_ratios[sorted_order]
+        confidence_intervals = confidence_intervals.loc[sorted_order]
+        p_values = p_values.loc[sorted_order]
+
+        # Extract main categories from variable names
+        main_categories = [var.split('_')[0] for var in hazard_ratios.index]
+        unique_main_categories = sorted(set(main_categories))
+
+        # Create color map
+        colormap = plt.get_cmap("tab20")
+        colors = [colormap(i) for i in range(len(unique_main_categories))]
+        category_colors = {cat: color for cat, color in zip(unique_main_categories, colors)}
+
+        fig, ax = plt.subplots(figsize=(12, 10))
+        plt.subplots_adjust(left=0.3, right=0.7)
+        y_pos = range(len(hazard_ratios))
+        
+        # Plot points for hazard ratios and error bars with colors
+        for i, (var, hr) in enumerate(hazard_ratios.items()):
+            category = var.split('_')[0]
+            color = category_colors[category]
+            
+            ci_lower, ci_upper = confidence_intervals.loc[var]
+            ax.errorbar(
+                hr, i, 
+                xerr=[[hr - ci_lower], [ci_upper - hr]],
+                fmt='o',
+                color=color,
+                ecolor=color,
+                capsize=5,
+                capthick=2,
+                markersize=6,
+                elinewidth=2,
+                zorder=2
+            )
+
+        ax.axvline(x=1, color='r', linestyle='--', zorder=0)
+        ax.set_xscale('log')
+        ax.set_xlabel('"<-- Lower Risk of Progression | Higher Risk of Progression -->"')
+        ax.set_ylabel('Variables')
+        ax.set_title('Cox Proportional Hazards Model', fontsize=14, fontweight='bold')
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(hazard_ratios.index, ha='right')
+        
+        ax.set_xlim(0.1, 10)
+
+        fig.canvas.draw()
+        ax_bounds = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+        fig_width_inches = fig.get_size_inches()[0]
+        axes_width_inches = ax_bounds.width
+        annotation_x_position = ax_bounds.x1 + 0.01 * fig_width_inches
+
+        for i, (var, hr) in enumerate(hazard_ratios.items()):
+            ci_lower, ci_upper = confidence_intervals.loc[var]
+            p_value = p_values.loc[var]
+            
+            ax.text(
+                annotation_x_position + (0.75 * axes_width_inches),
+                i,
+                f"{hr:.2f}",
+                ha="left",
+                va="center",
+                fontsize=10,
+                transform=ax.transData,
+            )
+            ax.text(
+                annotation_x_position + (2.25 * axes_width_inches),
+                i,
+                f"({ci_lower:.2f}-{ci_upper:.2f})",
+                ha="left",
+                va="center",
+                fontsize=10,
+                transform=ax.transData,
+            )
+            ax.text(
+                annotation_x_position + (5.75 * axes_width_inches),
+                i,
+                f"{p_value:.3f}" if p_value >= 0.01 else "<0.01",
+                ha="left",
+                va="center",
+                fontsize=10,
+                transform=ax.transData,
+            )
+
+        ax.text(1.05, 1.0, "HR", ha="left", va="center", fontsize=10, fontweight="bold", transform=ax.transAxes)
+        ax.text(1.15, 1.0, "95% CI", ha="left", va="center", fontsize=10, fontweight="bold", transform=ax.transAxes)
+        ax.text(1.28, 1.0, "P-val", ha="left", va="center", fontsize=10, fontweight="bold", transform=ax.transAxes)
+        
+        plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
+        plt.tight_layout()
+        
         surv_dir = os.path.join(output_dir, "survival_plots")
         os.makedirs(surv_dir, exist_ok=True)
         cox_plot = os.path.join(surv_dir, "cox_proportional_hazards_plot.png")
-        plt.savefig(cox_plot, dpi=300)
+        plt.savefig(cox_plot, dpi=300, bbox_inches='tight')
         plt.close()
         print("\t\tSaved Cox proportional hazards plot.")
 
-        # Visualize the partial effects of covariates
-        plt.figure(figsize=(8, 6))
-        cph.plot_partial_effects_on_outcome(
-            covariates=["BRAF Status_Fusion", "BRAF Status_V600E"],
-            values=[[0, 1], [10, 20]],
-            plot_baseline=False,
-        )
-        plt.title("Log-Log Survival Curves for Covariates")
-        plt.xlabel("Log-Time")
-        plt.ylabel("Log-Survival Probability")
-        log_log_plot = os.path.join(surv_dir, "log_log_survival_plot.png")
-        plt.savefig(log_log_plot, dpi=300)
-        plt.close()
-
-        # Visualize the concordance index
-        print(analysis_data["Duration"].shape[0])
-        print(analysis_data["Event_Occurred"].shape[0])
+        self.plot_survival_curves(cph, analysis_data, surv_dir, plot_type="survival")
+        self.plot_survival_curves(cph, analysis_data, surv_dir, plot_type="log_log")
+        
+        c_index, ci = self.calculate_c_index_with_ci(cph, analysis_data)
+        print(f"\t\tC-index: {c_index:.3f} (95% CI: {ci[0]:.3f} - {ci[1]:.3f})")    
+    
+    def calculate_c_index_with_ci(self, cph, data, n_bootstraps=800):
+        """
+        Calculate the concordance index (C-index) with confidence intervals.
+        """
+        # Calculate the main C-index
         c_index = concordance_index(
-            analysis_data["Duration"],
-            -cph.predict_expectation(analysis_data),
-            analysis_data["Event_Occurred"],
+            data["Duration"],
+            -cph.predict_expectation(data),
+            data["Event_Occurred"]
         )
-        plt.figure(figsize=(8, 6))
-        plt.bar(["C-index"], [c_index], color="skyblue", edgecolor="black")
-        plt.xlabel("Metric")
-        plt.ylabel("Value")
-        plt.title(f"Concordance Index: {c_index:.3f}")
-        c_index_plot = os.path.join(surv_dir, "c_index_plot.png")
-        plt.savefig(c_index_plot, dpi=300)
-        plt.close()
+    
+        # Bootstrap to calculate confidence interval
+        c_indices = []
+        n_samples = len(data)
+        for _ in range(n_bootstraps):
+            boot_indices = np.random.choice(n_samples, n_samples, replace=True)
+            boot_sample = data.iloc[boot_indices]
+            try:
+                c_ind = concordance_index(
+                    boot_sample["Duration"],
+                    -cph.predict_partial_hazard(boot_sample),
+                    boot_sample["Event_Occurred"]
+                )
+                c_indices.append(c_ind)
+            except ZeroDivisionError:
+                # Skip this bootstrap sample if there are no admissible pairs
+                continue
+    
+        if len(c_indices) < n_bootstraps * 0.9:  # If we lost more than 10% of our bootstrap samples
+            print(f"Warning: Only {len(c_indices)} out of {n_bootstraps} bootstrap samples were valid.")
+        
+        if len(c_indices) == 0:
+            print("Error: No valid bootstrap samples. Unable to calculate confidence interval.")
+            return c_index, (None, None)
+        
+        ci_lower = np.percentile(c_indices, 2.5)
+        ci_upper = np.percentile(c_indices, 97.5)
+    
+        return c_index, (ci_lower, ci_upper)    
+    
+    def plot_survival_curves(self, cph, analysis_data, output_dir, plot_type="survival"):
+        """
+        Plot either survival curves or log-log curves for each covariate.
+        
+        Parameters:
+        - cph: Fitted CoxPHFitter model
+        - analysis_data: DataFrame containing the analysis data
+        - output_dir: Directory to save the plots
+        - plot_type: 'survival' for survival curves, 'log_log' for log-log plots
+        """
+        if plot_type not in ['survival', 'log_log']:
+            raise ValueError("plot_type must be either 'survival' or 'log_log'")
 
-        print("\t\tSaved C-index plot.")
+        categorical_vars = [col for col in analysis_data.columns if '_' in col]
+        continuous_vars = [col for col in analysis_data.columns if col not in categorical_vars + ['Duration', 'Event_Occurred']]
 
+        for var in categorical_vars + continuous_vars:
+            plt.figure(figsize=(10, 6))
+            
+            if var in categorical_vars:
+                unique_values = analysis_data[var].unique()
+                if len(unique_values) <= 1:
+                    print(f"Skipping {var} as it has only one unique value.")
+                    plt.close()
+                    continue
+                values = [[unique_values[0]], [unique_values[1]]]
+            else:  # continuous variable
+                if analysis_data[var].dtype not in ['int64', 'float64']:
+                    print(f"Skipping {var} as it is not a numeric type.")
+                    plt.close()
+                    continue
+                q1, q3 = analysis_data[var].quantile([0.25, 0.75])
+                values = [[q1], [q3]]
+
+            if plot_type == 'survival':
+                cph.plot_partial_effects_on_outcome(
+                    covariates=var,
+                    values=values,
+                    plot_baseline=False
+                )
+                plt.title(f"Survival Curves for {var}")
+                plt.xlabel("Time")
+                plt.ylabel("Survival Probability")
+                file_prefix = "survival_plot"
+            else:  # log_log
+                cph.plot_partial_effects_on_outcome(
+                    covariates=var,
+                    values=values,
+                    plot_baseline=False,
+                    y="cumulative_hazard"
+                )
+                plt.title(f"Log-Log Plot for {var}")
+                plt.xlabel("Time [years]")
+                plt.ylabel("Log(-Log(Survival Probability))")
+                file_prefix = "log_log_plot"
+
+            # Save the plot
+            var_name = var.replace(" / ", "_") if "/" in var else var
+            plot_filename = os.path.join(output_dir, f"{file_prefix}_{var_name}.png")
+            plt.savefig(plot_filename, dpi=300)
+            plt.close()
+
+        print(f"Saved {plot_type} plots for covariates.")
+    
     def visualize_time_gap(self, output_dir):
         """
         Visualize the distribution of time gaps between volume change and progression.
@@ -2513,7 +2687,7 @@ class TumorAnalysis:
         plt.savefig(time_to_progression_plot, dpi=300)
         plt.close()
         print("\t\tSaved time to progression plot.")
-
+ 
     #################
     # MAIN ANALYSIS #
     #################
