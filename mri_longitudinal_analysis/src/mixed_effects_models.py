@@ -19,6 +19,9 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     classification_report,
+    confusion_matrix, 
+    roc_curve,
+    auc
 )
 from sklearn.utils import class_weight
 from imblearn.over_sampling import RandomOverSampler, SMOTE
@@ -624,6 +627,39 @@ class MixedEffectsModel:
         infl_file = os.path.join(output_dir, f"{var}_diagnostics.png")
         plt.savefig(infl_file, dpi=300)
 
+    def plot_confusion_matrix_and_roc(self, y_true, y_pred, y_pred_proba, output_dir):
+        """
+        Confusion matrix and ROC curve for the model evaluation.
+        """
+        # Confusion Matrix
+        cm = confusion_matrix(y_true, y_pred)
+        plt.figure(figsize=(10, 4))
+        
+        plt.subplot(1, 2, 1)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+        plt.title('Confusion Matrix')
+        plt.ylabel('True label')
+        plt.xlabel('Predicted label')
+
+        # ROC Curve
+        fpr, tpr, _ = roc_curve(y_true, y_pred_proba)
+        roc_auc = auc(fpr, tpr)
+
+        plt.subplot(1, 2, 2)
+        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('Receiver Operating Characteristic (ROC) Curve')
+        plt.legend(loc="lower right")
+
+        plt.tight_layout()
+        file = os.path.join(output_dir, 'confusion_matrix_and_roc.png')
+        plt.savefig(file, dpi=300)
+        plt.close()
+
     #########
     # MAINs #
     #########
@@ -689,9 +725,10 @@ class MixedEffectsModel:
         )
         _ = self.evaluate_models(test_data, outcome_var)
 
-        # finally do a grid search
-        _ = self.grid_search(train_data, outcome_var)
-
+        # finally do a grid search if needed and plot the confusion matrix and ROC curve
+        #_ = self.grid_search(train_data, outcome_var)
+        self.plot_confusion_matrix_and_roc(test_data[outcome_var], test_data["pred_class"], test_data["pred_prob"], mixed_model_dir)
+        
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
