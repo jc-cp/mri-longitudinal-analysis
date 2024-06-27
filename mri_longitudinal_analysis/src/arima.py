@@ -399,12 +399,15 @@ class ArimaPrediction:
     def _save_arima_fig(
         self,
         data,
-        rolling_predictions,
-        forecast_mean,
+        rolling_predictions_arima,
+        rolling_predictions_combined,
+        forecast_mean_arima,
         forecast_combined,
         forecast_steps,
-        lower_bounds,
-        upper_bounds,
+        lower_bounds_arima,
+        upper_bounds_arima,
+        lower_bounds_combined,
+        upper_bounds_combined,
         patient_id,
         split_idx,
     ):
@@ -412,71 +415,45 @@ class ArimaPrediction:
         Plot the historical data, rolling forecasts, future forecasts, and adjusted confidence intervals.
         """
         # Historical data plot
-        plt.figure(figsize=(12, 6))
-        plt.plot(data['Age'], data['Volume'], label="Historical Data", color="blue")
-
-        if rolling_predictions:
-            rolling_index = data['Age'].iloc[split_idx:split_idx + len(rolling_predictions)]
-            rolling_lower_bounds = []
-            rolling_upper_bounds = []
-            for i in range(len(rolling_predictions)):
-                rolling_std = np.std(rolling_predictions[:i+1])
-                rolling_lower_bounds.append(rolling_predictions[i] - 1.96 * rolling_std)
-                rolling_upper_bounds.append(rolling_predictions[i] + 1.96 * rolling_std)
+        _, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12))
             
-            rolling_fan_chart_colors = ['#00ff00', '#40ff40', '#73ff73', '#aaffaa', '#e0ffe0']
-            num_intervals = len(rolling_fan_chart_colors)
-            interval_step = (np.array(rolling_upper_bounds) - np.array(rolling_lower_bounds)) / num_intervals
+        for ax, title, rolling_predictions, forecast_mean, lower_bounds, upper_bounds in [
+            (ax1, "ARIMA Forecast", rolling_predictions_arima, forecast_mean_arima, lower_bounds_arima, upper_bounds_arima),
+            (ax2, "ARIMA+GARCH Forecast", rolling_predictions_combined, forecast_combined, lower_bounds_combined, upper_bounds_combined)
+        ]:
+            # Historical data plot
+            ax.plot(data['Age'], data['Volume'], label="Historical Data", color="blue")
             
-            rolling_index = data['Age'].iloc[split_idx:split_idx + len(rolling_predictions)]
-            for i in range(num_intervals):
-                lower = np.array(rolling_predictions) - (i + 1) * interval_step
-                upper = np.array(rolling_predictions) + (i + 1) * interval_step
-                plt.fill_between(rolling_index, lower, upper, color=rolling_fan_chart_colors[i], alpha=0.3)
+            # Rolling predictions plot
+            if rolling_predictions:
+                rolling_index = data['Age'].iloc[split_idx:split_idx + len(rolling_predictions)]
+                ax.plot(rolling_index, rolling_predictions, label="Rolling Predictions", color="green", linestyle="--")
             
-            plt.plot(
-                rolling_index,
-                rolling_predictions,
-                label="Rolling Predictions",
-                color="green",
-                linestyle="--",
-            )
+            # Future forecasts plot
+            last_age = data['Age'].iloc[-1]
+            future_index = np.arange(last_age + 1, last_age + 1 + forecast_steps)
+            min_len = min(len(future_index), len(forecast_mean), len(lower_bounds), len(upper_bounds))
+            future_index = future_index[:min_len]
+            forecast_mean = forecast_mean[:min_len]
+            lower_bounds = lower_bounds[:min_len]
+            upper_bounds = upper_bounds[:min_len]
             
-        # Future forecasts plot
-        last_age = data['Age'].iloc[-1]
-        future_index = np.arange(last_age + 1, last_age + 1 + forecast_steps)
-        # Match the length of the future_index with the forecast_mean
-        min_len = min(len(future_index), len(forecast_mean), len(lower_bounds), len(upper_bounds))
-        future_index = future_index[:min_len]
-        forecast_mean = forecast_mean[:min_len]
-        forecast_combined = forecast_combined[:min_len]
-        lower_bounds = lower_bounds[:min_len]
-        upper_bounds = upper_bounds[:min_len]
+            ax.plot(future_index, forecast_mean, label="Future Forecast", color="red")
+            
+            # Confidence intervals plot
+            ax.fill_between(future_index, lower_bounds, upper_bounds, color='pink', alpha=0.3, label='95% Confidence Interval')
+            
+            ax.set_title(title)
+            ax.legend()
+            ax.set_ylabel("Volume [mm3]")
+            ax.set_xlabel("Age [days]")
         
-        plt.plot(future_index, forecast_mean, label="Future Forecast", color="red")
-        plt.plot(future_index, forecast_combined, label="Future Forecast with GARCH", color="orange")
-        
-        # Adjusted confidence intervals plot
-        fan_chart_colors = ['#ff0000', '#ff4040', '#ff7373', '#ffaaaa', '#ffe0e0']
-        num_intervals = len(fan_chart_colors)
-        interval_step = (upper_bounds - lower_bounds) / num_intervals * 0.001
-        
-        for i in range(num_intervals):
-            lower = forecast_mean - (i + 1) * interval_step
-            upper = forecast_mean + (i + 1) * interval_step
-            plt.fill_between(future_index, lower, upper, color=fan_chart_colors[i], alpha=0.1)
-        
-        plt.title("ARIMA Forecast with Confidence Intervals")
-        plt.legend()
+        plt.tight_layout()
         patient_folder_path = self.ensure_patient_folder_exists(patient_id)
-        figure_path = os.path.join(
-            patient_folder_path, f"{patient_id}_forecast_plot.png"
-        )
-        plt.ylabel("Volume [mm3]")
-        plt.xlabel("Age [days]")
+        figure_path = os.path.join(patient_folder_path, f"{patient_id}_forecast_plot_comparison.png")
         plt.savefig(figure_path, dpi=300)
         plt.close()
-
+    
     def _adjust_confidence_intervals(
         self, original_series, forecast_mean, conf_int, d_value
     ):
@@ -576,7 +553,8 @@ class ArimaPrediction:
             p_value, max_p = self._determine_p_from_pacf(stationary_data)
             q_value, max_q = self._determine_q_from_acf(stationary_data)
 
-            rolling_predictions = []
+            rolling_predictions_arima = []
+            rolling_predictions_combined = []
             accumulated_diffs = []
             if autoarima:
                 auto_model = auto_arima(
@@ -619,36 +597,103 @@ class ArimaPrediction:
             for t in range(len(testing_data)):
                 train_model = ARIMA(training_data, order=best_order, trend=trend_option)
                 train_model_fit = train_model.fit()
-                yhat = train_model_fit.get_forecast(steps=1)
-                yhat = yhat.predicted_mean.iloc[0]
-                accumulated_diffs.append(yhat)
+                yhat_arima = train_model_fit.get_forecast(steps=1)
+                yhat_arima = yhat_arima.predicted_mean.iloc[0]
+                accumulated_diffs.append(yhat_arima)
+
+                # GARCH model on ARIMA residuals
+                residuals = train_model_fit.resid
+                garch_model = arch.arch_model(residuals, vol="Garch", p=p_value, q=q_value)
+                garch_result = garch_model.fit(disp='off')
+                garch_forecast = garch_result.forecast(horizon=1)
+                garch_variance = garch_forecast.variance.values[-1, -1]
+                yhat_combined = yhat_arima + sqrt(garch_variance)
+                
                 if len(accumulated_diffs) == d_value:
                     diff_data = data["Volume"].iloc[split_idx + t - d_value + 1 : split_idx + t + 1]
-                    yhat = self.invert_differencing(
+                    yhat_arima_inverted = self.invert_differencing(
                         diff_data,
                         accumulated_diffs,
                         d_value,
                     )
-                    rolling_predictions.append(yhat[-1])
+                    yhat_combined_inverted = self.invert_differencing(
+                        diff_data,
+                        [yhat_combined] + accumulated_diffs[:-1],
+                        d_value,
+                    )
+                    rolling_predictions_arima.append(yhat_arima_inverted[-1])
+                    rolling_predictions_combined.append(yhat_combined_inverted[-1])
                     accumulated_diffs.pop(0)
-                    # print(f"\tForecast for patient {patient_id} is {yhat}.")
 
                 next_index = original_index[split_idx + t]
                 new_observation = pd.Series(testing_data.iloc[t], index=[next_index])
                 training_data = pd.concat([training_data, new_observation])
 
-            # Final model fitting
+            # Metrics
+            actual_observed_values = data["Volume"].iloc[
+                split_idx : split_idx + len(rolling_predictions_arima)
+            ].values
+            
+            mse_arima = mean_squared_error(actual_observed_values, rolling_predictions_arima)
+            rmse_arima = sqrt(mse_arima)
+            mae_arima = mean_absolute_error(actual_observed_values, rolling_predictions_arima)
+            mse_combined = mean_squared_error(actual_observed_values, rolling_predictions_combined)
+            rmse_combined = sqrt(mse_combined)
+            mae_combined = mean_absolute_error(actual_observed_values, rolling_predictions_combined)
+            print(f"\nRolling Forecast Comparison for patient {patient_id}:")
+            print(f"ARIMA - MSE: {mse_arima:.4f}, RMSE: {rmse_arima:.4f}, MAE: {mae_arima:.4f}")
+            print(f"ARIMA+GARCH - MSE: {mse_combined:.4f}, RMSE: {rmse_combined:.4f}, MAE: {mae_combined:.4f}")
+
+            
+            # Final model fitting and out-of-sample forecasting
             final_model = ARIMA(stationary_data, order=best_order)
             final_model_fit = final_model.fit()
             residuals = final_model_fit.resid
+            forecast_steps = self._get_adaptive_forecast_steps(data["Volume"])
+            # ARIMA-only forecast
+            forecast_arima = final_model_fit.get_forecast(steps=forecast_steps)
+            forecast_mean_arima = forecast_arima.predicted_mean
+            stderr_arima = forecast_arima.se_mean
+            conf_int_arima = forecast_arima.conf_int()
+            forecast_mean_arima = self.invert_differencing(
+                data["Volume"][-d_value:], forecast_mean_arima, d_value
+            )[: len(conf_int_arima)]
+            (upper_b_arima, lower_b_arima) = self._adjust_confidence_intervals(
+                data["Volume"], forecast_mean_arima, conf_int_arima, d_value
+            )
             print(f"\tModel fit for patient {patient_id}.")
+            
+
+            # ARIMA+GARCH forecast
             model_garch = arch.arch_model(residuals, vol="Garch", p=p_value, q=q_value) 
             result_garch = model_garch.fit()
+            forecast_garch = result_garch.forecast(horizon=forecast_steps)
+            forecast_garch_var = forecast_garch.variance.values[-1, :]
+            inverted_garch_var = self.invert_differencing(data["Volume"][-d_value:], forecast_garch_var, d_value)[:len(forecast_mean_arima)]
+            forecast_combined = forecast_mean_arima + np.sqrt(inverted_garch_var)
+            stderr_combined = np.sqrt(stderr_arima**2 + forecast_garch_var)
+            lower_b_comb = forecast_combined - 1.96 * stderr_combined
+            upper_b_comb = forecast_combined + 1.96 * stderr_combined
+
+            # Information criteria  
+            aic_arima = final_model_fit.aic
+            bic_arima = final_model_fit.bic
+            hqic_arima = final_model_fit.hqic
+            aic_garch = result_garch.aic
+            bic_garch = result_garch.bic
+            aic_combined = aic_arima + aic_garch
+            bic_combined = bic_arima + bic_garch
+
+            # Estimate HQIC for combined model
+            # HQIC = -2 * log-likelihood + 2 * k * log(log(n))
+            # where k is the number of parameters and n is the sample size
+            n = len(data)
+            k_arima = final_model_fit.df_model
+            k_garch = result_garch.num_params
+            k_combined = k_arima + k_garch
+            log_likelihood_combined = final_model_fit.llf + result_garch.loglikelihood
+            hqic_combined = -2 * log_likelihood_combined + 2 * k_combined * np.log(np.log(n))
             
-            # Metrics
-            aic = final_model_fit.aic
-            bic = final_model_fit.bic
-            hqic = final_model_fit.hqic
             if arima_cfg.DIAGNOSTICS:
                 self._diagnostics(final_model_fit, patient_id)
                 # print(
@@ -658,66 +703,61 @@ class ArimaPrediction:
                 self.generate_plot(residuals, "residuals", patient_id)
                 self.generate_plot(residuals, "density", patient_id)
                 print(residuals.describe())
-                print(f"AIC: {aic}, BIC: {bic}, HQIC: {hqic}")
-
-            # Forecast and plotting
-            forecast_steps = self._get_adaptive_forecast_steps(data["Volume"])
-            forecast = final_model_fit.get_forecast(steps=forecast_steps)
-            forecast_garch = result_garch.forecast(horizon=forecast_steps)
-            forecast_garch_var = forecast_garch.variance.values[-1, :]
-            forecast_mean = forecast.predicted_mean
-            forecast_combined = forecast_mean + forecast_garch_var
-            stderr = forecast.se_mean
-            conf_int = forecast.conf_int()
-            forecast_mean = self.invert_differencing(
-                data["Volume"][-d_value:], forecast_mean, d_value
-            )[: len(conf_int)]
-            forecast_combined = self.invert_differencing(data["Volume"][-d_value:], forecast_combined, d_value)[: len(conf_int)]
-            (upper_b, lower_b) = self._adjust_confidence_intervals(
-                data["Volume"], forecast_mean, conf_int, d_value
-            )
+                print(f"AIC: {aic_arima}, BIC: {bic_arima}, HQIC: {hqic_arima}")
+            comparison_results = {
+                'comparison':{
+                    "ARIMA": {
+                        "rolling_predictions": rolling_predictions_arima,
+                        "rolling_mse": mse_arima,
+                        "rolling_rmse": rmse_arima,
+                        "rolling_mae": mae_arima,
+                        "final_forecast": forecast_mean_arima.tolist(),
+                        "stderr": stderr_arima.tolist(),
+                        "conf_int_lower": lower_b_arima.tolist(),
+                        "conf_int_upper": upper_b_arima.tolist(),
+                        "aic": aic_arima,
+                        "bic": bic_arima,
+                        "hqic": hqic_arima
+                    },
+                    "ARIMA+GARCH": {
+                        "rolling_predictions": rolling_predictions_combined,
+                        "rolling_mse": mse_combined,
+                        "rolling_rmse": rmse_combined,
+                        "rolling_mae": mae_combined,
+                        "final_forecast": forecast_combined.tolist(),
+                        "stderr": stderr_combined.tolist(),
+                        "conf_int_lower": lower_b_comb.tolist(),
+                        "conf_int_upper": upper_b_comb.tolist(),
+                        "aic": aic_combined,
+                        "bic": bic_combined,
+                        "hqic": hqic_combined
+                    }
+                },
+                "validation_data" : actual_observed_values,
+                }
             # Save forecasts plots
             self._save_arima_fig(
                 data,
-                rolling_predictions,
-                forecast_mean,
+                rolling_predictions_arima,
+                rolling_predictions_combined,
+                forecast_mean_arima,
                 forecast_combined,
                 forecast_steps,
-                lower_b,
-                upper_b,
+                lower_b_arima,
+                upper_b_arima,
+                lower_b_comb,
+                upper_b_comb,
                 patient_id,
                 split_idx,
             )
-            print("Figure with forecast saved!")
+            print("Figures with forecast saved!")
 
-            # Metrics
-            actual_observed_values = data["Volume"].iloc[
-                split_idx : split_idx + len(rolling_predictions)
-            ].values
-            mse = mean_squared_error(actual_observed_values, rolling_predictions)
-            rmse = sqrt(mse)
-            mae = mean_absolute_error(actual_observed_values, rolling_predictions)
-            print(f"\tRolling Forecast MSE for patient {patient_id}: {mse}")
-            print(f"\tRolling Forecast RMSE for patient {patient_id}: {rmse}")
-            print(f"\tRolling Forecast MAE for patient {patient_id}: {mae}")
             
             # Saving to df
-            self.cohort_summary[patient_id] = {
-                "forecast_mean": forecast_mean.tolist(),
-                "stderr": stderr.tolist(),
-                "CI": conf_int,
-                "aic": aic,
-                "bic": bic,
-                "hqic": hqic,
-                "residuals": residuals,
-                "training_data": data["Volume"].iloc[:split_idx].tolist(),
-                "validation_data": data["Volume"].iloc[split_idx:].tolist(),
-                "rolling_predictions": rolling_predictions,
-                "mse": mse,
-                "rmse": rmse,
-                "mae": mae,
-            }
-            self.update_cohort_metrics(aic, bic, hqic)
+            self.cohort_summary[patient_id] = comparison_results
+            metrics_arima = {'aic': aic_arima, 'bic': bic_arima, 'hqic': hqic_arima}
+            metrics_combined = {'aic': aic_combined, 'bic': bic_combined, 'hqic': hqic_combined}
+            self.update_cohort_metrics(metrics_arima, metrics_combined)
 
         except (IOError, ValueError) as error:
             print("An error occurred:", str(error))
@@ -880,65 +920,129 @@ class ArimaPrediction:
         plt.close()
 
     def save_forecasts_to_csv(self):
-        """Save the forecast to a .csv file."""
+        """Save the forecasts for both ARIMA and ARIMA+GARCH to a .csv file."""
         forecast_df_list = []
-
         for patient_id, metrics in self.cohort_summary.items():
+            comparison = metrics.get('comparison', {})
+            arima_metrics = comparison.get('ARIMA', {})
+            combined_metrics = comparison.get('ARIMA+GARCH', {})
+
             forecast_df = pd.DataFrame({
-                'Forecast': [metrics['forecast_mean']],
-                'Stderr': [metrics['stderr']],
-                'Lower CI': [metrics['CI'].iloc[:, 0].values],
-                'Upper CI': [metrics['CI'].iloc[:, 1].values],
                 'Patient_ID': [patient_id],
-                'Validation Data': [metrics['validation_data'][-len(metrics['forecast_mean']):]],  
-                'Rolling Predictions': [metrics['rolling_predictions']],
-                'MSE': [metrics['mse']],
-                'RMSE': [metrics['rmse']],
-                'MAE': [metrics['mae']],
-                "AIC": [metrics['aic']],
-                "BIC": [metrics['bic']],
-                "HQIC": [metrics['hqic']],
-                })
+                'ARIMA_Forecast': [arima_metrics.get('final_forecast', [])],
+                'ARIMA_Stderr': [arima_metrics.get('stderr', [])],
+                'ARIMA_Lower_CI': [arima_metrics.get('conf_int_lower', [])],
+                'ARIMA_Upper_CI': [arima_metrics.get('conf_int_upper', [])],
+                'ARIMA_Rolling_Predictions': [arima_metrics.get('rolling_predictions', [])],
+                'ARIMA_MSE': [arima_metrics.get('rolling_mse', None)],
+                'ARIMA_RMSE': [arima_metrics.get('rolling_rmse', None)],
+                'ARIMA_MAE': [arima_metrics.get('rolling_mae', None)],
+                'ARIMA_AIC': [arima_metrics.get('aic', None)],
+                'ARIMA_BIC': [arima_metrics.get('bic', None)],
+                'ARIMA_HQIC': [arima_metrics.get('hqic', None)],
+                'ARIMA+GARCH_Forecast': [combined_metrics.get('final_forecast', [])],
+                'ARIMA+GARCH_Stderr': [combined_metrics.get('stderr', [])],
+                'ARIMA+GARCH_Lower_CI': [combined_metrics.get('conf_int_lower', [])],
+                'ARIMA+GARCH_Upper_CI': [combined_metrics.get('conf_int_upper', [])],
+                'ARIMA+GARCH_Rolling_Predictions': [combined_metrics.get('rolling_predictions', [])],
+                'ARIMA+GARCH_MSE': [combined_metrics.get('rolling_mse', None)],
+                'ARIMA+GARCH_RMSE': [combined_metrics.get('rolling_rmse', None)],
+                'ARIMA+GARCH_MAE': [combined_metrics.get('rolling_mae', None)],
+                'ARIMA+GARCH_AIC': [combined_metrics.get('aic', None)],
+                'ARIMA+GARCH_BIC': [combined_metrics.get('bic', None)],
+                'ARIMA+GARCH_HQIC': [combined_metrics.get('hqic', None)],
+                'Validation_Data': [metrics.get('validation_data', [])]
+            })
             
             forecast_df_list.append(forecast_df)
 
-        # Concatenate all individual DataFrames into one
-        all_forecasts_df = pd.concat(forecast_df_list, ignore_index=True)
-        filename = os.path.join(
-            arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.csv"
-        )
-        all_forecasts_df.to_csv(filename, index=False)
+        if not forecast_df_list:
+            print("Warning: No forecasts to save. forecast_df_list is empty.")
+            return
 
-    def update_cohort_metrics(self, aic, bic, hqic):
-        """Updates the cohort metrics."""
-        self.cohort_metrics["aic"].append(aic)
-        self.cohort_metrics["bic"].append(bic)
-        self.cohort_metrics["hqic"].append(hqic)
+        try:
+            # Concatenate all individual DataFrames into one
+            all_forecasts_df = pd.concat(forecast_df_list, ignore_index=True)
+            filename = os.path.join(
+                arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.csv"
+            )
+            all_forecasts_df.to_csv(filename, index=False)
+            print(f"Forecasts saved to {filename}")
+        except ExceptionGroup as e:
+            print(f"Error in save_forecasts_to_csv: {str(e)}")
+            print(f"Number of DataFrames in forecast_df_list: {len(forecast_df_list)}")
+            for i, df in enumerate(forecast_df_list):
+                print(f"DataFrame {i} shape: {df.shape}")
+                
+    def update_cohort_metrics(self, metrics_arima, metrics_combined):
+        """Updates the cohort metrics for both ARIMA and ARIMA+GARCH models."""
+        for model, metrics in [('arima', metrics_arima), ('arimagarch', metrics_combined)]:
+            for metric in ['aic', 'bic', 'hqic']:
+                key = f"{metric}_{model}"
+                if key not in self.cohort_metrics:
+                    self.cohort_metrics[key] = []
+                self.cohort_metrics[key].append(metrics[metric])
 
     def print_and_save_cohort_summary(self):
-        """Calculates and prints/saves cohort-wide summary statistics."""
+        """Calculates and prints/saves cohort-wide summary statistics for both ARIMA and ARIMA+GARCH models."""
         summary_data = []
-
-        # Calculate summary statistics for each metric
-        for metric, values in self.cohort_metrics.items():
-            summary_stats = {
-                "Metric": metric.upper(),
-                "Mean": np.mean(values),
-                "Std Dev": np.std(values),
-                "Min": np.min(values),
-                "Max": np.max(values),
-            }
-            summary_data.append(summary_stats)
-
+        
+        # List of metrics and models
+        metrics = ['AIC', 'BIC', 'HQIC']
+        models = ['ARIMA', 'ARIMA+GARCH']
+        
+        # Calculate summary statistics for each metric and model
+        for metric in metrics:
+            for model in models:
+                key = f"{metric.lower()}_{model.lower().replace('+', '')}"
+                if key in self.cohort_metrics:
+                    values = self.cohort_metrics[key]
+                    summary_stats = {
+                        "Metric": f"{metric} ({model})",
+                        "Mean": np.mean(values),
+                        "Std Dev": np.std(values),
+                        "Min": np.min(values),
+                        "Max": np.max(values),
+                    }
+                    summary_data.append(summary_stats)
+                else:
+                    print(f"Warning: {key} not found in cohort_metrics")
+        
         # Convert the list of summary statistics to a DataFrame
         summary_df = pd.DataFrame(summary_data)
+        
+        # Print the summary
+        if not summary_df.empty:
+            print("\nCohort Summary Statistics:")
+            print(summary_df.to_string(index=False))
+        
+            # Save the summary to a CSV file
+            filename = os.path.join(
+                arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.csv"
+            )
+            summary_df.to_csv(filename, index=False)
+            print(f"\nCohort summary saved to: {filename}")
+        else:
+            print("No summary data available.")
 
-        print(summary_df)
-        filename = os.path.join(
-            arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.csv"
-        )
-        summary_df.to_csv(filename)
-
+        # Additional analysis: Compare ARIMA vs ARIMA+GARCH
+        print("\nComparison of ARIMA vs ARIMAGARCH:")
+        for metric in metrics:
+            arima_key = f"{metric.lower()}_arima"
+            combined_key = f"{metric.lower()}_arimagarch"
+            if arima_key in self.cohort_metrics and combined_key in self.cohort_metrics:
+                arima_values = self.cohort_metrics[arima_key]
+                combined_values = self.cohort_metrics[combined_key]
+                
+                better_count = sum(c < a for a, c in zip(arima_values, combined_values))
+                total_count = len(arima_values)
+                
+                print(f"{metric}:")
+                print(f"  ARIMA+GARCH better in {better_count}/{total_count} cases ({better_count/total_count*100:.2f}%)")
+                print(f"  Average improvement: {np.mean(np.array(arima_values) - np.array(combined_values)):.2f}")
+            else:
+                print(f"Warning: {arima_key} or {combined_key} not found in cohort_metrics")
+    
     def ensure_patient_folder_exists(self, patient_id):
         """Ensure that a folder for the patient's results exists. If not, create it."""
         patient_folder_path = os.path.join(arima_cfg.OUTPUT_DIR, patient_id)
@@ -947,20 +1051,8 @@ class ArimaPrediction:
         return patient_folder_path
 
 
-if __name__ == "__main__":
-    warnings.filterwarnings(
-        "ignore",
-        message="An unsupported index was provided and will be ignored when e.g. forecasting.",
-    )
-    warnings.filterwarnings(
-        "ignore",
-        message="No supported index is available. Prediction results will be given with an integer index beginning at `start`.",
-    )
-    warnings.filterwarnings(
-        "ignore",
-        message="No supported index is available. In the next version, calling this method in a model without a supported index will result in an exception.",
-    )
-    warnings.simplefilter("ignore", ConvergenceWarning)
+if __name__ == "__main__":    
+    warnings.filterwarnings("ignore")
 
     arima_prediction = ArimaPrediction()
 

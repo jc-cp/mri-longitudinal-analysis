@@ -33,282 +33,232 @@ else:
     cohort_df = pd.read_csv(csv_path)
     print(cohort_df.head())
 
-# Get the lists
-cohort_df["Forecast"] = cohort_df["Forecast"].apply(
-    lambda x: ast.literal_eval(x) if isinstance(x, str) else x
+# Function to convert string representations of lists to actual lists
+def convert_to_list(x):
+    """Simple comversion."""
+    if isinstance(x, str):
+        try:
+            # First, try to evaluate as a Python list
+            return ast.literal_eval(x)
+        except (ValueError, SyntaxError):
+            # If that fails, try to convert from numpy array string representation
+            try:
+                return np.fromstring(x.strip('[]'), sep=' ').tolist()
+            except ExceptionGroup as e:
+                print(e)
+                return x
+    return x
+
+
+def remove_outliers(data, column):
+    if data[column].dtype == 'object':
+        # For list columns, calculate statistics on the mean of each list
+        series = data[column].apply(lambda x: np.mean(x) if isinstance(x, list) else x)
+    else:
+        series = data[column]
+    
+    Q1 = series.quantile(0.25)
+    Q3 = series.quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 2 * IQR
+    upper_bound = Q3 + 2 * IQR
+    
+    if data[column].dtype == 'object':
+        return data[series.between(lower_bound, upper_bound)]
+    else:
+        return data[data[column].between(lower_bound, upper_bound)]
+    
+# Apply the conversion function to relevant columns
+list_columns = ['ARIMA_Forecast', 'ARIMA+GARCH_Forecast', 'ARIMA_Rolling_Predictions', 
+                'ARIMA+GARCH_Rolling_Predictions', 'Validation_Data']
+for col in list_columns:
+    cohort_df[col] = cohort_df[col].apply(convert_to_list)
+
+# Calculate validation errors for both models
+cohort_df['ARIMA_Validation_Error'] = cohort_df.apply(
+    lambda row: [f - v for f, v in zip(row['ARIMA_Rolling_Predictions'], row['Validation_Data'])], axis=1
 )
-cohort_df["Rolling Predictions"] = cohort_df["Rolling Predictions"].apply(
-    lambda x: ast.literal_eval(x) if isinstance(x, str) else x
-)
-cohort_df["Validation Data"] = cohort_df["Validation Data"].apply(
-    lambda x: ast.literal_eval(x) if isinstance(x, str) else x
-)
-cohort_df["Validation Error"] = cohort_df.apply(
-    lambda row: [
-        f - v for f, v in zip(row["Rolling Predictions"], row["Validation Data"])
-    ],
-    axis=1,
+cohort_df['ARIMA+GARCH_Validation_Error'] = cohort_df.apply(
+    lambda row: [f - v for f, v in zip(row['ARIMA+GARCH_Rolling_Predictions'], row['Validation_Data'])], axis=1
 )
 
-# Flatten the lists
-forecast_flat = [item for sublist in cohort_df["Forecast"] for item in sublist]
-rolling_flat = [
-    item for sublist in cohort_df["Rolling Predictions"] for item in sublist
-]
-validation_flat = [item for sublist in cohort_df["Validation Data"] for item in sublist]
-error_flat = [item for sublist in cohort_df["Validation Error"] for item in sublist]
-error_mean = np.mean(error_flat)
-error_std = np.std(error_flat)
-upper_bound = error_mean + 2.5 * error_std
-lower_bound = error_mean - 2.5 * error_std
-error_flat_filtered = [x for x in error_flat if lower_bound <= x <= upper_bound]
+# List of columns to apply outlier removal
+columns_to_filter = ['ARIMA_MAE', 'ARIMA_MSE', 'ARIMA_RMSE', 
+                     'ARIMA+GARCH_MAE', 'ARIMA+GARCH_MSE', 'ARIMA+GARCH_RMSE',
+                     'ARIMA_Rolling_Predictions', 'ARIMA+GARCH_Rolling_Predictions',
+                     'ARIMA_Validation_Error', 'ARIMA+GARCH_Validation_Error']
 
+# Apply outlier removal to each column
+cohort_df_filtered = cohort_df.copy()
+for col in columns_to_filter:
+    if col in cohort_df_filtered.columns:
+        cohort_df_filtered = remove_outliers(cohort_df_filtered, col)
+        print(f"Outliers removed from {col}")
+    else:
+        print(f"Warning: Column {col} not found in the dataframe")
 
 @staticmethod
 def roll_vs_val(df, directory):
     """
-    Rollling predictions vs validation data plot.
+    Rolling predictions vs validation data plot for both models.
     """
-    plt.figure(figsize=(10, 8))
+    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+    
     for i, (_, rw) in enumerate(df.iterrows()):
-        min_length = min(len(rw["Validation Data"]), len(rw["Rolling Predictions"]))
-        validation_data = rw["Validation Data"][:min_length]
-        rolling_predictions = rw["Rolling Predictions"][:min_length]
+        min_length = min(len(rw['Validation_Data']), len(rw['ARIMA_Rolling_Predictions']), 
+                         len(rw['ARIMA+GARCH_Rolling_Predictions']))
+        validation_data = rw['Validation_Data'][:min_length]
+        arima_predictions = rw['ARIMA_Rolling_Predictions'][:min_length]
+        arimagarch_predictions = rw['ARIMA+GARCH_Rolling_Predictions'][:min_length]
 
-        plt.scatter(
-            validation_data, rolling_predictions, alpha=0.5, label=f"Patient {i+1}"
-        )
+        ax1.scatter(validation_data, arima_predictions, alpha=0.5, label=f"Patient {i+1}")
+        ax2.scatter(validation_data, arimagarch_predictions, alpha=0.5, label=f"Patient {i+1}")
 
-    plt.xlabel("Validation Data", fontsize=12)
-    plt.ylabel("Rolling Predictions", fontsize=12)
-    plt.title("Rolling Predictions vs Validation Data", fontsize=14)
+    ax1.set_xlabel("Validation Data", fontsize=12)
+    ax1.set_ylabel("ARIMA Rolling Predictions", fontsize=12)
+    ax1.set_title("ARIMA: Rolling Predictions vs Validation Data", fontsize=14)
+    
+    ax2.set_xlabel("Validation Data", fontsize=12)
+    ax2.set_ylabel("ARIMA+GARCH Rolling Predictions", fontsize=12)
+    ax2.set_title("ARIMA+GARCH: Rolling Predictions vs Validation Data", fontsize=14)
+
     plt.tight_layout(pad=3.0)
-    file_path_fore_val = os.path.join(
-        directory, f"rolling_vs_validation_{cohort.lower()}.png"
-    )
-    plt.savefig(file_path_fore_val, dpi=300)
+    file_path = os.path.join(directory, f"rolling_vs_validation_comparison_{cohort.lower()}.png")
+    plt.savefig(file_path, dpi=300)
     plt.close()
-
-    plt.figure(figsize=(10, 8))
-    for i, (_, rw) in enumerate(cohort_df.iterrows()):
-        min_length = min(len(rw["Validation Data"]), len(rw["Rolling Predictions"]))
-        validation_data = rw["Validation Data"][:min_length]
-        forecast_data = rw["Rolling Predictions"][:min_length]
-        residuals = np.array(forecast_data) - np.array(validation_data)
-        plt.scatter(validation_data, residuals, alpha=0.5, label=f"Patient {i+1}")
-        plt.axhline(y=0, color="red", linestyle="--", linewidth=1.5)
-
-    plt.xlabel("Validation Data", fontsize=12)
-    plt.ylabel("Residuals (Rolling Predictions - Validation Data)", fontsize=12)
-    plt.title("Residual Plot (Rolling Predictions - Validation Data)", fontsize=14)
-    plt.tight_layout()
-    file_path_resid = os.path.join(directory, f"residual_plot_{cohort.lower()}.png")
-    plt.savefig(file_path_resid, dpi=300)
-    plt.close()
-
-
+    
 @staticmethod
-def error_distrib(errors, directory):
+def error_distrib(df, directory):
     """
-    Error distribution plot.
+    Error distribution plot for both models.
     """
-    # Plot distribution of forecast errors
-    plt.figure(figsize=(8, 6))
-    sns.histplot(errors, bins=20, edgecolor="black", alpha=0.5, stat="density")
-    sns.kdeplot(errors, color="orange")
-    mean_error = np.mean(errors)
-    median_error = np.median(errors)
-    std_error = np.std(errors)
+    arima_errors = [item for sublist in df['ARIMA_Validation_Error'] for item in sublist]
+    arimagarch_errors = [item for sublist in df['ARIMA+GARCH_Validation_Error'] for item in sublist]
+    
+    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
 
-    # Add mean, median, and standard deviation to the plot
-    plt.axvline(
-        mean_error,
-        color="red",
-        linestyle="--",
-        linewidth=1.5,
-        label=f"Mean: {mean_error:.4f}",
-    )
-    plt.axvline(
-        median_error,
-        color="green",
-        linestyle="--",
-        linewidth=1.5,
-        label=f"Median: {median_error:.4f}",
-    )
-    plt.axvline(
-        mean_error - std_error,
-        color="gray",
-        linestyle="--",
-        linewidth=1,
-        label=f"Std: {std_error:.4f}",
-    )
-    plt.axvline(mean_error + std_error, color="gray", linestyle="--", linewidth=1)
+    sns.histplot(arima_errors, bins=25, kde=True, ax=ax1, color="#8FBCBB")
+    ax1.axvline(np.mean(arima_errors), color='r', linestyle='--', label=f'Mean: {np.mean(arima_errors):.2f}')
+    ax1.axvline(np.median(arima_errors), color='g', linestyle='--', label=f'Median: {np.median(arima_errors):.2f}')
+    ax1.set_title("ARIMA: Distribution of Validation Errors")
+    ax1.legend()
 
-    plt.xlabel("Validation Error")
-    plt.ylabel("Frequency")
-    plt.title("Distribution of Validation Errors")
-    plt.legend()
+    sns.histplot(arimagarch_errors, bins=20, kde=True, ax=ax2, color='#D08770')
+    ax2.axvline(np.mean(arimagarch_errors), color='r', linestyle='--', label=f'Mean: {np.mean(arimagarch_errors):.2f}')
+    ax2.axvline(np.median(arimagarch_errors), color='g', linestyle='--', label=f'Median: {np.median(arimagarch_errors):.2f}')
+    ax2.set_title("ARIMA+GARCH: Distribution of Validation Errors")
+    ax2.legend()
+
     plt.tight_layout()
-    file_path_error = os.path.join(
-        directory, f"validation_error_distribution_{cohort.lower()}.png"
-    )
-    plt.savefig(file_path_error, dpi=300)
+    file_path = os.path.join(directory, f"validation_error_distribution_comparison_{cohort.lower()}.png")
+    plt.savefig(file_path, dpi=300)
     plt.close()
 
 
 @staticmethod
 def metrics_plot(df, directory):
     """
-    Box plot of performance metrics across patients.
+    Box plot of performance metrics across patients for both models.
     """
-    # Box plot of performance metrics across patients
-    metrics1 = ["AIC", "BIC", "HQIC"]
-    metrics2 = ["MAE", "MSE", "RMSE"]
+    metrics = ['AIC', 'BIC', 'HQIC', 'MAE', 'MSE', 'RMSE']
+    
+    _, axes = plt.subplots(2, 3, figsize=(20, 12))
+    axes = axes.flatten()
+    colors = ['#8FBCBB', '#D08770']  # Teal for ARIMA, Orange for ARIMA+GARCH
 
-    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    for i, metric in enumerate(metrics1):
-        data = df[metric]
-        filtered_data = data[
-            (
-                data
-                > data.quantile(0.25)
-                - 1.5 * (data.quantile(0.75) - data.quantile(0.25))
-            )
-            & (
-                data
-                < data.quantile(0.75)
-                + 1.5 * (data.quantile(0.75) - data.quantile(0.25))
-            )
-        ]
-        ax1.boxplot(
-            [filtered_data],
-            positions=[i],
-            widths=0.5,
-            patch_artist=True,
-            boxprops=dict(facecolor=f"C{i}", alpha=0.7),
-            whiskerprops=dict(color=f"C{i}"),
-            capprops=dict(color=f"C{i}"),
-            medianprops=dict(color="black"),
-        )
-    ax1.set_xticks(range(len(metrics1)))
-    ax1.set_xticklabels(metrics1)
-    ax1.set_xlabel("Metric")
-    ax1.set_ylabel("Value")
-    ax1.set_title("Distribution of AIC, BIC, HQIC")
-
-    for i, metric in enumerate(metrics2):
-        data = cohort_df[metric]
-        filtered_data = data[
-            (
-                data
-                > data.quantile(0.25)
-                - 1.5 * (data.quantile(0.75) - data.quantile(0.25))
-            )
-            & (
-                data
-                < data.quantile(0.75)
-                + 1.5 * (data.quantile(0.75) - data.quantile(0.25))
-            )
-        ]
-        ax2.boxplot(
-            [filtered_data],
-            positions=[i],
-            widths=0.5,
-            patch_artist=True,
-            boxprops=dict(facecolor=f"C{i}", alpha=0.7),
-            whiskerprops=dict(color=f"C{i}"),
-            capprops=dict(color=f"C{i}"),
-            medianprops=dict(color="black"),
-        )
-    ax2.set_xticks(range(len(metrics2)))
-    ax2.set_xticklabels(metrics2)
-    ax2.set_xlabel("Metric")
-    ax2.set_ylabel("Value")
-    ax2.set_title("Distribution of MAE, MSE, RMSE")
-
+    for i, metric in enumerate(metrics):
+        arima_data = df[f'ARIMA_{metric}']
+        arimagarch_data = df[f'ARIMA+GARCH_{metric}']
+        
+        bplot = axes[i].boxplot([arima_data, arimagarch_data], 
+                                labels=['ARIMA', 'ARIMA+GARCH'],
+                                patch_artist=True,
+                                medianprops=dict(color='black', linewidth=2))
+        
+        for patch, color in zip(bplot['boxes'], colors):
+            patch.set_facecolor(color)
+        
+        axes[i].set_title(f'Distribution of {metric}')
+        axes[i].set_ylabel('Value')
+        
     plt.tight_layout()
-    file_path_metrics = os.path.join(
-        directory, f"performance_metrics_boxplot_{cohort.lower()}.png"
-    )
-    plt.savefig(file_path_metrics, dpi=300)
+    file_path = os.path.join(directory, f"performance_metrics_boxplot_comparison_{cohort.lower()}.png")
+    plt.savefig(file_path, dpi=300)
     plt.close()
 
 
 @staticmethod
 def trend_plot(df, directory):
     """
-    Trend analysis of forecast values and validation data.
+    Trend analysis of forecast values for both models.
     """
-    _, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12), sharex=True)
+    _, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 18), sharex=True)
 
     for i, (_, row) in enumerate(df.iterrows()):
-        forecast_trend = pd.Series(row["Forecast"]).pct_change().tolist()
-        validation_trend = pd.Series(row["Validation Data"]).pct_change().tolist()
+        arima_trend = pd.Series(row['ARIMA_Forecast']).pct_change().tolist()
+        arimagarch_trend = pd.Series(row['ARIMA+GARCH_Forecast']).pct_change().tolist()
+        validation_trend = pd.Series(row['Validation_Data']).pct_change().tolist()
 
-        ax1.plot(forecast_trend, label=f"Patient {i+1}")
-        ax2.plot(validation_trend, label=f"Patient {i+1}")
-        # Add summary statistics
-        rolling_trend_mean = np.mean(
-            [
-                pd.Series(row["Rolling Predictions"]).pct_change().mean()
-                for _, row in cohort_df.iterrows()
-            ]
-        )
-        rolling_trend_std = np.mean(
-            [
-                pd.Series(row["Rolling Predictions"]).pct_change().std()
-                for _, row in cohort_df.iterrows()
-            ]
-        )
-        validation_trend_mean = np.mean(
-            [
-                pd.Series(row["Validation Data"]).pct_change().mean()
-                for _, row in cohort_df.iterrows()
-            ]
-        )
-        validation_trend_std = np.mean(
-            [
-                pd.Series(row["Validation Data"]).pct_change().std()
-                for _, row in cohort_df.iterrows()
-            ]
-        )
-        ax1.text(
-            0.95,
-            0.95,
-            f"Mean = {rolling_trend_mean:.4f}\nStd = {rolling_trend_std:.4f}",
-            transform=ax1.transAxes,
-            ha="right",
-            va="top",
-            fontsize=8,
-        )
-        ax2.text(
-            0.95,
-            0.95,
-            f"Mean = {validation_trend_mean:.4f}\nStd = {validation_trend_std:.4f}",
-            transform=ax2.transAxes,
-            ha="right",
-            va="top",
-            fontsize=8,
-        )
+        ax1.plot(arima_trend, label=f"Patient {i+1}")
+        ax2.plot(arimagarch_trend, label=f"Patient {i+1}")
+        ax3.plot(validation_trend, label=f"Patient {i+1}")
 
-    ax1.set_xlabel("Time")
-    ax1.set_ylabel("Forecast Trend")
-    ax1.set_title("Trend Analysis")
-    ax2.set_xlabel("Time")
-    ax2.set_ylabel("Validation Trend")
-    ax2.set_title("Validation Trend Analysis")
+    ax1.set_ylabel("ARIMA Forecast Trend")
+    ax1.set_title("ARIMA Trend Analysis")
+    
+    ax2.set_ylabel("ARIMA+GARCH Forecast Trend")
+    ax2.set_title("ARIMA+GARCH Trend Analysis")
+    
+    ax3.set_xlabel("Time")
+    ax3.set_ylabel("Validation Trend")
+    ax3.set_title("Validation Trend Analysis")
 
     plt.tight_layout()
-    file_path_trend = os.path.join(
-        directory, f"forecast_validation_trend_{cohort.lower()}.png"
-    )
-    plt.savefig(file_path_trend, dpi=300)
+    file_path = os.path.join(directory, f"forecast_trend_comparison_{cohort.lower()}.png")
+    plt.savefig(file_path, dpi=300)
     plt.close()
 
 
+@staticmethod
+def win_loss(cohort_df, directory):
+    
+    metrics = ['AIC', 'BIC', 'HQIC', 'MAE', 'MSE', 'RMSE']
+    arima_wins = []
+    garch_wins = []
+
+    for metric in metrics:
+        arima_better = sum(cohort_df[f'ARIMA_{metric}'] < cohort_df[f'ARIMA+GARCH_{metric}'])
+        garch_better = sum(cohort_df[f'ARIMA+GARCH_{metric}'] < cohort_df[f'ARIMA_{metric}'])
+        total = len(cohort_df)
+        arima_wins.append(arima_better / total * 100)
+        garch_wins.append(garch_better / total * 100)
+
+    _, ax = plt.subplots(figsize=(10, 6))
+    bars1 = ax.bar(metrics, arima_wins, label='ARIMA Better', color='#8FBCBB', alpha=0.7)
+    bars2 = ax.bar(metrics, garch_wins, bottom=arima_wins, label='ARIMA+GARCH Better', color='#D08770', alpha=0.7)
+    ax.set_ylabel('Percentage')
+    ax.set_title('Comparison of ARIMA vs ARIMA+GARCH Performance')
+    ax.legend()
+    
+    # Add percentage annotations
+    def add_percentages(bars):
+        for bar in bars:
+            height = bar.get_height()
+            if height > 0:
+                ax.text(bar.get_x() + bar.get_width()/2., bar.get_y() + height/2,
+                        f'{height:.1f}%', ha='center', va='center', rotation=90)
+
+    add_percentages(bars1)
+    add_percentages(bars2)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(directory, f"win_loss_comparison_{cohort.lower()}.png"), dpi=300)
+    plt.close()
+
 # Plotting
-roll_vs_val(cohort_df, output_dir)
-error_distrib(error_flat_filtered, output_dir)
-metrics_plot(cohort_df, output_dir)
-trend_plot(cohort_df, output_dir)
+roll_vs_val(cohort_df_filtered, output_dir)
+error_distrib(cohort_df_filtered, output_dir)
+metrics_plot(cohort_df_filtered, output_dir)
+trend_plot(cohort_df_filtered, output_dir)
+win_loss(cohort_df_filtered, output_dir)
 print("Evaluation plots saved successfully!")

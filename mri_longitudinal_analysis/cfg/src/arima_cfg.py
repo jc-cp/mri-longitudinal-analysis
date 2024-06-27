@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-COHORT = "CBTN"  # "BCH" or "CBTN"
+COHORT = "BCH"  # "BCH" or "CBTN"
 TIME_SERIES_DIR_CBTN = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/cbtn_longitudinal_dataset/pre_event/accepted/pre_treatment/output/time_series/moving_average")
 TIME_SERIES_DIR_BCH = Path("/mnt/93E8-0534/JuanCarlos/mri-classification-sequences/bch_longitudinal_dataset/final/pre_treatment/output/time_series/moving_average")
 TIME_SERIES_DIR_COHORT = TIME_SERIES_DIR_CBTN if COHORT == "CBTN" else TIME_SERIES_DIR_BCH
