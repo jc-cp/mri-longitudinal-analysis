@@ -1,10 +1,21 @@
-# Mri Longitudinal Analysis
+# MRI pLGG Longitudinal Analysis
 ![Analysis Pipeline Overview](https://github.com/jc-cp/mri-longitudinal-analysis/assets/104212632/1f94122d-2dc9-4a1e-9f19-d1b2cf2134c2)
 
 
 ## Project Goals
+Pediatric low-grade gliomas (pLGGs) have heterogeneous clinical presentations and prognoses.
+Given the morbidity of treatment, some suspected pLGGs, especially those found incidentally,
+are surveilled without treatment, though the natural histories of these tumors have yet
+to be systematically studied. We leveraged deep learning and multi-institutional data to
+methodically analyze longitudinal volumetric trajectories of pLGGs on surveillance, yielding
+insights into their growth trajectories and clinical implications. The objective is two-fold:
+first, to meticulously track and categorize the volumetric changes of pLGGs over time, and
+second, to identify any potential risk factors associated with significant volumetric changes
+that might need medical intervention.
 
 ## Project Structure
+
+The project is made up of two main steps, a data preparation one and a data analysis one. **Data preparation** consists of cohort selection, patients classification (package [here](https://github.com/jc-cp/mri-sequence-classification)), MRI imaging pre-processing (package [here](https://github.com/jc-cp/mri-sequence-classification)), a segmentation algorithm based on a nnU-Net architecture (package [here](https://github.com/BoydAidan/nnUNet_pLGG)) and the first block of the analysis, a _volumetric analysis_. In this analysis 3D segmentation extracted by the previous countouring algorithms are plotted over time yield insights into the trajectory of the individual patients and the overall cohort. In the **data analysis** step we perform three distinct analysis, a _tumor classification analysis_, where clinical risk factors for progression defined by a curve increase are obtained, a _survival anaylsis_ based on a Kaplan Meier and a Cox-Hazards model and a _prediction analysis_, where we conduct a volumetric prediction of the tumors based on the historical data provided by the curves as well  as progression prediction based on random forests and mixed-effects models. 
 
 
 ## Folder: _lib/_  
