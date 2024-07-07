@@ -785,36 +785,48 @@ def calculate_slope_and_angle(data, patient_id, column_name):
     return slope, angle
 
 
-def classify_patient(
+def classify_patient_volumetric(
     data,
     patient_id,
-    column_name,
-    progression_threshold,
 ):
     """
-    Classify a patient based on the slope of actual and predicted growth rates.
+    Classify a patient based on the 'Age at First Progression' and 'Age at First Regression' data.
     """
-    data = data.sort_values(by="Time since First Scan")
     patient_data = data[data["Patient_ID"] == patient_id]
-
-    if len(patient_data) < 2:
-        return None
     
-    first_value = patient_data[column_name].iloc[0]
-    last_value = patient_data[column_name].iloc[-1]
-    # Calculate percentage change
-    if first_value == 0:
-        return "Erratic"  # Avoid division by zero
+    if len(patient_data) == 0:
+        return None
 
-    percent_change = ((last_value - first_value) / first_value) * 100
-
-    if percent_change >= progression_threshold:
+    age_at_first_progression = patient_data["Age at First Progression"].iloc[0]
+    age_at_first_regression = patient_data["Age at First Regression"].iloc[0]
+    
+    if pd.notna(age_at_first_progression):
         return "Progressor"
-    elif percent_change <= -progression_threshold:
+    elif pd.notna(age_at_first_regression):
         return "Regressor"
     else:
         return "Stable"
 
+
+def classify_patient_composite(data, patient_id):
+    """
+    Classify a patient based on volumetric progression and treatment received.
+    """
+    patient_data = data[data["Patient_ID"] == patient_id].iloc[0]
+    
+    volumetric_class = classify_patient_volumetric(data, patient_id)
+    received_treatment = patient_data["Received Treatment"]
+    
+    if volumetric_class == "Progressor":
+        return "Progressor"
+    else:
+        if received_treatment == "Yes":
+            return "Progressor"
+        else:
+            if volumetric_class == "Regressor":
+                return "Regressor"
+            elif volumetric_class == "Stable":
+                return "Stable"
 
 def calculate_percentage_change(data, patient_id, column_name):
     """
@@ -859,7 +871,7 @@ def consistency_check(data):
         first_row = group.iloc[0]
         last_row = group.iloc[-1]
 
-        patient_classification = first_row["Patient Classification"]
+        patient_classification = first_row["Patient Classification Volumetric"]
         initial_tumor_classification = first_row["Tumor Classification"]
         final_tumor_classification = last_row["Tumor Classification"]
 
@@ -1003,7 +1015,7 @@ def annotate_plot(a_x):
         )
 
 
-def plot_trend_trajectories(data, output_filename, column_name, unit=None):
+def plot_classification_trajectories(data, output_dir, prefix, column_name, progression_type, unit=None):
     """
     Plot the growth trajectories of patients with classifications.
 
@@ -1021,12 +1033,16 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
         data = data[data[column_name] >= -threshold]
     # Unique classifications & palette
     data = data[data["Time since First Scan"] <= 4000]
-    classifications = data["Classification"].unique()
+    if progression_type == "volumetric":
+        classification_type = "Classification Volumetric"
+    elif progression_type == "composite":
+        classification_type = "Classification Composite"
+    classifications = data[classification_type].unique()
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
-    colors = [palette[0], palette[1], "green"]
+    colors = [palette[0],palette[1], "green"]
     #colors =  ["blue", "red", "green"]
     for classification, color in zip(classifications, colors):
-        class_data = data[data["Classification"] == classification]
+        class_data = data[data[classification_type] == classification]
         first_patient_plotted = False
 
         # Plot individual trajectories
@@ -1073,8 +1089,9 @@ def plot_trend_trajectories(data, output_filename, column_name, unit=None):
     plt.axhline(y=1.25, color='red', linestyle="-", label="+25% Volume Change")
     plt.xlabel("Days Since First Scan")
     plt.ylabel(f"Tumor {column_name} [{unit}]")
-    plt.title(f"Patient Trend Trajectories (N={num_patients})")
+    plt.title(f"Patient Classification Trajectories (N={num_patients})")
     plt.legend()
+    output_filename = os.path.join(output_dir, f"{prefix}_classification_analysis_{progression_type}.png")
     plt.savefig(output_filename, dpi=300)
     plt.close()
 
@@ -1511,19 +1528,19 @@ def calculate_stability_index(data, intra_var_weight=0.8, intra_growth_weight=0.
     return data
 
 def visualize_stability_index(data, output_dir):
-    classifications = data['Patient Classification'].unique()
+    classifications = data['Patient Classification Volumetric'].unique()
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
     color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
     
     plt.figure(figsize=(14, 8))
     
     plt.subplot(2, 2, 1)
-    sns.histplot(x='Stability Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    sns.histplot(x='Stability Index', hue='Patient Classification Volumetric', data=data, kde=True, alpha=0.5, palette=color_mapping)
     plt.title('Distribution of Stability Index')
     
     plt.subplot(2, 2, 2)
     for classification in classifications:
-        subset = data[data['Patient Classification'] == classification]
+        subset = data[data['Patient Classification Volumetric'] == classification]
         first_patient_plotted = False
         for patient_id in subset['Patient_ID'].unique():
             patient_data = subset[subset['Patient_ID'] == patient_id]
@@ -1535,69 +1552,69 @@ def visualize_stability_index(data, output_dir):
     plt.legend()
     
     plt.subplot(2, 2, 3)
-    sns.boxplot(x='Patient Classification', y='Stability Index', data=data, palette=color_mapping)
-    plt.title('Stability Index Distribution by Patient Classification')
+    sns.boxplot(x='Patient Classification Volumetric', y='Stability Index', data=data, palette=color_mapping)
+    plt.title('Stability Index Distribution by Patient Classification Volumetric')
     
     plt.subplot(2, 2, 4)
-    sns.heatmap(pd.crosstab(data['Patient Classification'], data['Predicted Classification'], normalize='index'), annot=True, cmap='YlGnBu')
-    plt.title('Patient Classification vs. Predicted Classification')
+    sns.heatmap(pd.crosstab(data['Patient Classification Volumetric'], data['Predicted Classification'], normalize='index'), annot=True, cmap='YlGnBu')
+    plt.title('Patient Classification Volumetric vs. Predicted Classification')
     
     plt.tight_layout()
     output_file = os.path.join(output_dir, 'stability_index_visualization.png')
     plt.savefig(output_file, dpi=300)
 
 def visualize_individual_indexes(data, output_dir):
-    classifications = data['Patient Classification'].unique()
+    classifications = data['Patient Classification Volumetric'].unique()
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
     color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
     plt.figure(figsize=(18, 14))
     
     plt.subplot(6, 2, 1)
-    sns.histplot(x='Intra-Tumor Variability Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    sns.histplot(x='Intra-Tumor Variability Index', hue='Patient Classification Volumetric', data=data, kde=True, alpha=0.5, palette=color_mapping)
     plt.title('Distribution of Intra-Tumor Variability Index')
     
     plt.subplot(6, 2, 2)
-    sns.histplot(x='Intra-Tumor Growth Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    sns.histplot(x='Intra-Tumor Growth Index', hue='Patient Classification Volumetric', data=data, kde=True, alpha=0.5, palette=color_mapping)
     plt.title('Distribution of Intra-Tumor Growth Index')
     
     plt.subplot(6, 2, 3)
-    sns.histplot(x='Inter-Tumor Variability Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    sns.histplot(x='Inter-Tumor Variability Index', hue='Patient Classification Volumetric', data=data, kde=True, alpha=0.5, palette=color_mapping)
     plt.title('Distribution of Inter-Tumor Variability Index')
     
     plt.subplot(6, 2, 4)
-    sns.histplot(x='Inter-Tumor Growth Index', hue='Patient Classification', data=data, kde=True, alpha=0.5, palette=color_mapping)
+    sns.histplot(x='Inter-Tumor Growth Index', hue='Patient Classification Volumetric', data=data, kde=True, alpha=0.5, palette=color_mapping)
     plt.title('Distribution of Inter-Tumor Growth Index')
     
     plt.subplot(6, 2, 5)
-    sns.scatterplot(x='Intra-Tumor Variability Index', y='Intra-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    sns.scatterplot(x='Intra-Tumor Variability Index', y='Intra-Tumor Growth Index', hue='Patient Classification Volumetric', data=data, palette=color_mapping)
     plt.title('Intra-Tumor Variability vs. Growth')
     
     plt.subplot(6, 2, 6)
-    sns.scatterplot(x='Intra-Tumor Variability Index', y='Inter-Tumor Variability Index', hue='Patient Classification', data=data, palette=color_mapping)
+    sns.scatterplot(x='Intra-Tumor Variability Index', y='Inter-Tumor Variability Index', hue='Patient Classification Volumetric', data=data, palette=color_mapping)
     plt.title('Intra-Tumor Variability vs. Inter-Tumor Variability')
     
     plt.subplot(6, 2, 7)
-    sns.scatterplot(x='Intra-Tumor Growth Index', y='Inter-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    sns.scatterplot(x='Intra-Tumor Growth Index', y='Inter-Tumor Growth Index', hue='Patient Classification Volumetric', data=data, palette=color_mapping)
     plt.title('Intra-Tumor Growth vs. Inter-Tumor Growth')
     
     plt.subplot(6, 2, 8)
-    sns.scatterplot(x='Inter-Tumor Variability Index', y='Inter-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    sns.scatterplot(x='Inter-Tumor Variability Index', y='Inter-Tumor Growth Index', hue='Patient Classification Volumetric', data=data, palette=color_mapping)
     plt.title('Inter-Tumor Variability vs. Growth')
     
     plt.subplot(6, 2, 9)
-    sns.scatterplot(x='Stability Index', y='Intra-Tumor Variability Index', hue='Patient Classification', data=data, palette=color_mapping)
+    sns.scatterplot(x='Stability Index', y='Intra-Tumor Variability Index', hue='Patient Classification Volumetric', data=data, palette=color_mapping)
     plt.title('Intra-Tumor Variability vs. Stability Index')
     
     plt.subplot(6, 2, 10)
-    sns.scatterplot(x='Stability Index', y='Intra-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    sns.scatterplot(x='Stability Index', y='Intra-Tumor Growth Index', hue='Patient Classification Volumetric', data=data, palette=color_mapping)
     plt.title('Intra-Tumor Growth vs. Stability Index')
     
     plt.subplot(6, 2, 11)
-    sns.scatterplot(x='Stability Index', y='Inter-Tumor Variability Index', hue='Patient Classification', data=data, palette=color_mapping)
+    sns.scatterplot(x='Stability Index', y='Inter-Tumor Variability Index', hue='Patient Classification Volumetric', data=data, palette=color_mapping)
     plt.title('Inter-Tumor Variability CV vs. Stability Index')
     
     plt.subplot(6, 2, 12)
-    sns.scatterplot(x='Stability Index', y='Inter-Tumor Growth Index', hue='Patient Classification', data=data, palette=color_mapping)
+    sns.scatterplot(x='Stability Index', y='Inter-Tumor Growth Index', hue='Patient Classification Volumetric', data=data, palette=color_mapping)
     plt.title('Inter-Tumor Growth CV vs. Stability Index')
     
     plt.tight_layout()
@@ -1605,22 +1622,22 @@ def visualize_individual_indexes(data, output_dir):
     plt.savefig(output_file, dpi=300)
     
 def visualize_ind_indexes_distrib(data, output_dir):
-    classifications = data['Patient Classification'].unique()
+    classifications = data['Patient Classification Volumetric'].unique()
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
     color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
     
     _, axs = plt.subplots(2, 2, figsize=(12, 8))
-    sns.boxplot(x='Patient Classification', y='Intra-Tumor Variability Index', data=data, ax=axs[0, 0], palette=color_mapping)
-    sns.boxplot(x='Patient Classification', y='Intra-Tumor Growth Index', data=data, ax=axs[0, 1], palette=color_mapping)
-    sns.boxplot(x='Patient Classification', y='Inter-Tumor Variability Index', data=data, ax=axs[1, 0], palette=color_mapping)
-    sns.boxplot(x='Patient Classification', y='Inter-Tumor Growth Index', data=data, ax=axs[1, 1], palette=color_mapping)
+    sns.boxplot(x='Patient Classification Volumetric', y='Intra-Tumor Variability Index', data=data, ax=axs[0, 0], palette=color_mapping)
+    sns.boxplot(x='Patient Classification Volumetric', y='Intra-Tumor Growth Index', data=data, ax=axs[0, 1], palette=color_mapping)
+    sns.boxplot(x='Patient Classification Volumetric', y='Inter-Tumor Variability Index', data=data, ax=axs[1, 0], palette=color_mapping)
+    sns.boxplot(x='Patient Classification Volumetric', y='Inter-Tumor Growth Index', data=data, ax=axs[1, 1], palette=color_mapping)
 
     plt.tight_layout()
     output_file = os.path.join(output_dir, 'ind_stability_indexes_distrib.png')
     plt.savefig(output_file, dpi=300)
     
 def visualize_volume_change(data, output_dir):
-    classifications = data['Patient Classification'].unique()
+    classifications = data['Patient Classification Volumetric'].unique()
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
     color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
 
@@ -1628,18 +1645,18 @@ def visualize_volume_change(data, output_dir):
 
     plt.subplot(1, 2, 1)
     for classification in classifications:
-        subset = data[data['Patient Classification'] == classification]
+        subset = data[data['Patient Classification Volumetric'] == classification]
         sns.kdeplot(subset['Volume Percentage Change'], label=classification, color=color_mapping[classification], shade=True, alpha=0.7)
     
-    plt.title('Distribution of Volume Percentage Change by Patient Classification')
+    plt.title('Distribution of Volume Percentage Change by Patient Classification Volumetric')
     plt.xlabel('Volume Percentage Change')
     plt.ylabel('Density')
     plt.legend()
     
     plt.subplot(1, 2, 2)
-    sns.boxplot(x='Patient Classification', y='Volume Percentage Change', data=data, palette=color_mapping)
-    plt.title('Volume Percentage Change Distribution by Patient Classification')
-    plt.xlabel('Patient Classification')
+    sns.boxplot(x='Patient Classification Volumetric', y='Volume Percentage Change', data=data, palette=color_mapping)
+    plt.title('Volume Percentage Change Distribution by Patient Classification Volumetric')
+    plt.xlabel('Patient Classification Volumetric')
     plt.ylabel('Volume Percentage Change')
     plt.legend()
 
@@ -1648,13 +1665,13 @@ def visualize_volume_change(data, output_dir):
     plt.savefig(output_file, dpi=300)
     
 def roc_curve_and_auc(data, output_dir):
-    classifications = data['Patient Classification'].unique()
+    classifications = data['Patient Classification Volumetric'].unique()
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
     color_mapping = {"Regressor": palette[0], "Stable": palette[2], "Progressor": palette[1]}
-    data = data.dropna(subset=['Patient Classification', 'Stability Index'])
+    data = data.dropna(subset=['Patient Classification Volumetric', 'Stability Index'])
     
-    true_labels = data['Patient Classification']
-    classes = data['Patient Classification'].unique()
+    true_labels = data['Patient Classification Volumetric']
+    classes = data['Patient Classification Volumetric'].unique()
     predicted_probabilities = data['Stability Index']
     fpr = {}
     tpr = {}
@@ -1694,7 +1711,7 @@ def grid_search_weights(data):
         ]
 
     
-    X_train, X_val, y_train, y_val = train_test_split(data, data['Patient Classification'], test_size=0.2, random_state=42)
+    X_train, X_val, y_train, y_val = train_test_split(data, data['Patient Classification Volumetric'], test_size=0.2, random_state=42)
     print(X_train.shape, X_val.shape, y_train.shape, y_val.shape)
     print(f"y_train unique values and counts: {np.unique(y_train, return_counts=True)}")
     print(f"y_val unique values and counts: {np.unique(y_val, return_counts=True)}")

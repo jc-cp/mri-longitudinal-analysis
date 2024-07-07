@@ -42,7 +42,8 @@ CALIPER = 0.1  # usually between 0.05 and 0.2
 # Step 3
 ANALYSIS_PRE_TREATMENT = True
 
-PROGRESSION_THRESHOLD = 25  # % volume change threshold that defines progression
+PROGRESSION_THRESHOLD = 1.25  # +25% volume change threshold that defines progression on normalized volume
+REGRESSION_THRESHOLD = 0.75   # -25% volume change threshold that defines regression on normalized volume
 CHANGE_THRESHOLD = 10  # % volume change threshold for stability index / time gap
 
 # Stability Index Weights

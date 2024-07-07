@@ -1,7 +1,7 @@
 # pylint: disable=too-many-lines
 """
 This script initializes the TumorAnalysis class with clinical and volumetric data, 
-then performs various analyses including correlations, stability and trend analysis.
+then performs various analyses including correlations, stability and classification analysis.
 """
 import os
 import warnings
@@ -39,8 +39,9 @@ from utils.helper_functions import (
     save_for_deep_learning,
     categorize_age_group,
     # calculate_group_norms_and_stability,
-    classify_patient,
-    plot_trend_trajectories,
+    classify_patient_volumetric,
+    classify_patient_composite,
+    plot_classification_trajectories,
     plot_individual_trajectories,
     #calculate_percentage_change,
     #visualize_tumor_stability,
@@ -85,6 +86,7 @@ class TumorAnalysis:
         self.merged_data = pd.DataFrame()
         self.results = {}
         self.progression_threshold = correlation_cfg.PROGRESSION_THRESHOLD
+        self.regression_threshold = correlation_cfg.REGRESSION_THRESHOLD
         self.volume_change_threshold = correlation_cfg.CHANGE_THRESHOLD
         self.caliper = correlation_cfg.CALIPER
         self.sample_size_plots = correlation_cfg.SAMPLE_SIZE
@@ -735,7 +737,7 @@ class TumorAnalysis:
             "Follow-Up Time Median",
             "Days Between Scans Median",
         ]
-        outcome_var = "Patient Classification Binary"
+        outcome_var = "Patient Classification Binary Volumetric"
         # for full blown out comparison uncomment the following lines
         correlation_dir = os.path.join(output_dir, "correlations")
         os.makedirs(correlation_dir, exist_ok=True)
@@ -1531,9 +1533,9 @@ class TumorAnalysis:
 
         return pooled_results_multi
 
-    #####################################
-    # CURVE PLOTTING AND TREND ANALYSIS #
-    #####################################
+    ##############################################
+    # CURVE PLOTTING AND CLASSIFICATION ANALYSIS #
+    ##############################################
 
     def trajectories(self, prefix, output_dir):
         """
@@ -1674,53 +1676,61 @@ class TumorAnalysis:
                 unit="% / day",
             )
 
-        # Trend analysis and classifciation of patients
-        self.trend_analysis(pre_treatment_data, output_dir, prefix)
+        # Classification analysis and classifciation of patients
+        self.classification_analysis(pre_treatment_data, output_dir, prefix)
 
-    def trend_analysis(self, data, output_dir, prefix):
+    def classification_analysis(self, data, output_dir, prefix):
         """
         Classify patients based on their tumor growth trajectories
         into progressors, stable or regressors.
         """
+        print("\tStarting Classification Analysis:")
         patients_ids = data["Patient_ID"].unique()
-        # Edit this to have other plots
-        # column_name = "Volume Change"
-        column_name = "Normalized Volume"
-
-        print("\tStarting Trend Analysis:")
-        patient_classifications = {
-            patient_id: classify_patient(
+        patient_classifications_volumetric = {
+            patient_id: classify_patient_volumetric(
                 data,
                 patient_id,
-                column_name,
-                self.progression_threshold,
             )
             for patient_id in patients_ids
         }
-        data["Classification"] = data["Patient_ID"].map(patient_classifications)
-        data["Patient Classification Binary"] = (
+        patient_classifications_composite = {
+            patient_id: classify_patient_composite(
+                data,
+                patient_id,
+            )
+            for patient_id in patients_ids
+        }
+        
+        data["Classification Volumetric"] = data["Patient_ID"].map(patient_classifications_volumetric)
+        data["Classification Composite"] = data["Patient_ID"].map(patient_classifications_composite)
+
+        # Transform and save to original dataframe        
+        data["Patient Classification Binary Volumetric"] = (
             pd.to_numeric(
-                data["Classification"].apply(lambda x: 1 if x == "Progressor" else 0),
+                data["Classification Volumetric"].apply(lambda x: 1 if x == "Progressor" else 0),
                 errors="coerce",
             )
             .fillna(0)
             .astype(int)
         )
-        # Save to original dataframe
-        classifications_series = pd.Series(patient_classifications)
-        self.merged_data["Patient Classification"] = (
+        classifications_series_volumetric = pd.Series(patient_classifications_volumetric)
+        self.merged_data["Patient Classification Volumetric"] = (
             self.merged_data["Patient_ID"]
-            .map(classifications_series)
+            .map(classifications_series_volumetric)
             .astype("category")
         )
-        self.merged_data["Patient Classification Binary"] = data[
-            "Patient Classification Binary"
-        ]
+        self.merged_data["Patient Classification Binary Volumetric"] = data["Patient Classification Binary Volumetric"]
+        
+        data["Patient Classification Binary Composite"] = (pd.to_numeric(data["Classification Composite"].apply(lambda x: 1 if x == "Progressor" else 0), errors="coerce").fillna(0).astype(int))
+        classifications_series_composite = pd.Series(patient_classifications_composite)
+        self.merged_data["Patient Classification Composite"] = (self.merged_data["Patient_ID"].map(classifications_series_composite).astype("category"))
+        self.merged_data["Patient Classification Binary Composite"] = data["Patient Classification Binary Composite"]
 
         # Plots
-        output_filename = os.path.join(output_dir, f"{prefix}_trend_analysis.png")
-        plot_trend_trajectories(data, output_filename, column_name, unit="mm^3")
-        print("\t\tSaved trend analysis plot.")
+        column_name = "Normalized Volume"
+        plot_classification_trajectories(data, output_dir, prefix, column_name, progression_type="volumetric", unit="mm^3")
+        plot_classification_trajectories(data, output_dir, prefix, column_name, progression_type="composite", unit="mm^3")
+        print("\t\tSaved classification analysis plot.")
 
     def analyze_tumor_stability(
         self,
@@ -1855,17 +1865,22 @@ class TumorAnalysis:
             counts_symptoms = unique_pat["Symptoms"].value_counts()
             counts_histology = unique_pat["Histology"].value_counts()
             counts_location = unique_pat["Location"].value_counts()
-            counts_patient_classification = unique_pat[
-                "Patient Classification"
+            counts_patient_classification_vol = unique_pat[
+                "Patient Classification Volumetric"
+            ].value_counts()
+            counts_patient_classification_com = unique_pat[
+                "Patient Classification Composite"
             ].value_counts()
             counts_treatment_type = unique_pat["Treatment Type"].value_counts()
+            
 
             write_stat(f"\t\tReceived Treatment: {counts_received_treatment}")
             write_stat(f"\t\tSymptoms: {counts_symptoms}")
             write_stat(f"\t\tHistology: {counts_histology}")
             write_stat(f"\t\tLocation: {counts_location}")
             write_stat(f"\t\tSex: {counts_sex}")
-            write_stat(f"\t\tPatient Classification: {counts_patient_classification}")
+            write_stat(f"\t\tPatient Classification Volumetric: {counts_patient_classification_vol}")
+            write_stat(f"\t\tPatient Classification Composite: {counts_patient_classification_com}")
             write_stat(f"\t\tTreatment Type: {counts_treatment_type}")
             write_stat(f"\t\tBRAF Status: {counts_braf}")
 
@@ -1982,7 +1997,7 @@ class TumorAnalysis:
         data = self.merged_data.copy()
         sns.set_palette(NORD_PALETTE)
         # Create a figure with subplots in a single column
-        _, axs = plt.subplots(4, 1, figsize=(8, 18))
+        _, axs = plt.subplots(4, 1, figsize=(10, 20))
         # Violin plot for "Follow-Up Time" distribution per dataset
         data["Follow-Up Time (Years)"] = data["Follow-Up Time"] / 365.25
         sns.boxplot(x="Dataset", y="Follow-Up Time (Years)", data=data, ax=axs[0])
@@ -2017,33 +2032,35 @@ class TumorAnalysis:
         axs[2].set_title("Distribution of Follow-Up Intervals")
         axs[2].set_ylabel("Dataset")
         axs[2].set_xlabel("Time Between Scans [days]")
-        # Stacked bar plot for progression classification per dataset
-        classification_counts = (
-            data.groupby(["Dataset", "Patient Classification"]).size().unstack()
-        )
-        colors = [NORD_PALETTE[1], NORD_PALETTE[0], NORD_PALETTE[2]]
-        classification_percentages = (
-            classification_counts.div(classification_counts.sum(axis=1), axis=0) * 100
-        )
-        classification_percentages.plot(kind="barh", ax=axs[3], color=colors, stacked=True)
-        axs[3].set_title("Patient Classification per Dataset")
-        axs[3].set_ylabel("Dataset")
+        
+        # Stacked bar plot for progression classification 
+        axs[3].clear()
+        # Prepare data for the horizontal bar plot
+        classifications = [
+            ("Patient Classification Volumetric", "Patient Classification Volumetric"),
+            ("Received Treatment", "Received Treatment"),
+            ("Patient Classification Composite", "Patient Classification Composite")
+        ]
+        
+        y_positions = [2, 1, 0]  # Positions for the bars
+        colors = [[NORD_PALETTE[1], NORD_PALETTE[0], NORD_PALETTE[2]], [NORD_PALETTE[0], NORD_PALETTE[1]], [NORD_PALETTE[1], NORD_PALETTE[0], NORD_PALETTE[2]]]  # Colors for each bar
+        
+        for (col, _), y_pos, color_set in zip(classifications, y_positions, colors):
+            counts = data.drop_duplicates('Patient_ID')[col].value_counts()
+            total_pats = len(data['Patient_ID'].unique())
+            percentages = counts / total_pats * 100
+            
+            left = 0
+            for category, percentage in percentages.items():
+                axs[3].barh(y_pos, percentage, left=left, height=0.5, color=color_set[counts.index.get_loc(category) % len(color_set)], label=f"{category} ({percentage:.1f}%)")
+                axs[3].text(left + percentage/2, y_pos, f"{category}\n{percentage:.1f}%", 
+                            ha='center', va='center', color='white', fontweight='bold')
+                left += percentage
+        
+        axs[3].set_yticks(y_positions)
+        axs[3].set_yticklabels(["Volumetric", "Treatment", "Composite"])
         axs[3].set_xlabel("Percentage")
-        axs[3].legend(title="Patient Classification", loc="center", ncol=3, fancybox=True, shadow=True)
-        # Add percentages at the center of each bar
-        for _, p in enumerate(axs[3].patches):
-            width, height = p.get_width(), p.get_height()
-            x, y = p.get_xy()
-            axs[3].text(
-                x + width / 2,
-                y + height / 2,
-                f"{width:.1f}%",
-                ha="center",
-                va="center",
-                color="white",
-                fontsize=12,
-            )
-        # Adjust the spacing between subplots
+        axs[3].set_title("Patient Classifications and Treatment Distribution")
         plt.tight_layout()
         # Display the plot
         file_name = os.path.join(output_dir, "dataset_comparison.png")
@@ -2255,9 +2272,8 @@ class TumorAnalysis:
         Calculate the age at first progression and time to progression for each patient.
         """
         baseline_volume = group.iloc[0]["Baseline Volume"]
-        progression_threshold = baseline_volume * float(
-            f"1.{self.progression_threshold}"
-        )
+        progression_threshold = baseline_volume * float(self.progression_threshold)
+        regression_threshold = baseline_volume * float(self.regression_threshold)
 
         # Map categories to numerical values
         category_mapping = {
@@ -2271,6 +2287,8 @@ class TumorAnalysis:
         inverse_mapping = {v: k for k, v in category_mapping.items()}
 
         progression_mask = group["Volume"] >= progression_threshold
+        regression_mask = group["Volume"] <= regression_threshold
+        
         if progression_mask.any():
             first_progression_index = progression_mask.idxmax()
             age_at_first_progression = group.loc[first_progression_index, "Age"]
@@ -2313,15 +2331,28 @@ class TumorAnalysis:
             time_gap = np.nan
             age_group_at_progression = group["Age Group"].iloc[-1]
 
+        if regression_mask.any():
+            first_regression_index = regression_mask.idxmax()
+            age_at_first_regression = group.loc[first_regression_index, "Age"]
+            time_to_regression = age_at_first_progression - age_at_first_regression
+        else:
+            age_at_first_regression = np.nan
+            time_to_regression = np.nan
+
         time_to_progression_years = time_to_progression / 365.25
+        time_to_regression_years = time_to_regression / 365.25
         time_gap_years = time_gap / 365.25
+        
         return pd.Series(
             {
                 "Age at First Progression": age_at_first_progression,
+                "Age at First Regression": age_at_first_regression,
                 "Age Group at Progression": age_group_at_progression,
                 "Age at Volume Change": age_at_volume_change,
                 "Time to Progression": time_to_progression,
+                "Time to Regression": time_to_regression,
                 "Time to Progression Years": time_to_progression_years,
+                "Time to Regression Years": time_to_regression_years,
                 "Time Gap": time_gap,
                 "Time Gap Years": time_gap_years,
                 "Time Since Diagnosis": time_period_since_diagnosis_at_progression,
@@ -2696,7 +2727,7 @@ class TumorAnalysis:
         """
         Run a comprehensive analysis pipeline consisting of data separation,
         sensitivity analysis, propensity score matching, main analysis, corrections
-        for multiple comparisons, trend analysis, and feature engineering.
+        for multiple comparisons, classification analysis, and feature engineering.
 
         This method orchestrates the overall workflow of the analysis process,
         including data preparation, statistical analysis, and results interpretation.
@@ -2774,7 +2805,7 @@ class TumorAnalysis:
             )
             self.visualize_time_gap(output_dir=output_stats)
 
-            # Trajectories & Trend analysis
+            # Trajectories & classification analysis
             self.trajectories(prefix, output_dir=output_stats)
 
             # Tumor stability
@@ -2799,11 +2830,10 @@ class TumorAnalysis:
             plot_histo_distributions(self.merged_data, output_dir=output_stats)
 
             # Correlations between variables
-            #self.analyze_pre_treatment(
-            #    prefix=prefix,
-            #    output_dir=output_correlations,
-            #)
-            # self.perform_logistic_regression()
+            self.analyze_pre_treatment(
+               prefix=prefix,
+               output_dir=output_correlations,
+            )
 
             step_idx += 1
 
