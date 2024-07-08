@@ -1243,7 +1243,7 @@ def plot_histo_distributions(data, output_dir):
     """
     data = data.copy()
     
-    data['Progressed'] = data.apply(lambda row: 1 if row['Age at First Progression'] < row['Age at Last Clinical Follow-Up'] else 0, axis=1)
+    data['Progressed'] = data.apply(lambda row: 1 if row['Age at First Progression'] <= row['Age at Last Clinical Follow-Up'] else 0, axis=1)
     data['Previously Progressed'] = 0
     time_bins = ["0-1 years", "1-3 years", "3-5 years", "5-7 years", "7-10 years", "10+ years"]
     age_groups = ["Infant", "Preschool", "School Age", "Adolescent", "Young Adult"]

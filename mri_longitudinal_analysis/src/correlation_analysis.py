@@ -741,73 +741,73 @@ class TumorAnalysis:
         # for full blown out comparison uncomment the following lines
         correlation_dir = os.path.join(output_dir, "correlations")
         os.makedirs(correlation_dir, exist_ok=True)
-        # for num_var in numerical_vars:
-        #     for cat_var in categorical_vars:
-        #         if self.merged_data[cat_var].nunique() == 2:
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type="t-test",
-        #             )
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type="point-biserial",
-        #             )
-        #         else:
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type=None,
-        #             )
+        for num_var in numerical_vars:
+            for cat_var in categorical_vars:
+                if self.merged_data[cat_var].nunique() == 2:
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="t-test",
+                    )
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="point-biserial",
+                    )
+                else:
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type=None,
+                    )
             
-        #     filtered_vars = [
-        #         var
-        #         for var in numerical_vars
-        #         if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
-        #     ]
-        #     for other_num_var in filtered_vars:
-        #         if other_num_var != num_var:
-        #             self.analyze_correlation(
-        #                 num_var,
-        #                 other_num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type="Spearman",
-        #             )
-        #             self.analyze_correlation(
-        #                 num_var,
-        #                 other_num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type="Pearson",
-        #             )
+            filtered_vars = [
+                var
+                for var in numerical_vars
+                if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
+            ]
+            for other_num_var in filtered_vars:
+                if other_num_var != num_var:
+                    self.analyze_correlation(
+                        num_var,
+                        other_num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="Spearman",
+                    )
+                    self.analyze_correlation(
+                        num_var,
+                        other_num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="Pearson",
+                    )
         
-        # aggregated_data = (
-        #     self.merged_data.sort_values("Age").groupby("Patient_ID", as_index=False).last()
-        # )
-        # for cat_var in categorical_vars:
-        #     for other_cat_var in categorical_vars:
-        #         if cat_var != other_cat_var:
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 other_cat_var,
-        #                 aggregated_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type=None
-        #             )
+        aggregated_data = (
+            self.merged_data.sort_values("Age").groupby("Patient_ID", as_index=False).last()
+        )
+        for cat_var in categorical_vars:
+            for other_cat_var in categorical_vars:
+                if cat_var != other_cat_var:
+                    self.analyze_correlation(
+                        cat_var,
+                        other_cat_var,
+                        aggregated_data,
+                        prefix,
+                        correlation_dir,
+                        test_type=None
+                    )
 
         ##############################################
         ##### Cohort Table with basic statistics #####
@@ -873,18 +873,18 @@ class TumorAnalysis:
                 "Baseline Volume cm3",
                 "Coefficient of Variation",
             ],
-            [   
-                "Volume Change Rate",
-                "Volume Change",
-                "Volume",
-                "Baseline Volume cm3",
-                "Coefficient of Variation",
-                "Relative Volume Change Pct",
-                "Cumulative Volume Change Pct",
-                "Change Type",
-                "Change Trend",
-                "Change Acceleration",
-            ],  # Categorical variables
+            #[   
+                #"Volume Change Rate",
+                #"Volume Change",
+                #"Volume",
+                #"Baseline Volume cm3",
+                #"Coefficient of Variation",
+                #"Relative Volume Change Pct",
+                #"Cumulative Volume Change Pct",
+                #"Change Type",
+                #"Change Trend",
+                #"Change Acceleration",
+            #],  # Categorical variables
 
         ]
         pooled_results_multi = pd.DataFrame(
@@ -1158,24 +1158,16 @@ class TumorAnalysis:
             cat_vars_subset = [var for var in variables if var in cat_vars]
             num_vars_subset = [var for var in variables if var not in cat_vars]
 
-            # Aggregate categorical variables by taking the mode, numerical the man and outcome the first value per patient
-            if cat_vars_subset:
-                cat_agg = data_agg.groupby("Patient_ID")[cat_vars_subset].agg(
-                    lambda x: x.value_counts().index[0]
-                )
-                data_agg = data_agg.drop(columns=cat_vars_subset).merge(
-                    cat_agg, on="Patient_ID"
-                )
-            if num_vars_subset:
-                num_agg = data_agg.groupby("Patient_ID")[num_vars_subset].mean()
-                data_agg = data_agg.drop(columns=num_vars_subset).merge(
-                    num_agg, on="Patient_ID"
-                )
+            # Aggregate categorical variables by taking the mode, numerical the mean and outcome the first value per patient
+            agg_dict = {}
+            for var in cat_vars_subset:
+                agg_dict[var] = lambda x: x.value_counts().index[0]  # Mode for categorical
+            for var in num_vars_subset:
+                agg_dict[var] = 'mean'  # Mean for numerical
+            agg_dict[outcome_var] = 'first'  # First value for outcome
 
-            outcome_agg = data_agg.groupby("Patient_ID")[outcome_var].first()
-            data_agg = data_agg.drop(columns=[outcome_var]).merge(
-                outcome_agg, on="Patient_ID"
-            )
+            data_agg = data_agg.groupby("Patient_ID").agg(agg_dict).reset_index()
+        
 
         for variable in variables:
             # For categorical variables, convert them to dummy variables
