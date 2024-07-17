@@ -6,6 +6,7 @@ then performs various analyses including correlations, stability and classificat
 import os
 import warnings
 from itertools import combinations
+import matplotlib
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -103,7 +104,7 @@ class TumorAnalysis:
             )
         else:
             self.validate_files(data_paths_["clinical_data_paths"], data_paths_["volumes_data_paths"])
-            if self.cohort == "BCH":
+            if self.cohort == "DF/BCH":
                 _ = self.load_clinical_data_bch(
                     data_paths_["clinical_data_paths"][0], patient_ids_volumes
                 )
@@ -149,16 +150,23 @@ class TumorAnalysis:
         """
 
         def map_value(cell):
+            matched_symptoms = set()
             for keyword, value in dictionary.items():
                 if keyword.lower() in str(cell).casefold():
-                    return value
-            if map_type == "location":
-                return "Other"
-            if map_type == "symptoms":
-                return "No symptoms (incident finding)"
-            if map_type == "histology":
-                return "Other"
-
+                    matched_symptoms.add(value)
+            
+            if len(matched_symptoms) > 1 and map_type == "symptoms":
+                return "Multiple Symptoms"
+            elif len(matched_symptoms) == 1:
+                return matched_symptoms.pop()
+            else:            
+                if map_type == "location":
+                    return "Other"
+                if map_type == "symptoms":
+                    return "Asymptomatic (Incidentally Found)"
+                if map_type == "histology":
+                    return "Other"
+                        
         return column.apply(map_value)
 
     def load_clinical_data_bch(self, clinical_data_path, patient_ids_volumes):
@@ -265,7 +273,7 @@ class TumorAnalysis:
         ]
         print(f"\tFiltered clinical data has length {len(self.clinical_data_reduced)}.")
 
-        self.clinical_data_reduced["Dataset"] = "BCH"
+        self.clinical_data_reduced["Dataset"] = "DF/BCH"
         print("\tParsed clinical data.")
         clinical_data_bch = self.clinical_data_reduced
         return clinical_data_bch
@@ -386,7 +394,7 @@ class TumorAnalysis:
             )
         else:
             # Handle single dataset cases
-            if self.cohort == "BCH":
+            if self.cohort == "DF/BCH":
                 self.clinical_data_reduced = bch_clinical_data
             elif self.cohort == "CBTN":
                 self.clinical_data_reduced = cbtn_clinical_data
@@ -600,7 +608,7 @@ class TumorAnalysis:
             )
             self.merged_data["Follow-Up Time"] = self.merged_data.apply(
                 lambda row: row["Follow-Up Time"]
-                if row["Dataset"] == "BCH"
+                if row["Dataset"] == "DF/BCH"
                 else row["Volumes Follow-Up Time"],
                 axis=1,
             )
@@ -610,7 +618,7 @@ class TumorAnalysis:
             )
 
         else:
-            if self.cohort == "BCH":
+            if self.cohort == "DF/BCH":
                 column = "BCH MRN"
             else:
                 column = "CBTN Subject ID"
@@ -629,6 +637,7 @@ class TumorAnalysis:
         
         self.merged_data["Age Group"] = self.merged_data.apply( lambda x: categorize_age_group(x, column="Age"), axis=1).astype("category")
         self.merged_data["Age Group at Diagnosis"] = self.merged_data.apply(lambda x: categorize_age_group(x, column="Age at First Diagnosis"), axis=1).astype("category")
+        self.merged_data['Age at First Diagnosis (Years)'] = self.merged_data['Age at First Diagnosis'] / 365.25
         self.merged_data["Time Period Since Diagnosis"] = self.merged_data.apply(categorize_time_since_first_diagnosis, axis=1).astype("category")
         self.merged_data["Baseline Volume cm3"] = self.merged_data["Baseline Volume"] / 1000
         self.merged_data["Change Speed"] = self.merged_data["Change Speed"].astype(
@@ -708,7 +717,6 @@ class TumorAnalysis:
             "Symptoms",
             "Histology",
             "Treatment Type",
-            # "Age Group at Progression",
             "Age Group at Diagnosis",
             "BRAF Status",
             "Sex",
@@ -720,94 +728,94 @@ class TumorAnalysis:
             "Change Acceleration",
         ]
         numerical_vars = [
-            "Age",
-            "Age at First Diagnosis",
-            "Age at Last Clinical Follow-Up",
-            "Days Between Scans",
-            "Volume",
+            #"Age",
+            'Age at First Diagnosis (Years)',
+            #"Age at Last Clinical Follow-Up",
+            #"Days Between Scans",
+            #"Volume",
             "Normalized Volume",
             "Volume Change",
-            "Volume Change Rate",
+            #"Volume Change Rate",
             "Baseline Volume",
-            "Follow-Up Time",
+            #"Follow-Up Time",
             "Age Median",
             "Volume Median",
             "Volume Change Median",
-            "Volume Change Rate Median",
-            "Follow-Up Time Median",
-            "Days Between Scans Median",
+            #"Volume Change Rate Median",
+            #"Follow-Up Time Median",
+            #"Days Between Scans Median",
         ]
-        outcome_var = "Patient Classification Binary Volumetric"
+        outcome_var = "Patient Classification Binary Composite"
         # for full blown out comparison uncomment the following lines
         correlation_dir = os.path.join(output_dir, "correlations")
         os.makedirs(correlation_dir, exist_ok=True)
-        for num_var in numerical_vars:
-            for cat_var in categorical_vars:
-                if self.merged_data[cat_var].nunique() == 2:
-                    self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type="t-test",
-                    )
-                    self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type="point-biserial",
-                    )
-                else:
-                    self.analyze_correlation(
-                        cat_var,
-                        num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type=None,
-                    )
+        # for num_var in numerical_vars:
+        #     for cat_var in categorical_vars:
+        #         if self.merged_data[cat_var].nunique() == 2:
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type="t-test",
+        #             )
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type="point-biserial",
+        #             )
+        #         else:
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type=None,
+        #             )
             
-            filtered_vars = [
-                var
-                for var in numerical_vars
-                if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
-            ]
-            for other_num_var in filtered_vars:
-                if other_num_var != num_var:
-                    self.analyze_correlation(
-                        num_var,
-                        other_num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type="Spearman",
-                    )
-                    self.analyze_correlation(
-                        num_var,
-                        other_num_var,
-                        self.merged_data,
-                        prefix,
-                        correlation_dir,
-                        test_type="Pearson",
-                    )
+        #     filtered_vars = [
+        #         var
+        #         for var in numerical_vars
+        #         if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
+        #     ]
+        #     for other_num_var in filtered_vars:
+        #         if other_num_var != num_var:
+        #             self.analyze_correlation(
+        #                 num_var,
+        #                 other_num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type="Spearman",
+        #             )
+        #             self.analyze_correlation(
+        #                 num_var,
+        #                 other_num_var,
+        #                 self.merged_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type="Pearson",
+        #             )
         
-        aggregated_data = (
-            self.merged_data.sort_values("Age").groupby("Patient_ID", as_index=False).last()
-        )
-        for cat_var in categorical_vars:
-            for other_cat_var in categorical_vars:
-                if cat_var != other_cat_var:
-                    self.analyze_correlation(
-                        cat_var,
-                        other_cat_var,
-                        aggregated_data,
-                        prefix,
-                        correlation_dir,
-                        test_type=None
-                    )
+        # aggregated_data = (
+        #     self.merged_data.sort_values("Age").groupby("Patient_ID", as_index=False).last()
+        # )
+        # for cat_var in categorical_vars:
+        #     for other_cat_var in categorical_vars:
+        #         if cat_var != other_cat_var:
+        #             self.analyze_correlation(
+        #                 cat_var,
+        #                 other_cat_var,
+        #                 aggregated_data,
+        #                 prefix,
+        #                 correlation_dir,
+        #                 test_type=None
+        #             )
 
         ##############################################
         ##### Cohort Table with basic statistics #####
@@ -825,22 +833,21 @@ class TumorAnalysis:
         patient_constant_vars = [
             "Location",
             "Symptoms",
-            "Histology",
             "BRAF Status",
             "Sex",
-            "Received Treatment",
+            "Age Group at Diagnosis",
             "Baseline Volume cm3",
+            "Coefficient of Variation",
+            #"Relative Volume Change Pct",
             #"Treatment Type",
             #"Age Median",
-            #"Age Group at Progression",
-            "Age Group at Diagnosis",
-            #"Change Speed",
-            "Coefficient of Variation",
-            "Relative Volume Change Pct",
+            #"Received Treatment",
+            #"Histology",
             #"Cumulative Volume Change Pct",
-            "Change Type",
-            "Change Trend",
-            "Change Acceleration",
+            #"Change Speed",
+            #"Change Type",
+            #"Change Trend",
+            #"Change Acceleration",
         ]
         pooled_results_uni = pooled_results_multi = pd.DataFrame(
             columns=["MainCategory", "Subcategory", "OR", "Lower", "Upper", "p"]
@@ -865,12 +872,12 @@ class TumorAnalysis:
             [
                 "Location",
                 "Symptoms",
-                "Histology",
                 "BRAF Status",
                 "Sex",
-                "Received Treatment",
                 "Age Group at Diagnosis",
                 "Baseline Volume cm3",
+                #"Histology",
+                #"Received Treatment",
                 "Coefficient of Variation",
             ],
             #[   
@@ -1029,7 +1036,6 @@ class TumorAnalysis:
 
         units = {
             "Age": "days",
-            "Age Group": "days",
             "Date": "date",
             "Volume": "mm³",
             "Baseline Volume": "mm³",
@@ -1040,10 +1046,10 @@ class TumorAnalysis:
 
         # Plot based on test type
         if test_type in ["ANOVA", "Kruskal-Wallis"]:
-            sns.violinplot(x=x_val, y=y_val, data=data)
+            sns.boxplot(x=x_val, y=y_val, data=data, width=0.5)
             title += f"Statistic: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
         elif test_type in ["point-biserial", "t-test"]:
-            sns.boxplot(x=x_val, y=y_val, data=data)
+            sns.boxplot(x=x_val, y=y_val, data=data, width=0.5)
             title += f"Correlation Coefficient: {stat:.2f}, P-value: {p_val:.3e} (N={num_patients})"
         elif test_type in ["Spearman", "Pearson"]:
             sns.scatterplot(x=x_val, y=y_val, data=data)
@@ -1260,19 +1266,36 @@ class TumorAnalysis:
             max_hr = 100  # remove outliers
             filtered_results = filtered_results[filtered_results["Upper"] <= max_hr]
 
-        # Include 'Reference' entries for plotting without affecting calculations
-        final_results = pd.concat([filtered_results, references], ignore_index=True)
-        final_results.sort_values(
-            by=["MainCategory", "Subcategory"], ascending=[False, False], inplace=True
-        )
-        final_results.reset_index(drop=True, inplace=True)
+        age_groups = ["Infant", "Preschool", "School Age", "Adolescent", "Young Adult"]
+        # Modify the sorting logic
+        if 'Age Group at Diagnosis' in pooled_results['MainCategory'].unique():
+            # Create a custom sorting key
+            def custom_sort(row):
+                if row['MainCategory'] == 'Age Group at Diagnosis':
+                    return (0, age_groups.index(row['Subcategory']) if row['Subcategory'] in age_groups else len(age_groups))
+                else:
+                    return (1, row['MainCategory'], row['Subcategory'])
+
+            final_results = pd.concat([filtered_results, references], ignore_index=True)
+            final_results['sort_key'] = final_results.apply(custom_sort, axis=1)
+            final_results.sort_values(by='sort_key', ascending=False, inplace=True)
+            final_results.drop('sort_key', axis=1, inplace=True)
+            final_results.reset_index(drop=True, inplace=True)
+        else:
+            # If 'Age Group at Diagnosis' is not present, use the original sorting
+            final_results = pd.concat([filtered_results, references], ignore_index=True)
+            final_results.sort_values(
+                by=["MainCategory", "Subcategory"], ascending=[False, False], inplace=True
+            )
+            final_results.reset_index(drop=True, inplace=True)
+
 
         # General plot settings + x parameters
         fig, ax = plt.subplots(figsize=(10, 8))
         plt.subplots_adjust(left=0.3, right=0.7)
         ax.set_xscale("log")
         ax.set_xlim(left=0.01, right=100)
-        ax.set_xlabel("<-- Lower Risk of Progression | Higher Risk of Progression -->")
+        ax.set_xlabel("<-- Lower Risk of Progression | Higher Risk of Progression -->", fontdict={"fontsize": 15})
         ax.axvline(x=1, linestyle="--", color="blue", lw=1)
 
         # Categories handling and colors
@@ -1424,7 +1447,7 @@ class TumorAnalysis:
         )
 
         # Add title, grid, and layout
-        ax.set_title(f"{analysis_type} Analysis Forest Plot")
+        ax.set_title(f"{analysis_type} Analysis Forest Plot", fontdict={"fontsize": 18})
         plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
         plt.tight_layout(rect=[0, 0, 1, 0])
 
@@ -1508,6 +1531,7 @@ class TumorAnalysis:
         Perform multivariate logistic regression analysis for a given set of variables.
         """
         X, y = self.prepare_data_for_analysis(variables, outcome_var, cat_vars)
+        calculate_vif(X, variables)
 
         if X is not None and not X.empty:
             try:
@@ -1988,14 +2012,17 @@ class TumorAnalysis:
         """
         data = self.merged_data.copy()
         sns.set_palette(NORD_PALETTE)
+        matplotlib.rc('xtick', labelsize=13) 
+        matplotlib.rc('ytick', labelsize=13)
+        
         # Create a figure with subplots in a single column
         _, axs = plt.subplots(4, 1, figsize=(10, 20))
         # Violin plot for "Follow-Up Time" distribution per dataset
         data["Follow-Up Time (Years)"] = data["Follow-Up Time"] / 365.25
         sns.boxplot(x="Dataset", y="Follow-Up Time (Years)", data=data, ax=axs[0])
-        axs[0].set_title("Distribution of Follow-Up Time")
-        axs[0].set_xlabel("Dataset")
-        axs[0].set_ylabel("Follow-Up Time [days]")
+        axs[0].set_title("Distribution of Follow-Up Time", fontsize=20)
+        axs[0].set_xlabel("Dataset", fontsize=15)
+        axs[0].set_ylabel("Follow-Up Time [days]", fontsize=15)
         # Violin plot for number of scans per patient per dataset
         scans_per_patient = (
             self.merged_data.groupby(["Dataset", "Patient_ID"])
@@ -2005,7 +2032,7 @@ class TumorAnalysis:
         # Filter out patients with less than 3 scans
         scans_per_patient = scans_per_patient[scans_per_patient["Number of Scans"] >= 3]
         sns.violinplot(
-            x="Dataset", y="Number of Scans", data=scans_per_patient, ax=axs[1]
+            x="Dataset", y="Number of Scans", data=scans_per_patient, ax=axs[1], 
         )
         sns.stripplot(
             x="Dataset",
@@ -2016,14 +2043,14 @@ class TumorAnalysis:
             size=3,
             alpha=0.5,
         )
-        axs[1].set_title("Distribution of Number of Scans per Patient")
-        axs[1].set_xlabel("Dataset")
-        axs[1].set_ylabel("Number of Scans")
+        axs[1].set_title("Distribution of Number of Scans per Patient", fontsize=20)
+        axs[1].set_xlabel("Dataset", fontsize=15)
+        axs[1].set_ylabel("Number of Scans", fontsize=15)
         # Violin plot for follow-up interval distribution per dataset
         sns.violinplot(y="Dataset", x="Days Between Scans", data=data, ax=axs[2])
-        axs[2].set_title("Distribution of Follow-Up Intervals")
-        axs[2].set_ylabel("Dataset")
-        axs[2].set_xlabel("Time Between Scans [days]")
+        axs[2].set_title("Distribution of Follow-Up Intervals", fontsize=20)
+        axs[2].set_ylabel("Dataset", fontsize=15)
+        axs[2].set_xlabel("Time Between Scans [days]", fontsize=15)
         
         # Stacked bar plot for progression classification 
         axs[3].clear()
@@ -2035,7 +2062,7 @@ class TumorAnalysis:
         ]
         
         y_positions = [2, 1, 0]  # Positions for the bars
-        colors = [[NORD_PALETTE[1], NORD_PALETTE[0], NORD_PALETTE[2]], [NORD_PALETTE[0], NORD_PALETTE[1]], [NORD_PALETTE[1], NORD_PALETTE[0], NORD_PALETTE[2]]]  # Colors for each bar
+        colors = [[NORD_PALETTE[1], NORD_PALETTE[2], NORD_PALETTE[0]], [NORD_PALETTE[0], NORD_PALETTE[1]], [NORD_PALETTE[1], NORD_PALETTE[0], NORD_PALETTE[2]]]  # Colors for each bar
         
         for (col, _), y_pos, color_set in zip(classifications, y_positions, colors):
             counts = data.drop_duplicates('Patient_ID')[col].value_counts()
@@ -2046,13 +2073,13 @@ class TumorAnalysis:
             for category, percentage in percentages.items():
                 axs[3].barh(y_pos, percentage, left=left, height=0.5, color=color_set[counts.index.get_loc(category) % len(color_set)], label=f"{category} ({percentage:.1f}%)")
                 axs[3].text(left + percentage/2, y_pos, f"{category}\n{percentage:.1f}%", 
-                            ha='center', va='center', color='white', fontweight='bold')
+                            ha='center', va='center', color='white', fontweight='bold', fontsize=13)
                 left += percentage
         
         axs[3].set_yticks(y_positions)
-        axs[3].set_yticklabels(["Volumetric", "Treatment", "Composite"])
-        axs[3].set_xlabel("Percentage")
-        axs[3].set_title("Patient Classifications and Treatment Distribution")
+        axs[3].set_yticklabels(["Volumetric", "Treatment", "Composite"], fontsize=15)
+        axs[3].set_xlabel("Percentage", fontsize=15)
+        axs[3].set_title("Patient Classifications and Treatment Distribution", fontsize=20)
         plt.tight_layout()
         # Display the plot
         file_name = os.path.join(output_dir, "dataset_comparison.png")
@@ -2123,7 +2150,7 @@ class TumorAnalysis:
     ##########################################
     # EFS RELATED ANALYSIS AND VISUALIZATION #
     ##########################################
-    def time_to_event_analysis(self, prefix, output_dir, stratify_by=None):
+    def time_to_event_analysis(self, prefix, output_dir, stratify_by=None, progression_type="composite"):
         """
         Perform a Kaplan-Meier survival analysis on time-to-event data for tumor progression.
 
@@ -2145,7 +2172,6 @@ class TumorAnalysis:
             self.merged_data, progression_data, on="Patient_ID", how="left"
         )
         self.merged_data["Time Since Diagnosis"] = self.merged_data["Time Since Diagnosis"].astype("category")
-        self.merged_data["Age Group at Progression"] = self.merged_data["Age Group at Progression"].astype("category")
         analysis_data_pre = pd.merge(
             analysis_data_pre,
             progression_data[["Patient_ID", "Age at First Progression", "Time to Progression"]],
@@ -2153,17 +2179,32 @@ class TumorAnalysis:
             how="left",
         )
         
-        analysis_data_pre["Event_Occurred"] = ~analysis_data_pre[
-            "Age at First Progression"
-        ].isna()
-        # Compare the results of both approaches and check if they match
-        analysis_data_pre["Duration"] = np.where(
-            analysis_data_pre["Event_Occurred"],
-            analysis_data_pre["Time to Progression"],
-            #analysis_data_pre["Age at First Progression"] - analysis_data_pre["Age at First Diagnosis"],
-            analysis_data_pre["Follow-Up Time"],
-            #np.nan
-        )
+        if progression_type == "volumetric":
+            analysis_data_pre["Event_Occurred"] = ~analysis_data_pre[
+                "Age at First Progression"
+            ].isna()
+            # Compare the results of both approaches and check if they match
+            analysis_data_pre["Duration"] = np.where(
+                analysis_data_pre["Event_Occurred"],
+                analysis_data_pre["Time to Progression"],
+                analysis_data_pre["Follow-Up Time"],
+            )
+        elif progression_type == "composite":            
+            # Define Event_Occurred and Duration for composite progression
+            analysis_data_pre["Event_Occurred"] = (
+                ~analysis_data_pre["Age at First Progression"].isna() | 
+                (analysis_data_pre["Received Treatment"] == "Yes")
+            )
+            
+            analysis_data_pre["Duration"] = np.where(
+                analysis_data_pre["Event_Occurred"],
+                np.where(
+                    ~analysis_data_pre["Age at First Progression"].isna(),
+                    analysis_data_pre["Time to Progression"],
+                    analysis_data_pre["Follow-Up Time"]
+                ),
+                analysis_data_pre["Follow-Up Time"]
+            )
           
         analysis_data_pre = analysis_data_pre.dropna(
             subset=["Duration", "Event_Occurred"]
@@ -2193,7 +2234,7 @@ class TumorAnalysis:
             if len(unique_categories) > 1:
                 groups = []
                 kmfs = []
-                fig, ax = plt.subplots(figsize=(8, 6))
+                fig, ax = plt.subplots(figsize=(8, 8))
                 for i, category in enumerate(unique_categories):
                     category_data = analysis_data_pre[analysis_data_pre[stratify_by] == category]
                     if category_data.empty:
@@ -2286,7 +2327,6 @@ class TumorAnalysis:
             age_at_first_progression = group.loc[first_progression_index, "Age"]
             age_at_first_diagnosis = group.iloc[0]["Age at First Diagnosis"]
             time_to_progression = age_at_first_progression - age_at_first_diagnosis
-            age_group_at_progression = group.loc[first_progression_index, "Age Group"]
             
             # calculate time period since diagnosis at progression
             time_period_since_diagnosis_value  = group.loc[first_progression_index, "Time Period Since Diagnosis"]
@@ -2321,7 +2361,6 @@ class TumorAnalysis:
             time_period_since_diagnosis_at_progression = inverse_mapping[max_time_period_numeric]
             time_to_progression = np.nan
             time_gap = np.nan
-            age_group_at_progression = group["Age Group"].iloc[-1]
 
         if regression_mask.any():
             first_regression_index = regression_mask.idxmax()
@@ -2339,7 +2378,6 @@ class TumorAnalysis:
             {
                 "Age at First Progression": age_at_first_progression,
                 "Age at First Regression": age_at_first_regression,
-                "Age Group at Progression": age_group_at_progression,
                 "Age at Volume Change": age_at_volume_change,
                 "Time to Progression": time_to_progression,
                 "Time to Regression": time_to_regression,
@@ -2361,14 +2399,14 @@ class TumorAnalysis:
         list_of_columns = [
             "Location",
             "Symptoms",
-            "Histology",
+            #"Histology",
             "BRAF Status",
             "Sex",
             "Received Treatment",
-            #"Baseline Volume cm3",
+            "Baseline Volume cm3",
             #"Treatment Type",
             "Age Group at Diagnosis",
-            #"Coefficient of Variation",
+            "Coefficient of Variation",
             #"Relative Volume Change Pct",
             "Change Type",
             "Change Trend",

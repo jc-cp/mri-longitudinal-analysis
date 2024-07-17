@@ -63,7 +63,7 @@ FEATURE_ENG = True
 # DICTIONARIES: Symptoms, Locations, Glioma Types
 
 BCH_SYMPTOMS = {
-    "incidental": "No symptoms (incident finding)",
+    "incidental": "Asymptomatic (Incidentally Found)",
     "headache": "Headaches",
     "migraine": "Headaches",
     "seizure": "Seizures",
@@ -106,8 +106,8 @@ CBTN_SYMPTOMS = {
     "endocrinopathy": "Developmental delay",
     "visual": "Visual deficits",
     "other": "Other",
-    "None": "No symptoms (incident finding)",
-    "Unavailable": "No symptoms (incident finding)",
+    "None": "Asymptomatic (Incidentally Found)",
+    "Unavailable": "Asymptomatic (Incidentally Found)",
 }
 
 BCH_LOCATION = {

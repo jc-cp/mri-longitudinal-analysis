@@ -39,7 +39,7 @@ class MixedEffectsModel:
                 "Volume Change Rate": "Volume_Change_Rate",
                 "Days Between Scans": "Days_Between_Scans",
                 "Follow-Up Time": "Follow_Up_Time",
-                "Patient Classification Binary": "Patient_Classification_Binary",
+                "Patient Classification Binary Composite": "Patient_Classification_Binary",
             },
             inplace=True,
         )
@@ -94,7 +94,7 @@ class MixedEffectsModel:
                 "Volume Change Rate": "Volume_Change_Rate",
                 "Days Between Scans": "Days_Between_Scans",
                 "Follow-Up Time": "Follow_Up_Time",
-                "Patient Classification Binary": "Patient_Classification_Binary",
+                "Patient Classification Binary Composite": "Patient_Classification_Binary",
             }
         )
         data["Age_scaled"] = (data["Age"] - data["Age"].mean()) / data["Age"].std()

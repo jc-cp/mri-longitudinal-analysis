@@ -1064,13 +1064,13 @@ class VolumeEstimator:
         """
         plt.close("all")
         fig, a_x1 = plt.subplots(figsize=(12, 8))
-        a_x1.set_xlabel("Age (days)")
+        a_x1.set_xlabel("Age (days)", size=15)
         if normalize:
-            a_x1.set_ylabel("Normalized Volume (mm³)", color="tab:blue")
+            a_x1.set_ylabel("Normalized Volume (mm³)", size=15)
         else:
-            a_x1.set_ylabel("Volume (mm³)", color="tab:blue")
+            a_x1.set_ylabel("Volume (mm³)", size=15)
 
-        a_x1.tick_params(axis="y", labelcolor="tab:blue")
+        a_x1.tick_params(axis="y", size=13)
         return fig, a_x1
 
     def add_volume_change_to_plot(self, a_x, ages, volumes):
