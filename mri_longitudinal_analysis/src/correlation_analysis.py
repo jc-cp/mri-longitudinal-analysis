@@ -6,6 +6,7 @@ then performs various analyses including correlations, stability and classificat
 import os
 import warnings
 from itertools import combinations
+from typing import Optional, Union, Iterable
 import matplotlib
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -16,10 +17,9 @@ from scipy.stats import shapiro, ttest_ind, chi2_contingency, mannwhitneyu, fish
 from cfg.src import correlation_cfg
 from cfg.utils.helper_functions_cfg import NORD_PALETTE
 from lifelines import KaplanMeierFitter, CoxPHFitter
-from lifelines.statistics import logrank_test, proportional_hazard_test
-from lifelines.plotting import add_at_risk_counts 
+from lifelines.statistics import logrank_test #,proportional_hazard_test
+from lifelines.plotting import add_at_risk_counts, remove_spines, remove_ticks, move_spines
 from lifelines.utils import concordance_index
-from sklearn.model_selection import KFold
 from utils.helper_functions import (
     bonferroni_correction,
     chi_squared_test,
@@ -723,9 +723,9 @@ class TumorAnalysis:
             #"Tumor Classification",
             "Received Treatment",
             #"Change Speed",
-            "Change Type",
-            "Change Trend",
-            "Change Acceleration",
+            #"Change Type",
+            #"Change Trend",
+            #"Change Acceleration",
         ]
         numerical_vars = [
             #"Age",
@@ -749,73 +749,73 @@ class TumorAnalysis:
         # for full blown out comparison uncomment the following lines
         correlation_dir = os.path.join(output_dir, "correlations")
         os.makedirs(correlation_dir, exist_ok=True)
-        # for num_var in numerical_vars:
-        #     for cat_var in categorical_vars:
-        #         if self.merged_data[cat_var].nunique() == 2:
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type="t-test",
-        #             )
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type="point-biserial",
-        #             )
-        #         else:
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type=None,
-        #             )
+        for num_var in numerical_vars:
+            for cat_var in categorical_vars:
+                if self.merged_data[cat_var].nunique() == 2:
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="t-test",
+                    )
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="point-biserial",
+                    )
+                else:
+                    self.analyze_correlation(
+                        cat_var,
+                        num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type=None,
+                    )
             
-        #     filtered_vars = [
-        #         var
-        #         for var in numerical_vars
-        #         if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
-        #     ]
-        #     for other_num_var in filtered_vars:
-        #         if other_num_var != num_var:
-        #             self.analyze_correlation(
-        #                 num_var,
-        #                 other_num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type="Spearman",
-        #             )
-        #             self.analyze_correlation(
-        #                 num_var,
-        #                 other_num_var,
-        #                 self.merged_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type="Pearson",
-        #             )
+            filtered_vars = [
+                var
+                for var in numerical_vars
+                if not var.startswith(("Volume Change ", "Volume ", "Normalized"))
+            ]
+            for other_num_var in filtered_vars:
+                if other_num_var != num_var:
+                    self.analyze_correlation(
+                        num_var,
+                        other_num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="Spearman",
+                    )
+                    self.analyze_correlation(
+                        num_var,
+                        other_num_var,
+                        self.merged_data,
+                        prefix,
+                        correlation_dir,
+                        test_type="Pearson",
+                    )
         
-        # aggregated_data = (
-        #     self.merged_data.sort_values("Age").groupby("Patient_ID", as_index=False).last()
-        # )
-        # for cat_var in categorical_vars:
-        #     for other_cat_var in categorical_vars:
-        #         if cat_var != other_cat_var:
-        #             self.analyze_correlation(
-        #                 cat_var,
-        #                 other_cat_var,
-        #                 aggregated_data,
-        #                 prefix,
-        #                 correlation_dir,
-        #                 test_type=None
-        #             )
+        aggregated_data = (
+            self.merged_data.sort_values("Age").groupby("Patient_ID", as_index=False).last()
+        )
+        for cat_var in categorical_vars:
+            for other_cat_var in categorical_vars:
+                if cat_var != other_cat_var:
+                    self.analyze_correlation(
+                        cat_var,
+                        other_cat_var,
+                        aggregated_data,
+                        prefix,
+                        correlation_dir,
+                        test_type=None
+                    )
 
         ##############################################
         ##### Cohort Table with basic statistics #####
@@ -2228,13 +2228,15 @@ class TumorAnalysis:
         colors = sns.color_palette(NORD_PALETTE, n_colors=len(NORD_PALETTE))
         analysis_data_pre = data.drop_duplicates(subset=['Patient_ID'], keep='first')
         kmf = KaplanMeierFitter()
+        
+        analysis_data_pre["Duration_Months"] = analysis_data_pre["Duration"] / 30.44  # Average days in a month
 
         if stratify_by and stratify_by in analysis_data_pre.columns:
             unique_categories = analysis_data_pre[stratify_by].unique()
             if len(unique_categories) > 1:
                 groups = []
                 kmfs = []
-                fig, ax = plt.subplots(figsize=(8, 8))
+                fig, ax = plt.subplots(figsize=(8, 6))
                 for i, category in enumerate(unique_categories):
                     category_data = analysis_data_pre[analysis_data_pre[stratify_by] == category]
                     if category_data.empty:
@@ -2242,7 +2244,7 @@ class TumorAnalysis:
                     kmf = KaplanMeierFitter()
 
                     kmf.fit(
-                        category_data["Duration"],
+                        category_data["Duration_Months"],
                         event_observed=category_data["Event_Occurred"],
                         label=str(category),
                     )
@@ -2250,13 +2252,19 @@ class TumorAnalysis:
                     kmfs.append(kmf)
                     groups.append((category, category_data))
                 
-                plt.title(f"Stratified Survival Function by {stratify_by}", fontsize=14)
-                plt.xlabel("Days since Diagnosis", fontsize=12)
-                plt.ylabel("Survival Probability", fontsize=12)
-                plt.legend(title=stratify_by, loc="best", fontsize=10)
+                plt.title(f"Stratified Survival Function by {stratify_by}", fontsize=20)
+                plt.xlabel("Months since Diagnosis", fontsize=15)
+                plt.ylabel("PFS Probability", fontsize=15)
+                plt.legend(title=stratify_by, loc="best", fontsize=12)
                 if kmfs:
-                    add_at_risk_counts(*kmfs, ax=ax)
-                
+                    #add_at_risk_counts(*kmfs, ax=ax)
+                    self.add_at_risk_counts_monthly(*kmfs, ax=ax)
+                max_months = int(analysis_data_pre["Duration_Months"].max())
+                xticks = range(0, max_months + 13, 12)  # +13 to ensure the last tick is included
+                ax.set_xticks(xticks)
+                ax.set_xticklabels(xticks)
+                ax.set_xlim(0, max_months)
+                    
                 # Save the combined plot
                 survival_plot = os.path.join(surv_dir, f"{prefix}_survival_plot_category_{stratify_by}.png")
                 plt.tight_layout()
@@ -2268,7 +2276,7 @@ class TumorAnalysis:
                 pairwise_results = []
                 for (cat1, group1), (cat2, group2) in combinations(groups, 2):
                     result = logrank_test(
-                        group1["Duration"], group2["Duration"],
+                        group1["Duration_Months"], group2["Duration_Months"],
                         event_observed_A=group1["Event_Occurred"], event_observed_B=group2["Event_Occurred"]
                     )
                     p_value = result.p_value
@@ -2282,16 +2290,17 @@ class TumorAnalysis:
                     for cat1, cat2, display_p_value in pairwise_results:
                         f.write(f"{cat1} vs {cat2}\t{display_p_value}\n")
         else:
-            fig, ax = plt.subplots(figsize=(8, 6))
+            fig, ax = plt.subplots(figsize=(9, 8))
             kmf.fit(
-                analysis_data_pre["Duration"],
+                analysis_data_pre["Duration_Months"],
                 event_observed=analysis_data_pre["Event_Occurred"],
             )
             kmf.plot_survival_function(ax=ax, ci_show=True, show_censors=True)
-            ax.set_title("Survival function of Tumor Progression")
-            ax.set_xlabel("Days since Diagnosis")
-            ax.set_ylabel("Survival Probability")
-            add_at_risk_counts(kmf, ax=ax)
+            ax.set_title("Survival function of Tumor Progression", fontdict={"fontsize": 20})
+            ax.set_xlabel("Months since Diagnosis", fontdict={"fontsize": 15})
+            ax.set_ylabel("PFS Probability", fontdict={"fontsize": 15})
+            #add_at_risk_counts(kmf, ax=ax)
+            self.add_at_risk_counts_monthly(kmf, ax=ax)
             
             # Save the plot
             survival_plot = os.path.join(surv_dir, f"{prefix}_survival_plot.png")
@@ -2299,6 +2308,138 @@ class TumorAnalysis:
             plt.savefig(survival_plot, dpi=300)
             plt.close(fig)
             print("\t\tSaved survival KaplanMeier curve.")
+    
+    def add_at_risk_counts_monthly(
+        self,
+        *fitters,
+        labels: Optional[Union[Iterable, bool]] = None,
+        rows_to_show=None,
+        ypos=-0.6,
+        xticks=None,
+        ax=None,
+        at_risk_count_from_start_of_period=False,
+        **kwargs
+    ):
+        """
+        Add counts showing how many individuals were at risk, censored, and observed, at each time point in
+        survival/hazard plots. Adjusted for monthly intervals.
+        """
+        if ax is None:
+            ax = plt.gca()
+        fig = kwargs.pop("fig", None)
+        if fig is None:
+            fig = plt.gcf()
+        if labels is None:
+            labels = [f.label for f in fitters]
+        elif labels is False:
+            labels = [None] * len(fitters)
+        if rows_to_show is None:
+            rows_to_show = ["At risk", "Censored", "Events"]
+        else:
+            assert all(
+                row in ["At risk", "Censored", "Events"] for row in rows_to_show
+            ), 'must be one of ["At risk", "Censored", "Events"]'
+        n_rows = len(rows_to_show)
+
+        # Create another axes where we can put size ticks
+        ax2 = plt.twiny(ax=ax)
+        # Move the ticks below existing axes
+        ax_height = (
+            ax.get_position().y1 - ax.get_position().y0
+        ) * fig.get_figheight()  # axis height
+        ax2_ypos = ypos / ax_height
+
+        move_spines(ax2, ["bottom"], [ax2_ypos])
+        remove_spines(ax2, ["top", "right", "bottom", "left"])
+        ax2.xaxis.tick_bottom()
+        min_time, max_time = ax.get_xlim()
+        ax2.set_xlim(min_time, max_time)
+        
+        # Adjust xticks for monthly intervals if not provided
+        if xticks is None:
+            xticks = np.arange(0, int(max_time) + 24, 24)  # Bi-Yearly intervals
+        ax2.set_xticks(xticks)
+        remove_ticks(ax2, x=True, y=True)
+
+        ticklabels = []
+
+        for tick in ax2.get_xticks():
+            lbl = ""
+            counts = []
+            for f in fitters:
+                if at_risk_count_from_start_of_period:
+                    event_table_slice = f.event_table.assign(at_risk=lambda x: x.at_risk)
+                else:
+                    event_table_slice = f.event_table.assign(
+                        at_risk=lambda x: x.at_risk - x.removed
+                    )
+                if not event_table_slice.loc[:tick].empty:
+                    event_table_slice = (
+                        event_table_slice.loc[:tick, ["at_risk", "censored", "observed"]]
+                        .agg(
+                            {
+                                "at_risk": lambda x: x.tail(1).values,
+                                "censored": "sum",
+                                "observed": "sum",
+                            }
+                        )
+                        .rename(
+                            {
+                                "at_risk": "At risk",
+                                "censored": "Censored",
+                                "observed": "Events",
+                            }
+                        )
+                        .fillna(0)
+                    )
+                    counts.extend([int(c) for c in event_table_slice.loc[rows_to_show]])
+                else:
+                    counts.extend([0 for _ in range(n_rows)])
+            
+            # Format the label
+            if n_rows > 1:
+                if tick == ax2.get_xticks()[0]:
+                    max_length = len(str(max(counts)))
+                    for i, c in enumerate(counts):
+                        if i % n_rows == 0:
+                            lbl += (
+                                ("\n" if i > 0 else "")
+                                + r"%s" % labels[int(i / n_rows)]
+                                + "\n"
+                            )
+                        l = rows_to_show[i % n_rows]
+                        s = (
+                            "{}".format(l.rjust(10, " "))
+                            + (" " * (max_length - len(str(c)) + 3))
+                            + "{{:>{}d}}\n".format(max_length)
+                        )
+                        lbl += s.format(c)
+                else:
+                    for i, c in enumerate(counts):
+                        if i % n_rows == 0 and i > 0:
+                            lbl += "\n\n"
+                        s = "\n{}"
+                        lbl += s.format(c)
+            else:
+                if tick == ax2.get_xticks()[0]:
+                    max_length = len(str(max(counts)))
+                    lbl += rows_to_show[0] + "\n"
+                    for i, c in enumerate(counts):
+                        s = (
+                            "{}".format(labels[i].rjust(10, " "))
+                            + (" " * (max_length - len(str(c)) + 3))
+                            + "{{:>{}d}}\n".format(max_length)
+                        )
+                        lbl += s.format(c)
+                else:
+                    for i, c in enumerate(counts):
+                        s = "\n{}"
+                        lbl += s.format(c)
+            ticklabels.append(lbl)
+        
+        ax2.set_xticklabels(ticklabels, ha="right", **kwargs)
+
+        return ax
     
     def calculate_progression(self, group):
         """
@@ -2402,15 +2543,15 @@ class TumorAnalysis:
             #"Histology",
             "BRAF Status",
             "Sex",
-            "Received Treatment",
+            #"Received Treatment",
             "Baseline Volume cm3",
             #"Treatment Type",
             "Age Group at Diagnosis",
             "Coefficient of Variation",
             #"Relative Volume Change Pct",
-            "Change Type",
-            "Change Trend",
-            "Change Acceleration",
+            #"Change Type",
+            #"Change Trend",
+            #"Change Acceleration",
             "Duration",
             "Event_Occurred",
             
@@ -2509,9 +2650,9 @@ class TumorAnalysis:
 
         ax.axvline(x=1, color='r', linestyle='--', zorder=0)
         ax.set_xscale('log')
-        ax.set_xlabel('"<-- Lower Risk of Progression | Higher Risk of Progression -->"')
-        ax.set_ylabel('Variables')
-        ax.set_title('Cox Proportional Hazards Model', fontsize=14, fontweight='bold')
+        ax.set_xlabel('"<-- Lower Risk of Progression | Higher Risk of Progression -->"', fontdict={'fontsize': 15})
+        ax.set_ylabel('Variables', fontdict={'fontsize': 15})
+        ax.set_title('Proportional Cox-Hazards Model', fontsize=20, fontweight='bold')
         ax.set_yticks(y_pos)
         ax.set_yticklabels(hazard_ratios.index, ha='right')
         
