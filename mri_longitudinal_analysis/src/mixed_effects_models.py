@@ -12,54 +12,58 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV, KFold
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
-    classification_report,
+    roc_auc_score,
     confusion_matrix, 
     roc_curve,
-    auc
+    auc, 
+    precision_recall_curve,
+    average_precision_score
 )
 from sklearn.utils import class_weight
 from imblearn.over_sampling import RandomOverSampler, SMOTE
 from imblearn.under_sampling import RandomUnderSampler
 
 
-class MixedEffectsModel:
+class ProgressionPrediction:
     """Class to run mixed-effects models on longitudinal data."""
 
     def __init__(self, mg_data):
+        print("Initializing ProgressionPrediction...")
         self.merged_data = mg_data
         self.merged_data.rename(
             columns={
-                "Volume Change": "Volume_Change",
+                "Normalized Volume": "Normalized_Volume",
                 "Volume Change Rate": "Volume_Change_Rate",
-                "Days Between Scans": "Days_Between_Scans",
-                "Follow-Up Time": "Follow_Up_Time",
                 "Patient Classification Binary Composite": "Patient_Classification_Binary",
             },
             inplace=True,
         )
         self.models = {}
         self.formula = (
-            "Patient_Classification_Binary ~ Age + Volume + Volume_Change_Rate"
+            "Patient_Classification_Binary ~ Age + Normalized_Volume + Volume_Change_Rate"
         )
-        self.re_formula = " ~ Age + Volume + Volume_Change_Rate"
+        self.re_formula = " ~ Age + Normalized_Volume + Volume_Change_Rate"
 
         self.param_grid = {
             "n_estimators": [100, 200, 300],
-            "max_depth": [None, 5, 10],
+            "max_depth": [None, 5, 10, 15],
             "min_samples_split": [2, 5, 10],
             "min_samples_leaf": [1, 2, 4],
+            'max_features': ['sqrt', 'log2', None],
+            'class_weight': ['balanced', 'balanced_subsample', None],
         }
+        self.current_model_name = None
 
     ######################
     # DATA PREPROCESSING #
     ######################
-    def prepare_data_for_mixed_model(self, variables, outcome_var, group_var):
+    def prepare_data(self, variables, outcome_var, group_var):
         """
         Prepare the data for mixed-effects modeling.
 
@@ -71,6 +75,7 @@ class MixedEffectsModel:
         Returns:
             pd.DataFrame: A DataFrame ready for mixed-effects modeling.
         """
+        print("Preparing data...")
         # Filter out necessary columns and drop rows where any of these are NaN
         data = self.merged_data[variables + [outcome_var, group_var]].dropna()
 
@@ -87,43 +92,39 @@ class MixedEffectsModel:
                 "Outcome or grouping variable cannot contain NaN values after preparation."
             )
 
-        # data['Patient_ID'] = data['Patient_ID'].astype('category')
         data = data.rename(
             columns={
-                "Volume Change": "Volume_Change",
+                "Normalized Volume": "Normalized_Volume",
                 "Volume Change Rate": "Volume_Change_Rate",
-                "Days Between Scans": "Days_Between_Scans",
-                "Follow-Up Time": "Follow_Up_Time",
                 "Patient Classification Binary Composite": "Patient_Classification_Binary",
             }
         )
-        data["Age_scaled"] = (data["Age"] - data["Age"].mean()) / data["Age"].std()
-        data["Volume_scaled"] = (data["Volume"] - data["Volume"].mean()) / data[
-            "Volume"
-        ].std()
-        data["Volume_Change_scaled"] = (
-            data["Volume_Change"] - data["Volume_Change"].mean()
-        ) / data["Volume_Change"].std()
-        data["Volume_Change_Rate_scaled"] = (
-            data["Volume_Change_Rate"] - data["Volume_Change_Rate"].mean()
-        ) / data["Volume_Change_Rate"].std()
-
-        X = data[["Age", "Volume", "Volume_Change", "Volume_Change_Rate"]]
-        # calculate_vif(X)
-
+        X = data[["Age", "Normalized_Volume", "Volume_Change_Rate"]]
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
-        data[["Age", "Volume", "Volume_Change", "Volume_Change_Rate"]] = X_scaled
-        X = data[["Age", "Volume", "Volume_Change", "Volume_Change_Rate"]]
+        data[["Age", "Normalized_Volume", "Volume_Change_Rate"]] = X_scaled
+        X = data[["Age", "Normalized_Volume", "Volume_Change_Rate"]]
         # calculate_vif(X)
 
         # Optionally: filter out extreme values or outliers
         threshold = 3  # 0 = no filtering
-        for var in ["Volume_Change", "Volume_Change_Rate"]:
+        for var in ["Volume_Change_Rate"]:
             data = self.filter_outliers(data, var, threshold)
 
         # Returning the cleaned DataFrame
         return data
+
+    def split_data(self, data, train_size=0.7, val_size=0.15, test_size=0.15):
+        print("Splitting data into train, validation, and test sets...")
+        unique_patients = data['Patient_ID'].unique()
+        train_patients, temp_patients = train_test_split(unique_patients, test_size=(1-train_size), random_state=42)
+        val_patients, test_patients = train_test_split(temp_patients, test_size=(test_size/(val_size+test_size)), random_state=42)
+
+        train_data = data[data['Patient_ID'].isin(train_patients)]
+        val_data = data[data['Patient_ID'].isin(val_patients)]
+        test_data = data[data['Patient_ID'].isin(test_patients)]
+
+        return train_data, val_data, test_data
 
     def filter_outliers(self, data, variable, threshold):
         """
@@ -139,222 +140,101 @@ class MixedEffectsModel:
         ]
         return data_filtered
 
-    def preprocess_data_for_training(self, data, outcome_var):
+    def prepare_sampled_data(self, train_data, outcome_var, id_var):
         """
         Data preparation for comparison of models.
         """
-        train_data, test_data = train_test_split(
-            data, test_size=0.1, random_state=42, stratify=data[outcome_var]
-        )
-        train_data_index = train_data.index
-
-        # Oversampling using Random Oversampling (ROS)
+        print("Preparing sampled data...")
+        X = train_data[['Age', 'Normalized_Volume', 'Volume_Change_Rate']]
+        y = train_data[outcome_var]
+        
         ros = RandomOverSampler(random_state=42)
-        X_train_resampled, y_train_resampled = ros.fit_resample(
-            train_data[["Age", "Volume", "Volume_Change_Rate"]], train_data[outcome_var]
-        )
-        train_data_oversampled = pd.DataFrame(
-            X_train_resampled, columns=["Age", "Volume", "Volume_Change_Rate"]
-        )
-        train_data_oversampled["Patient_Classification_Binary"] = y_train_resampled
-        train_data_oversampled.index = train_data_index[ros.sample_indices_]
-        train_data_oversampled["Patient_ID"] = train_data.loc[
-            train_data_oversampled.index, "Patient_ID"
-        ].values
+        X_over, y_over = ros.fit_resample(X, y)
+        train_data_oversampled = pd.DataFrame(X_over, columns=X.columns)
+        train_data_oversampled[outcome_var] = y_over
+        train_data_oversampled[id_var] = train_data[id_var].iloc[ros.sample_indices_].values
 
-        # Undersampling using Random Undersampling (RUS)
         rus = RandomUnderSampler(random_state=42)
-        X_train_resampled, y_train_resampled = rus.fit_resample(
-            train_data[["Age", "Volume", "Volume_Change_Rate"]], train_data[outcome_var]
-        )
-        train_data_undersampled = pd.DataFrame(
-            X_train_resampled, columns=["Age", "Volume", "Volume_Change_Rate"]
-        )
-        train_data_undersampled["Patient_Classification_Binary"] = y_train_resampled
-        train_data_undersampled.index = train_data_index[rus.sample_indices_]
-        train_data_undersampled["Patient_ID"] = train_data.loc[
-            train_data_undersampled.index, "Patient_ID"
-        ].values
+        X_under, y_under = rus.fit_resample(X, y)
+        train_data_undersampled = pd.DataFrame(X_under, columns=X.columns)
+        train_data_undersampled[outcome_var] = y_under
+        train_data_undersampled[id_var] = train_data[id_var].iloc[rus.sample_indices_].values
 
         smote = SMOTE(random_state=42)
-        X_train_resampled, y_train_resampled = smote.fit_resample(
-            train_data[["Age", "Volume", "Volume_Change_Rate"]], train_data[outcome_var]
-        )
-        train_data_smote = pd.DataFrame(
-            X_train_resampled, columns=["Age", "Volume", "Volume_Change_Rate"]
-        )
-        train_data_smote["Patient_Classification_Binary"] = y_train_resampled
-        train_data_smote["Patient_ID"] = np.random.choice(
-            train_data["Patient_ID"].unique(), size=len(train_data_smote)
-        )
+        X_smote, y_smote = smote.fit_resample(X, y)
+        train_data_smote = pd.DataFrame(X_smote, columns=X.columns)
+        train_data_smote[outcome_var] = y_smote
+        train_data_smote[id_var] = np.random.choice(train_data[id_var].unique(), size=len(train_data_smote))
 
-        return (
-            train_data,
-            test_data,
-            train_data_oversampled,
-            train_data_undersampled,
-            train_data_smote,
-        )
+        return train_data_oversampled, train_data_undersampled, train_data_smote
+
+    def cross_validate(self, train_data, outcome_var, id_var, n_splits=5):
+        print("Starting cross-validation...")
+        kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+        cv_scores = {model_name: [] for model_name in ["Vanilla", "Vanilla Weights", "Interaction_Age_Normalized_Volume", "Interaction_Age_Volume_Change_Rate", "Interaction_Normalized_Volume_Volume_Change_Rate", "Oversampling", "Undersampling", "SMOTE", "Random Forest", "RF Oversampling", "RF Undersampling", "RF SMOTE"]}
+
+        for fold, (train_index, val_index) in enumerate(kf.split(train_data)):
+            print(f"Cross-validation fold {fold + 1}")
+            cv_train, cv_val = train_data.iloc[train_index], train_data.iloc[val_index]
+            
+            cv_train_over, cv_train_under, cv_train_smote = self.prepare_sampled_data(cv_train, outcome_var, id_var)
+            
+            # Train models for this fold
+            fold_models = self.train_models(cv_train, cv_train_over, cv_train_under, cv_train_smote, outcome_var)
+            for model_name, model in fold_models.items():
+                self.current_model_name = model_name
+                _, f1_sc, _, _ = self.evaluate_model(model, cv_val, outcome_var)
+                cv_scores[model_name].append(f1_sc)
+        
+        for model_name, scores in cv_scores.items():
+            print(f"Average {model_name} CV score: {np.mean(scores)}")
+
+        return cv_scores
 
     #################
     # MODEL FITTING #
     #################
-    def run_mixed_effects_model(
-        self, data, grouping_var, longi_vars, individual_model_dir, mixed_model_dir
-    ):
-        """
-        Run mixed-effects logistic regression on longitudinal variables.
-        """
-        print("\t\tRunning mixed-effects logistic regression model:")
-        # Individual models for each variable
-        individual_models = {}
-        for var in longi_vars:
-            formula = f"Patient_Classification_Binary ~ {var}"
-            model = smf.mixedlm(
-                formula, data=data, groups=data[grouping_var], re_formula=f"~{var}"
-            )
-            try:
-                ind_result = model.fit()
-                individual_models[var] = ind_result
-                print(f"\t\t\tIndividual model for {var} fitted succesfully.")
-                ind_summary_file = os.path.join(
-                    individual_model_dir, f"{var}_summary.txt"
-                )
-                with open(ind_summary_file, "w", encoding="utf-8") as file:
-                    file.write(ind_result.summary().as_text())
-            except ExceptionGroup as e:
-                print(f"Error fitting individual model for {var}: {e}")
-
-        # Combined model with interaction term if needed
-        # no grouping variable need in the formula since we have a single level of grouping
-        formula = self.formula  # + Volume_Change"
-        model = smf.mixedlm(
-            formula,
-            data=data,
-            groups=data[grouping_var],
-            re_formula=self.re_formula  # + Volume_Change",
-            # re_formula = '~1'
-        )
-        # pylint: disable=unexpected-keyword-arg
-        combined_result = model.fit(reml=False)
-        summary_file = os.path.join(mixed_model_dir, "combined_summary.txt")
-        with open(summary_file, "w", encoding="utf-8") as file:
-            file.write(combined_result.summary().as_text())
-        print("\t\t\tCombined model fitted successfully.")
-
-        # Best model selection based on interaction terms
-        # add an interaction term by multiplying the two variables instead of adding them
-        interaction_terms = [
-            ["Age", "Volume"],
-            ["Age", "Volume_Change"],
-            ["Age", "Volume_Change_Rate"],
-            ["Volume", "Volume_Change"],
-            ["Volume", "Volume_Change_Rate"],
-            ["Volume_Change", "Volume_Change_Rate"],
-        ]
-
-        all_models = self.interaction_models(
-            data, grouping_var, longi_vars, interaction_terms
-        )
-        for name, model in all_models.items():
-            model_summary_file = os.path.join(
-                mixed_model_dir, f"{str(name)}_summary.txt"
-            )
-            with open(model_summary_file, "w", encoding="utf-8") as file:
-                file.write(all_models[name].summary().as_text())
-
-        all_models["combined"] = combined_result
-        return individual_models, combined_result, all_models
-
-    def interaction_models(self, data, grouping_var, variables, interaction_terms=None):
-        """
-        Automatically fit mixed-effects models for each variable and interaction term.
-        """
-        models = {}
-        formula_og = "Patient_Classification_Binary ~ " + " + ".join(variables)
-        if interaction_terms:
-            for interaction in interaction_terms:
-                formula = formula_og + " + " + " * ".join(interaction)
-                model = smf.mixedlm(
-                    formula,
-                    data=data,
-                    groups=data[grouping_var],
-                    # re_formula=f'~{" + ".join(interaction)}')
-                    # re_formula='~1')
-                    re_formula="~ Age + Volume + Volume_Change + Volume_Change_Rate",
-                )
-                # pylint: disable=unexpected-keyword-arg
-                model_fit = model.fit(reml=False)
-                models[" * ".join(interaction)] = model_fit
-        return models
-
-    def compare_models(self, models):
-        """
-        Function to compare models based on AIC and BIC.
-        """
-        best_model = None
-        best_aic = float("inf")
-        best_bic = float("inf")
-        best_name = None
-        for name, model in models.items():
-            if model is None:
-                continue
-            if not model.converged:
-                continue
-
-            aic = model.aic
-            bic = model.bic
-            print(f"Model: {name}")
-            print(f"\tAIC: {aic}")
-            print(f"\tBIC: {bic}")
-
-            if np.isnan(model.params).any() or np.isinf(model.params).any():
-                print(
-                    f"Skipping model '{name}' due to NaN or infinite parameter estimates."
-                )
-                continue
-
-            if (model.pvalues < 0.05).any():
-                if aic < best_aic:
-                    best_model = model
-                    best_aic = aic
-                    best_bic = bic
-                    best_name = name
-                elif aic == best_aic and bic < best_bic:
-                    best_model = model
-                    best_bic = bic
-                    best_name = name
-
-        if best_model is not None:
-            print(f"Best model: {best_name}")
-            print(f"\tAIC: {best_aic}")
-            print(f"\tBIC: {best_bic}")
-            print(best_model.summary())
-            return best_model
+    def evaluate_model(self, model, data, outcome_var, threshold=0.5):
+        print(f"Evaluating model: {self.current_model_name}")
+        X = data[["Age", "Normalized_Volume", "Volume_Change_Rate"]]
+        y_true = data[outcome_var]
+        if hasattr(model, 'predict_proba'):
+            y_pred_proba = model.predict_proba(X)[:, 1]
+            y_pred = (y_pred_proba >= threshold).astype(int)
         else:
-            print("No best model found.")
-            return None
+            y_pred = model.predict(X)
+            y_pred_proba = y_pred
+            y_pred = (y_pred >= threshold).astype(int)
 
-    def train_models(
-        self,
-        train_data,
-        train_data_oversampled,
-        train_data_undersampled,
-        train_data_smote,
-        outcome_var,
-        trained_model,
-    ):
-        """
-        Train and fit models on the data.
-        """
+        weighted_score, f1_sc = self.custom_scorer(y_true, y_pred, y_pred_proba)
+        print() 
+        return weighted_score, f1_sc, y_pred, y_pred_proba
+
+    def custom_scorer(self, y_true, y_pred, y_pred_proba):
+        accuracy = accuracy_score(y_true, y_pred)
+        precision = precision_score(y_true, y_pred)
+        recall = recall_score(y_true, y_pred)
+        f1 = f1_score(y_true, y_pred)
+        roc_auc = roc_auc_score(y_true, y_pred_proba)
+        
+        print(f"Accuracy: {accuracy}")
+        print(f"Precision: {precision}")
+        print(f"Recall: {recall}")
+        print(f"F1 Score: {f1}")
+        print(f"ROC AUC: {roc_auc}")
+
+        weighted_score = (accuracy + precision + recall + f1 + roc_auc) / 5
+        print(f"Weighted Score: {weighted_score}")
+        return weighted_score, f1
+
+    def train_models(self, train_data, train_data_oversampled, train_data_undersampled, train_data_smote, outcome_var):
+        print("Training models...")
+        self.models = {}
+
+        X_train = train_data[["Age", "Normalized_Volume", "Volume_Change_Rate"]]
+        y_train = train_data[outcome_var]
+
         # Vanilla Model
-        class_weights = class_weight.compute_class_weight(
-            "balanced",
-            classes=np.unique(train_data[outcome_var]),
-            y=train_data[outcome_var],
-        )
-        class_weights_dict = dict(enumerate(class_weights))
-        train_data["class_weights"] = train_data[outcome_var].map(class_weights_dict)
         model = smf.mixedlm(
             formula=self.formula,
             data=train_data,
@@ -363,12 +243,32 @@ class MixedEffectsModel:
         )
         # pylint: disable=unexpected-keyword-arg
         self.models["Vanilla"] = model.fit(reml=False)
-        self.models["Vanilla Weights"] = model.fit(
-            reml=False, freq_weights=train_data["class_weights"]
-        )
 
-        # Pretrained Model
-        self.models["Pretrained"] = trained_model
+        # Weighted Vanilla Model
+        class_weights = class_weight.compute_class_weight(
+            'balanced',
+            classes=np.unique(y_train),
+            y=y_train
+        )
+        class_weights_dict = dict(enumerate(class_weights))
+        train_data['class_weights'] = y_train.map(class_weights_dict)
+        self.models["Vanilla Weights"] = model.fit(reml=False, freq_weights=train_data['class_weights'])
+
+        # Models with interaction terms
+        interaction_terms = [
+            ["Age", "Normalized_Volume"],
+            ["Age", "Volume_Change_Rate"],
+            ["Normalized_Volume", "Volume_Change_Rate"],
+        ]
+        for term1, term2 in interaction_terms:
+            formula_with_interaction = f"{self.formula} + {term1}:{term2}"
+            model_interaction = smf.mixedlm(
+                formula=formula_with_interaction,
+                data=train_data,
+                groups=train_data["Patient_ID"],
+                re_formula=self.re_formula,
+            )
+            self.models[f"Interaction_{term1}_{term2}"] = model_interaction.fit(reml=False)
 
         # Model with oversampling
         model_oversampling = smf.mixedlm(
@@ -404,14 +304,15 @@ class MixedEffectsModel:
             random_state=42,
             min_samples_leaf=2,
             min_samples_split=5,
-            max_depth=None,
+            max_depth=5,
         )
         rf_model.fit(
-            train_data[["Age", "Volume", "Volume_Change_Rate"]], train_data[outcome_var]
+            X_train, y_train
         )
         self.models["Random Forest"] = rf_model
 
-        rf_model_smote = RandomForestClassifier(
+        # Random Forest with oversampling
+        rf_over = RandomForestClassifier(
             n_estimators=300,
             class_weight="balanced",
             random_state=42,
@@ -419,110 +320,51 @@ class MixedEffectsModel:
             min_samples_split=5,
             max_depth=None,
         )
-        rf_model_smote.fit(
-            train_data_smote[["Age", "Volume", "Volume_Change_Rate"]],
-            train_data_smote[outcome_var],
+        rf_over.fit(
+            train_data_oversampled[["Age", "Normalized_Volume", "Volume_Change_Rate"]], 
+            train_data_oversampled[outcome_var]
         )
-        self.models["RF SMOTE"] = rf_model_smote
+        self.models["RF Oversampling"] = rf_over
 
-    def evaluate_models(self, test_data, outcome_var, debug=False):
-        """
-        Evaluation loop for the models.
-        """
-        best_threshold = None
-        best_model_threshold = None
-        best_model_score = 0
-        thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-        for model_name, model in self.models.items():
-            if model_name == "Random Forest" or model_name == "RF SMOTE":
-                test_data["pred_prob"] = model.predict_proba(
-                    test_data[["Age", "Volume", "Volume_Change_Rate"]]
-                )[:, 1]
-            else:
-                test_data["pred_prob"] = model.predict(test_data)
-            best_threshold = None
-            best_score = 0
-            for threshold in thresholds:
-                test_data[f"pred_class_{threshold}"] = np.where(
-                    test_data["pred_prob"] >= threshold, 1, 0
-                )
-                if debug:
-                    print(f"Model: {model_name}")
-                    print(f"Threshold: {threshold}")
-                    print(
-                        classification_report(
-                            test_data[outcome_var], test_data[f"pred_class_{threshold}"]
-                        )
-                    )
-                    print()
-                score = f1_score(
-                    test_data[outcome_var], test_data[f"pred_class_{threshold}"]
-                )
-                score_name = "F1 Score"
-                if score > best_score:
-                    best_score = score
-                    best_threshold = threshold
-            print(f"Model: {model_name}")
-            print(f"Best Threshold: {best_threshold}")
-            print(f"Score: {score_name}")
-            print(f"Best score: {best_score}")
-            print()
-
-            if best_score > best_model_score:
-                best_model = model_name
-                best_model_score = best_score
-                best_model_threshold = best_threshold
-
-        print("Best Model Overall:")
-        print(f"Model: {best_model}")
-        print(f"Best Threshold: {best_model_threshold}")
-        print(f"Best {score_name}-score: {best_model_score}")
-
-        # Simple Evaluation at given threshold for the best model
-        if best_model == "Random Forest" or best_model == "RF SMOTE":
-            test_data["pred_prob"] = self.models[best_model].predict_proba(
-                test_data[["Age", "Volume", "Volume_Change_Rate"]]
-            )[:, 1]
-        else:
-            test_data["pred_prob"] = self.models[best_model].predict(
-                test_data[["Age", "Volume", "Volume_Change_Rate"]]
-            )
-        test_data["pred_class"] = np.where(
-            test_data["pred_prob"] >= best_model_threshold, 1, 0
+        # Random Forest with undersampling
+        rf_under = RandomForestClassifier(
+            n_estimators=300,
+            class_weight="balanced",
+            random_state=42,
+            min_samples_leaf=2,
+            min_samples_split=5,
+            max_depth=None,
         )
-        _ = self.custom_scorer(test_data[outcome_var], test_data["pred_class"])
+        rf_under.fit(
+            train_data_undersampled[["Age", "Normalized_Volume", "Volume_Change_Rate"]], 
+            train_data_undersampled[outcome_var]
+        )
+        self.models["RF Undersampling"] = rf_under
 
-        return best_model
+        # Random Forest with SMOTE
+        rf_smote = RandomForestClassifier(
+            n_estimators=300,
+            class_weight="balanced",
+            random_state=42,
+            min_samples_leaf=2,
+            min_samples_split=5,
+            max_depth=None,
+        )
+        rf_smote.fit(
+            train_data_smote[["Age", "Normalized_Volume", "Volume_Change_Rate"]], 
+            train_data_smote[outcome_var]
+        )
+        self.models["RF SMOTE"] = rf_smote
 
-    def standard_scorer(self, y_true, y_pred):
-        """Standard scoring metrics for the model evaluation."""
-        accuracy = accuracy_score(y_true, y_pred)
-        precision = precision_score(y_true, y_pred)
-        recall = recall_score(y_true, y_pred)
-        f1 = f1_score(y_true, y_pred)
-        print()
-        print(f"Accuracy: {accuracy}")
-        print(f"Precision: {precision}")
-        print(f"Recall: {recall}")
-        print(f"F1 Score: {f1}")
-
-        return accuracy, precision, recall, f1
-
-    def custom_scorer(self, y_true, y_pred):
-        """
-        Custom scorer for the model evaluation.
-        """
-        accuracy, precision, recall, f1 = self.standard_scorer(y_true, y_pred)
-
-        # Adjust the weights based on your preference
-        weighted_score = (accuracy + precision + recall + f1) / 4
-        print(f"Weighted Score: {weighted_score}")
-        return weighted_score
-
+        return self.models
+    
     def grid_search(self, train_data, outcome_var):
         """
         Grid search for Random Forest model.
         """
+        print("Performing grid search for Random Forest...")
+        X = train_data[["Age", "Normalized_Volume", "Volume_Change_Rate"]]
+        y = train_data[outcome_var]
         # Create the Random Forest model
         rf_model = RandomForestClassifier(random_state=42)
 
@@ -533,10 +375,9 @@ class MixedEffectsModel:
             scoring="f1",
             cv=5,
             n_jobs=-1,
+            verbose=1
         )
-        grid_search.fit(
-            train_data[["Age", "Volume", "Volume_Change_Rate"]], train_data[outcome_var]
-        )
+        grid_search.fit(X, y)
 
         # Get the best model and parameters
         best_rf_model = grid_search.best_estimator_
@@ -547,6 +388,25 @@ class MixedEffectsModel:
 
         return best_rf_model
 
+    def optimize_threshold(self, model, X, y):
+        print("Optimizing classification threshold...")
+        thresholds = np.arange(0.1, 1.0, 0.1)
+        best_threshold = 0.5
+        best_f1 = 0
+
+        for threshold in thresholds:
+            if hasattr(model, 'predict_proba'):
+                y_pred = (model.predict_proba(X)[:, 1] >= threshold).astype(int)
+            else:
+                y_pred = (model.predict(X) >= threshold).astype(int)
+            f1 = f1_score(y, y_pred)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_threshold = threshold
+
+        print(f"Best classification threshold: {best_threshold}")
+        return best_threshold
+    
     #################
     # VISUALIZATION #
     #################
@@ -637,9 +497,9 @@ class MixedEffectsModel:
         
         plt.subplot(1, 2, 1)
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-        plt.title('Confusion Matrix')
-        plt.ylabel('True label')
-        plt.xlabel('Predicted label')
+        plt.title('Confusion Matrix', fontdict={'size': 20})
+        plt.ylabel('True label', fontdict={'size': 15})
+        plt.xlabel('Predicted label', fontdict={'size': 15})
 
         # ROC Curve
         fpr, tpr, _ = roc_curve(y_true, y_pred_proba)
@@ -650,14 +510,30 @@ class MixedEffectsModel:
         plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
         plt.xlim([0.0, 1.0])
         plt.ylim([0.0, 1.05])
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.title('Receiver Operating Characteristic (ROC) Curve')
+        plt.xlabel('False Positive Rate', fontdict={'size': 15})
+        plt.ylabel('True Positive Rate', fontdict={'size': 15})
+        plt.title('Receiver Operating Characteristic Curve', fontdict={'size': 18})
         plt.legend(loc="lower right")
 
         plt.tight_layout()
         file = os.path.join(output_dir, 'confusion_matrix_and_roc.png')
         plt.savefig(file, dpi=300)
+        plt.close()
+    
+    def plot_precision_recall_curve(self, y_true, y_pred_proba, output_dir):
+        """
+        Plot the precision-recall curve.
+        """
+        precision, recall, _ = precision_recall_curve(y_true, y_pred_proba)
+        avg_precision = average_precision_score(y_true, y_pred_proba)
+
+        plt.figure()
+        plt.plot(recall, precision, color='b', label=f'Precision-Recall curve (AP = {avg_precision:.2f})')
+        plt.xlabel('Recall', fontdict={'size': 15})
+        plt.ylabel('Precision', fontdict={'size': 15})
+        plt.title('Precision-Recall Curve', fontdict={'size': 20})
+        plt.legend(loc="lower left")
+        plt.savefig(os.path.join(output_dir, 'precision_recall_curve.png'))
         plt.close()
 
     #########
@@ -668,8 +544,7 @@ class MixedEffectsModel:
         # variables and dirs
         longitudinal_vars = [
             "Age",
-            "Volume",
-            "Volume_Change",
+            "Normalized_Volume",
             "Volume_Change_Rate",
         ]
         outcome_var = "Patient_Classification_Binary"
@@ -680,55 +555,78 @@ class MixedEffectsModel:
         os.makedirs(individual_model_dir, exist_ok=True)
 
         # data preparation
-        data = self.prepare_data_for_mixed_model(
+        data = self.prepare_data(
             variables=longitudinal_vars,
             outcome_var=outcome_var,
             group_var=grouping_var,
         )
 
-        # runs individual models for each variable and a combined model
-        individual_models, combined_model, all_models = self.run_mixed_effects_model(
-            data, grouping_var, longitudinal_vars, individual_model_dir, mixed_model_dir
-        )
+        train_data, val_data, test_data = self.split_data(data)
+        # Perform cross-validation to select best model type
+        cv_scores = self.cross_validate(train_data, outcome_var, grouping_var)
+        best_model_type = max(cv_scores, key=lambda x: np.mean(cv_scores[x]))
+        print(f"Best model type from cross-validation: {best_model_type}")
 
-        # runs individual diagnostic plots for each variable and a combined model
-        for var, ind_result in individual_models.items():
-            self.perform_model_diagnostics(var, ind_result, individual_model_dir)
-        self.perform_model_diagnostics("combined", combined_model, mixed_model_dir)
-
-        # visualize the effects of each variable in the combined model
-        for var in longitudinal_vars:
-            if var == "Volume_Change":
-                continue
-            self.visualize_mixed_model_effects(
-                data, combined_model, var, individual_model_dir
-            )
-
-        # compare the mixed-effects models and select the best one
-        best_mixed_effects_model = self.compare_models(all_models)
-
-        # train the best model on different data sets
-        (
-            train_data,
-            test_data,
-            train_data_oversampled,
-            train_data_undersampled,
-            train_data_smote,
-        ) = self.preprocess_data_for_training(data, outcome_var)
-        self.train_models(
+        # Train best model on full training data
+        print(f"Training best model ({best_model_type}) on full training data...")
+        train_data_oversampled, train_data_undersampled, train_data_smote = self.prepare_sampled_data(train_data, outcome_var, grouping_var)
+        models = self.train_models(
             train_data,
             train_data_oversampled,
             train_data_undersampled,
             train_data_smote,
-            outcome_var,
-            best_mixed_effects_model,
+            outcome_var
         )
-        _ = self.evaluate_models(test_data, outcome_var)
+        best_model = models[best_model_type]
+                
+        if isinstance(best_model, RandomForestClassifier):
+            print("Random Forest Classifier is the best model. Performing grid search.")
+            #best_model = self.grid_search(train_data, outcome_var)
+            best_model_type = "Optimized Random Forest"
+            models[best_model_type] = best_model
+            
+        if not isinstance(best_model, RandomForestClassifier):
+            print("Mixed-effects model is the best model. Performing diagnostics and visualizations of effects.")
+            self.perform_model_diagnostics(None, best_model, mixed_model_dir)
+            for var in longitudinal_vars:
+                self.visualize_mixed_model_effects(data, best_model, var, mixed_model_dir)
+
+        X_train = train_data[["Age", "Normalized_Volume", "Volume_Change_Rate"]]
+        y_train = train_data[outcome_var]
+        best_threshold = self.optimize_threshold(best_model, X_train, y_train)
+        self.current_model_name = best_model_type
+
+        # Evaluate on validation set
+        weighted_val_score, f1_val_score, _, _ = self.evaluate_model(best_model, val_data, outcome_var, best_threshold)
+        print(f"F1 Validation score for {best_model_type}: {f1_val_score}")
+        print(f"Weighted Validation score for {best_model_type}: {weighted_val_score}")
+
+
+        # Final evaluation on test set
+        weighted_test_score, f1_test_score, y_pred, y_pred_proba = self.evaluate_model(best_model, test_data, outcome_var, best_threshold)
+        print(f"F1 test score for {best_model_type}: {f1_test_score}")
+        print(f"Weighted test score for {best_model_type}: {weighted_test_score}")
 
         # finally do a grid search if needed and plot the confusion matrix and ROC curve
         #_ = self.grid_search(train_data, outcome_var)
-        self.plot_confusion_matrix_and_roc(test_data[outcome_var], test_data["pred_class"], test_data["pred_prob"], mixed_model_dir)
+        self.plot_confusion_matrix_and_roc(test_data[outcome_var], y_pred, y_pred_proba, mixed_model_dir)
+        self.plot_precision_recall_curve(test_data[outcome_var], y_pred_proba, mixed_model_dir)
         
+        
+        # Save model summary if it's a mixed-effects model
+        if not isinstance(best_model, RandomForestClassifier):
+            summary_file = os.path.join(mixed_model_dir, f"{best_model_type}_summary.txt")
+            with open(summary_file, "w", encoding='utf-8') as f:
+                f.write(best_model.summary().as_text())
+
+        # Print feature importances if it's a Random Forest model
+        if isinstance(best_model, RandomForestClassifier):
+            importances = best_model.feature_importances_
+            feature_names = ['Age', 'Normalized_Volume', 'Volume_Change_Rate']
+            for feature, importance in zip(feature_names, importances):
+                print(f"Importance of {feature}: {importance}")
+
+        print(f"Results saved in {mixed_model_dir}")
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
@@ -738,5 +636,5 @@ if __name__ == "__main__":
         "/home/jc053/GIT/mri_longitudinal_analysis/data/output/correlation_plots_joint"
     )
     merged_data = pd.read_csv(CSV_FILE_PATH)
-    mixed_model = MixedEffectsModel(merged_data)
+    mixed_model = ProgressionPrediction(merged_data)
     mixed_model.main(OUTPUT_DIR)
