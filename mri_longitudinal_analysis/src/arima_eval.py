@@ -114,13 +114,13 @@ def roll_vs_val(df, directory):
         ax1.scatter(validation_data, arima_predictions, alpha=0.5, label=f"Patient {i+1}")
         ax2.scatter(validation_data, arimagarch_predictions, alpha=0.5, label=f"Patient {i+1}")
 
-    ax1.set_xlabel("Validation Data", fontsize=12)
-    ax1.set_ylabel("ARIMA Rolling Predictions", fontsize=12)
-    ax1.set_title("ARIMA: Rolling Predictions vs Validation Data", fontsize=14)
+    ax1.set_xlabel("Validation Data", fontsize=15)
+    ax1.set_ylabel("Rolling Predictions", fontsize=15)
+    ax1.set_title("ARIMA: Rolling Predictions vs Validation Data", fontsize=20)
     
-    ax2.set_xlabel("Validation Data", fontsize=12)
-    ax2.set_ylabel("ARIMA+GARCH Rolling Predictions", fontsize=12)
-    ax2.set_title("ARIMA+GARCH: Rolling Predictions vs Validation Data", fontsize=14)
+    ax2.set_xlabel("Validation Data", fontsize=15)
+    ax2.set_ylabel("Rolling Predictions", fontsize=15)
+    ax2.set_title("ARIMA+GARCH: Rolling Predictions vs Validation Data", fontsize=20)
 
     plt.tight_layout(pad=3.0)
     file_path = os.path.join(directory, f"rolling_vs_validation_comparison_{cohort.lower()}.png")
@@ -140,13 +140,13 @@ def error_distrib(df, directory):
     sns.histplot(arima_errors, bins=25, kde=True, ax=ax1, color="#8FBCBB")
     ax1.axvline(np.mean(arima_errors), color='r', linestyle='--', label=f'Mean: {np.mean(arima_errors):.2f}')
     ax1.axvline(np.median(arima_errors), color='g', linestyle='--', label=f'Median: {np.median(arima_errors):.2f}')
-    ax1.set_title("ARIMA: Distribution of Validation Errors")
+    ax1.set_title("ARIMA", fontsize=20)
     ax1.legend()
 
     sns.histplot(arimagarch_errors, bins=20, kde=True, ax=ax2, color='#D08770')
     ax2.axvline(np.mean(arimagarch_errors), color='r', linestyle='--', label=f'Mean: {np.mean(arimagarch_errors):.2f}')
     ax2.axvline(np.median(arimagarch_errors), color='g', linestyle='--', label=f'Median: {np.median(arimagarch_errors):.2f}')
-    ax2.set_title("ARIMA+GARCH: Distribution of Validation Errors")
+    ax2.set_title("ARIMA+GARCH", fontsize=20)
     ax2.legend()
 
     plt.tight_layout()
@@ -173,13 +173,15 @@ def metrics_plot(df, directory):
         bplot = axes[i].boxplot([arima_data, arimagarch_data], 
                                 labels=['ARIMA', 'ARIMA+GARCH'],
                                 patch_artist=True,
-                                medianprops=dict(color='black', linewidth=2))
+                                medianprops=dict(color='black', linewidth=2),
+                                )
         
         for patch, color in zip(bplot['boxes'], colors):
             patch.set_facecolor(color)
         
-        axes[i].set_title(f'Distribution of {metric}')
-        axes[i].set_ylabel('Value')
+        axes[i].set_title(f'Distribution of {metric}', fontsize=20)
+        axes[i].set_ylabel('Value', fontsize=15)
+        axes[i].set_xlabel('Model', fontsize=15)  # Adding x-axis label
         
     plt.tight_layout()
     file_path = os.path.join(directory, f"performance_metrics_boxplot_comparison_{cohort.lower()}.png")
@@ -220,24 +222,26 @@ def trend_plot(df, directory):
 
 
 @staticmethod
-def win_loss(cohort_df, directory):
-    
+def win_loss(cohort_dataf, directory):
+    """
+    Win Loss comparison plot for both models.
+    """
     metrics = ['AIC', 'BIC', 'HQIC', 'MAE', 'MSE', 'RMSE']
     arima_wins = []
     garch_wins = []
 
     for metric in metrics:
-        arima_better = sum(cohort_df[f'ARIMA_{metric}'] < cohort_df[f'ARIMA+GARCH_{metric}'])
-        garch_better = sum(cohort_df[f'ARIMA+GARCH_{metric}'] < cohort_df[f'ARIMA_{metric}'])
-        total = len(cohort_df)
+        arima_better = sum(cohort_dataf[f'ARIMA_{metric}'] < cohort_dataf[f'ARIMA+GARCH_{metric}'])
+        garch_better = sum(cohort_dataf[f'ARIMA+GARCH_{metric}'] < cohort_dataf[f'ARIMA_{metric}'])
+        total = len(cohort_dataf)
         arima_wins.append(arima_better / total * 100)
         garch_wins.append(garch_better / total * 100)
 
     _, ax = plt.subplots(figsize=(10, 6))
     bars1 = ax.bar(metrics, arima_wins, label='ARIMA Better', color='#8FBCBB', alpha=0.7)
     bars2 = ax.bar(metrics, garch_wins, bottom=arima_wins, label='ARIMA+GARCH Better', color='#D08770', alpha=0.7)
-    ax.set_ylabel('Percentage')
-    ax.set_title('Comparison of ARIMA vs ARIMA+GARCH Performance')
+    ax.set_ylabel('Percentage', fontsize=15)
+    ax.set_title('Comparison of ARIMA vs ARIMA+GARCH Performance', fontsize=20)
     ax.legend()
     
     # Add percentage annotations
