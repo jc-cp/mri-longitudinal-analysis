@@ -196,7 +196,7 @@ CATEGORICAL_VARS = [
             "Age Group at Diagnosis",
             "BRAF Status",
             "Sex",
-            #"Tumor Classification",
+            #"Tumor Classification",  # not fully implemented
             "Received Treatment",
             "Change Speed",
             "Change Type",

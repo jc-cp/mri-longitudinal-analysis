@@ -886,32 +886,52 @@ def consistency_check(data):
 def check_assumptions(x_val, y_val, data, test_type):
     """
     Function to check the assumptions of the statistical tests.
+
+    Parameters:
+    - x_val (str): The name of the first variable.
+    - y_val (str): The name of the second variable.
+    - data (DataFrame): The data containing the variables.
+    - test_type (str): The statistical method to be used.
+
+    Returns:
+    - bool: True if assumptions are met, False otherwise.
     """
     if test_type in ["t-test", "ANOVA"]:
-        categories = data[x_val].nunique()
-        if categories == 2:
-            group1 = data[data[x_val] == data[x_val].unique()[0]][y_val]
-            group2 = data[data[x_val] == data[x_val].unique()[1]][y_val]
-            if len(group1) < 3 or len(group2) < 3:
-                return False
-            _, p_norm1 = shapiro(group1)
-            _, p_norm2 = shapiro(group2)
-            _, p_equal_var = levene(group1, group2)
-            return p_norm1 > 0.05 and p_norm2 > 0.05 and p_equal_var > 0.05
-        else:
-            groups = [data[data[x_val] == category][y_val] for category in data[x_val].unique()]
-            if any(len(group) < 3 for group in groups):
-                return False
-            normality_tests = [shapiro(group)[1] for group in groups]
-            equal_variance_test = levene(*groups)[1] > 0.05
-            return all(p > 0.05 for p in normality_tests) and equal_variance_test
-    elif test_type in ["Spearman", "Pearson"]:
-        if len(data[x_val]) < 3 or len(data[y_val]) < 3:
+        categories = data[x_val].unique()
+        if len(categories) < 2:
+            print(f"Not enough categories in {x_val} for {test_type}")
             return False
-        _, p_norm_x = shapiro(data[x_val])
-        _, p_norm_y = shapiro(data[y_val])
-        return p_norm_x > 0.05 and p_norm_y > 0.05
+        
+        groups = [data[data[x_val] == category][y_val].dropna() for category in categories]
+        if any(len(group) < 3 for group in groups):
+            print(f"One or more groups have less than 3 samples for {x_val} and {y_val}")
+            return False
+        
+        normality_tests = [shapiro(group)[1] > 0.05 for group in groups]
+        equal_variance_test = levene(*groups)[1] > 0.05
+        
+        assumptions_met = all(normality_tests) and equal_variance_test
+        if not assumptions_met:
+            print(f"Assumptions not met for {test_type} on {x_val} and {y_val}")
+        return assumptions_met
+
+    elif test_type in ["Spearman", "Pearson"]:
+        x_data = data[x_val].dropna()
+        y_data = data[y_val].dropna()
+        if len(x_data) < 3 or len(y_data) < 3:
+            print(f"Not enough samples for {test_type} on {x_val} and {y_val}")
+            return False
+        
+        _, p_norm_x = shapiro(x_data)
+        _, p_norm_y = shapiro(y_data)
+        
+        assumptions_met = p_norm_x > 0.05 and p_norm_y > 0.05
+        if not assumptions_met:
+            print(f"Normality assumption not met for {test_type} on {x_val} and {y_val}")
+        return assumptions_met
+
     else:
+        print(f"No assumption check defined for {test_type}")
         return True
 
 ######################################
