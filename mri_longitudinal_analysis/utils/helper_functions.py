@@ -11,10 +11,11 @@ import pandas as pd
 import seaborn as sns
 import statsmodels.api as sm
 from cfg.utils import helper_functions_cfg
+from scikit_posthocs import posthoc_dunn
 from scipy.optimize import curve_fit
 from scipy.stats import (chi2_contingency, f_oneway, fisher_exact, kruskal,
                          mannwhitneyu, norm, pearsonr, pointbiserialr,
-                         spearmanr, ttest_ind, zscore)
+                         spearmanr, ttest_ind, zscore, shapiro, levene)
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import auc, r2_score, roc_auc_score, roc_curve
 from sklearn.model_selection import train_test_split
@@ -22,6 +23,7 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.outliers_influence import variance_inflation_factor
+from scipy.interpolate import interp1d
 
 ######################################
 # SMOOTHING and FILTERING OPERATIONS #
@@ -675,17 +677,15 @@ def zero_fill(series, width):
     return series.astype(str).str.zfill(width)
 
 
-def save_for_deep_learning(df: pd.DataFrame, output_dir, prefix):
+def save_dataframe(df: pd.DataFrame, output_dir: str, cohort: str):
     """
     Save data for deep learning in csv format.
     """
     if df is not None:
-        filename = f"{prefix}_dl_features.csv"
+        filename = f"{cohort}_cohort_data_features.csv"
         file_path = os.path.join(output_dir, filename)
         df.to_csv(file_path, index=False)
-        print(f"\tData saved for deep learning in {filename}.csv")
-    else:
-        print("No data to save.")
+        print(f"\tData saved for further analyses in {file_path}.")
 
 
 def categorize_age_group(data, column):
@@ -697,16 +697,18 @@ def categorize_age_group(data, column):
     #print(f"Age in days: {age_days}, Age in years: {age_years}")  # Debug print
     if age_years <= 2:
         category =  "Infant"
-    elif age_years <= 5:
+    elif age_years <= 6:
         category =  "Preschool"
-    elif age_years <= 11:
+    elif age_years <= 13:
         category =  "School Age"
-    elif age_years <= 18:
-        category =  "Adolescent"
+    # elif age_years <= 18:
+    #     category =  "Adolescent"
     else:
-        category =  "Young Adult"
+        #category = "Young Adult"
+        category =  "Adolescent"
     
     return category
+
 
 def categorize_time_since_first_diagnosis(data, column="Age"):
     """
@@ -722,12 +724,10 @@ def categorize_time_since_first_diagnosis(data, column="Age"):
         return "1-3 years"
     elif time_since_diagnosis <= 5:
         return "3-5 years"
-    elif time_since_diagnosis <= 7:
-        return "5-7 years"
-    elif time_since_diagnosis <= 10:
-        return "7-10 years"
+    # elif time_since_diagnosis <= 10:
+    #     return "5-10 years"
     else:
-        return "10+ years"
+        return "5+ years"
     
     
 def calculate_group_norms_and_stability(data, volume_column, volume_change_column):
@@ -803,25 +803,20 @@ def classify_patient_volumetric(
         return "Stable"
 
 
-def classify_patient_composite(data, patient_id):
+def classify_patient_composite(data,patient_id):
     """
     Classify a patient based on volumetric progression and treatment received.
     """
-    patient_data = data[data["Patient_ID"] == patient_id].iloc[0]
-    
+    patient_data = data[data["Patient_ID"] == patient_id]
+
     volumetric_class = classify_patient_volumetric(data, patient_id)
-    received_treatment = patient_data["Received Treatment"]
-    
-    if volumetric_class == "Progressor":
+    received_treatment = (patient_data["Received Treatment"] == "Yes").all()
+   
+    if volumetric_class == "Progressor" or received_treatment:
         return "Progressor"
     else:
-        if received_treatment == "Yes":
-            return "Progressor"
-        else:
-            if volumetric_class == "Regressor":
-                return "Regressor"
-            elif volumetric_class == "Stable":
-                return "Stable"
+        return "Non-progressor"
+
 
 def calculate_percentage_change(data, patient_id, column_name):
     """
@@ -887,6 +882,37 @@ def consistency_check(data):
     else:
         print("\tAll patients were rightly classified.")
 
+
+def check_assumptions(x_val, y_val, data, test_type):
+    """
+    Function to check the assumptions of the statistical tests.
+    """
+    if test_type in ["t-test", "ANOVA"]:
+        categories = data[x_val].nunique()
+        if categories == 2:
+            group1 = data[data[x_val] == data[x_val].unique()[0]][y_val]
+            group2 = data[data[x_val] == data[x_val].unique()[1]][y_val]
+            if len(group1) < 3 or len(group2) < 3:
+                return False
+            _, p_norm1 = shapiro(group1)
+            _, p_norm2 = shapiro(group2)
+            _, p_equal_var = levene(group1, group2)
+            return p_norm1 > 0.05 and p_norm2 > 0.05 and p_equal_var > 0.05
+        else:
+            groups = [data[data[x_val] == category][y_val] for category in data[x_val].unique()]
+            if any(len(group) < 3 for group in groups):
+                return False
+            normality_tests = [shapiro(group)[1] for group in groups]
+            equal_variance_test = levene(*groups)[1] > 0.05
+            return all(p > 0.05 for p in normality_tests) and equal_variance_test
+    elif test_type in ["Spearman", "Pearson"]:
+        if len(data[x_val]) < 3 or len(data[y_val]) < 3:
+            return False
+        _, p_norm_x = shapiro(data[x_val])
+        _, p_norm_y = shapiro(data[y_val])
+        return p_norm_x > 0.05 and p_norm_y > 0.05
+    else:
+        return True
 
 ######################################
 # VISUALIZATION and PLOTTING METHODS #
@@ -1010,253 +1036,46 @@ def annotate_plot(a_x):
         )
 
 
-def plot_classification_trajectories(data, output_dir, prefix, column_name, progression_type, unit=None):
-    """
-    Plot the growth trajectories of patients with classifications.
-
-    Parameters:
-    - data: DataFrame containing patient growth data and classifications.
-    - output_filename: Name of the file to save the plot.
-    """
-    plt.figure(figsize=(10, 8))
-    if column_name == "Normalized Volume":
-        mean = np.mean(data[column_name])
-        std = np.std(data[column_name])
-        factor = 2.5
-        threshold = mean + factor * std
-        data = data[data[column_name] <= threshold]
-        data = data[data[column_name] >= -threshold]
-    # Unique classifications & palette
-    data = data[data["Time since First Scan"] <= 4000]
-    if progression_type == "volumetric":
-        classification_type = "Classification Volumetric"
-    elif progression_type == "composite":
-        classification_type = "Classification Composite"
-    classifications = data[classification_type].unique()
-    palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(classifications))
-    colors = [palette[0],palette[1], "green"]
-    #colors =  ["blue", "red", "green"]
-    for classification, color in zip(classifications, colors):
-        class_data = data[data[classification_type] == classification]
-        first_patient_plotted = False
-
-        # Plot individual trajectories
-        for patient_id in class_data["Patient_ID"].unique():
-            patient_data = class_data[class_data["Patient_ID"] == patient_id]
-
-            if classification is not None:
-                plt.plot(
-                    patient_data["Time since First Scan"],
-                    patient_data[column_name],
-                    color=color,
-                    alpha=0.5,
-                    linewidth=1,
-                    label=classification if not first_patient_plotted else "",
-                )
-            first_patient_plotted = True
-
-        if classification is not None:
-            # Plot median trajectory for each classification
-            median_data = (
-                class_data.groupby(
-                    pd.cut(
-                        class_data["Time since First Scan"],
-                        pd.interval_range(
-                            start=0, end=class_data["Time since First Scan"].max(), freq=273, 
-                        ),
-                    )
-                )[column_name]
-                .median()
-                .reset_index()
-            )
-            sns.lineplot(
-                x=median_data["Time since First Scan"].apply(lambda x: x.mid),
-                y=column_name,
-                data=median_data,
-                color=color,
-                linestyle="--",
-                label=f"{classification} Median",
-                linewidth=1.5,
-            )
-
-    num_patients = data["Patient_ID"].nunique()
-    plt.axhline(y=0.75, color='blue', linestyle="-", label="-25% Volume Change")
-    plt.axhline(y=1.25, color='red', linestyle="-", label="+25% Volume Change")
-    plt.xlabel("Days Since First Scan", fontdict={"size": 15})
-    plt.ylabel(f"Tumor {column_name} [{unit}]", fontdict={"size": 15})
-    plt.title(f"Patient Classification Trajectories (N={num_patients})", fontdict={"size": 20})
-    plt.legend()
-    output_filename = os.path.join(output_dir, f"{prefix}_classification_analysis_{progression_type}.png")
-    plt.savefig(output_filename, dpi=300)
-    plt.close()
-
-
-def plot_individual_trajectories(
-    name, plot_data, column, category_column=None, unit=None, time_limit=4000, median_freq=273
-):
-    """
-    Plot the individual volume trajectories for a sample of patients.
-
-    Parameters:
-    - name (str): The filename for the saved plot image.
-    - plot_data (DataFrame): The data to be plotted.
-    - column (str): The name of the column representing volume to be plotted.
-    - output_dir (str): Directory where the plot image will be saved.
-    - time_limit (int): Cutoff time in days for plotting data.
-    - freq_days (int): Frequency in days for calculating median trajectories.
-    """
-    plt.figure(figsize=(10, 8))
-    
-    if column in ["Normalized Volume","Volume Change", "Volume Change Rate", "Volume Change Pct"]:
-        mean = np.mean(plot_data[column])
-        std = np.std(plot_data[column])
-        if column in ["Normalized Volume", "Volume Change", "Volume Change Pct"]:
-            factor = 2.5
-        elif column in ["Volume Change Rate"]:
-            factor = 0.25
-        threshold = mean + factor * std
-        plot_data = plot_data[plot_data[column] <= threshold]
-        plot_data = plot_data[plot_data[column] >= -threshold]
-
-    plot_data = plot_data[plot_data["Time since First Scan"] <= time_limit]
-    num_patients = plot_data["Patient_ID"].nunique()    
-    max_time = plot_data["Time since First Scan"].max()    
-    # Get the median every 3 months
-    median_data = (
-        plot_data.groupby(
-            pd.cut(
-                plot_data["Time since First Scan"],
-                pd.interval_range(
-                    start=0, end=max_time, freq=median_freq,
-                ),
-            )
-        )[column]
-        .median()
-        .reset_index()
-    )
-
-    if category_column:
-        categories = plot_data[category_column].unique()
-        patient_palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(categories))
-        median_palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, len(categories))
-        legend_handles = []
-
-        median_lines = False
-        for (category, patient_color), median_color in zip(
-            zip(categories, patient_palette), median_palette
-        ):
-            category_data = plot_data[plot_data[category_column] == category]
-            if median_lines:
-                median_data_category = (
-                    category_data.groupby(
-                        pd.cut(
-                            category_data["Time since First Scan"],
-                            pd.interval_range(
-                                start=0,
-                                end=max_time,
-                                freq=median_freq,
-                            ),
-                        )
-                    )[column]
-                    .median()
-                    .reset_index()
-                )
-            legend_handles.append(
-                lines.Line2D([], [], color=patient_color, label=f"{category_column} {category}")
-            )
-            for patient_id in category_data["Patient_ID"].unique():
-                patient_data = category_data[category_data["Patient_ID"] == patient_id]
-                plt.plot(
-                    patient_data["Time since First Scan"],
-                    patient_data[column],
-                    color=patient_color,
-                    alpha=0.5,
-                    linewidth=1,
-                )
-            if median_lines:
-                sns.lineplot(
-                    x=median_data_category["Time since First Scan"].apply(lambda x: x.mid),
-                    y=column,
-                    data=median_data_category,
-                    color=median_color,
-                    linestyle="--",
-                    label=f"{category_column} {category} Median Trajectory",
-                )
-
-        sns.lineplot(
-            x=median_data["Time since First Scan"].apply(lambda x: x.mid),
-            y=column,
-            data=median_data,
-            color="blue",
-            linestyle="--",
-            label="Cohort Median Trajectory",
-        )
-        # Retrieve the handles and labels from the current plot
-        handles, _ = plt.gca().get_legend_handles_labels()
-        # Combine custom category handles with the median trajectory handles
-        combined_handles = legend_handles + handles[-(len(categories) + 1) :]
-
-        plt.title(f"{column} Trajectories by {category_column} (N={num_patients})", fontdict={"size": 18})
-        plt.legend(handles=combined_handles)
-
-    else:
-        # Plot each patient's data
-        for patient_id in plot_data["Patient_ID"].unique():
-            patient_data = plot_data[plot_data["Patient_ID"] == patient_id]
-            sns.set_palette(helper_functions_cfg.NORD_PALETTE)
-            plt.plot(
-                patient_data["Time since First Scan"],
-                patient_data[column],
-                alpha=0.5,
-                linewidth=1,
-            )
-
-        sns.lineplot(
-            x=median_data["Time since First Scan"].apply(lambda x: x.mid),
-            y=column,
-            data=median_data,
-            color="blue",
-            linestyle="--",
-            label="Median Trajectory",
-        )
-        plt.title(f"Individual Tumor {column} Trajectories (N={num_patients})")
-        plt.legend()
-
-    plt.xlabel("Days Since First Scan", fontdict={"size": 15})
-    plt.ylabel(f"Tumor {column} [{unit}]", fontdict={"size": 15})
-    plt.savefig(name, dpi=300)
-    plt.close()
-    if category_column:
-        print(f"\t\tSaved tumor {column} trajectories plot by category: {category_column}.")
-    else:
-        print(f"\t\tSaved tumor {column} trajectories plot for all patients.")
-
-
-def plot_histo_distributions(data, output_dir):
+def plot_histo_distributions(data, output_dir, time_bins, age_groups, endpoint="volumetric"):
     """
     Several distributions and histograms.
     """
     data = data.copy()
+    dir_name = os.path.join(output_dir, "progression_status")
+    os.makedirs(dir_name, exist_ok=True)
+    if endpoint == "volumetric":
+        data['Progressed'] = data.apply(lambda row: 1 if classify_patient_volumetric(data, row['Patient_ID']) == "Progressor" else 0, axis=1)
+    else:   # clinical, composite progression
+        data['Progressed'] = data.apply(lambda row: 1 if classify_patient_composite(data, row['Patient_ID']) == 'Progressor' else 0, axis=1)
     
-    data['Progressed'] = data.apply(lambda row: 1 if row['Age at First Progression'] <= row['Age at Last Clinical Follow-Up'] else 0, axis=1)
     data['Previously Progressed'] = 0
-    time_bins = ["0-1 years", "1-3 years", "3-5 years", "5-7 years", "7-10 years", "10+ years"]
-    age_groups = ["Infant", "Preschool", "School Age", "Adolescent", "Young Adult"]
-    total_patients = data['Patient_ID'].nunique()
-    cv_distribution(data, output_dir, age_groups=age_groups)
-    plot_histo_progression(data, output_dir, time_bins, total_patients)    
-    plot_histo_age_group(data, output_dir, age_groups, total_patients)
+    cv_distribution(data, dir_name, age_groups=age_groups)
+    plot_histo_progression(data, dir_name, time_bins, endpoint)    
+    plot_histo_age_group(data, dir_name, age_groups, endpoint)
+    plot_modified_progression(data, dir_name, age_groups, endpoint)
+    plot_modified_progression(data, dir_name, time_bins, endpoint)
 
 def cv_distribution(data, output_dir, age_groups):
     """
     Plot the distribution of the coefficient of variation.
     """
     data["CV"] = data.groupby("Patient_ID")["Volume"].transform(lambda x: x.std() / x.mean())
+    # Kruskal-Wallis H-test
+    age_group_data = [group for _, group in data.groupby("Age Group at Diagnosis")["CV"]]
+    h_statistic, p_value = kruskal(*age_group_data)
+    print("\nKruskal-Wallis H-test Results:")
+    print(f"H-statistic: {h_statistic}")
+    print(f"p-value: {p_value}")
+    if p_value < 0.05:
+        posthoc_results = posthoc_dunn(data, val_col='CV', group_col='Age Group at Diagnosis', p_adjust='bonferroni')
+        print("\nPost-hoc Dunn's test results (p-values):")
+        print(posthoc_results)
+    
     plt.figure(figsize=(12, 8))
-
+    palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, n_colors=len(age_groups)) 
     # Create boxplots for the coefficient of variation for each age group
-    sns.boxplot(x="Age Group at Diagnosis", y="CV", data=data, order=age_groups)
-    plt.xlabel("Age Group", fontdict={"size": 15}, labelpad=25)
+    sns.boxplot(x="Age Group at Diagnosis", y="CV", data=data, order=age_groups, hue="Age Group at Diagnosis", palette=palette)
+    plt.xlabel("Age Group at Diagnosis", fontdict={"size": 15}, labelpad=25)
     plt.ylabel("Coefficient of Variation", fontdict={"size": 15})
     plt.title("Distribution of Coefficient of Variation by Age Group", fontdict={"size": 20})
     
@@ -1275,71 +1094,63 @@ def cv_distribution(data, output_dir, age_groups):
     plt.savefig(file_name_cv, dpi=300)
     plt.close()
 
-def plot_histo_age_group(data, output_dir, age_groups, total_patients):
+def plot_histo_age_group(data, output_dir, age_groups, endpoint):
     """
-    Histogram of progression status by age group.
+    Histogram of progression status by age group with properly aligned trend lines.
     """
-
     classified_data = classify_patients_age_group(data, age_groups)
     
-    # for _, row in classified_data.iterrows():
-    #     total_count = row['Not Progressed'] + row['Progressed'] + row['Cumulative Progression']
-    #     if total_count != total_patients:
-    #         print(f"Discrepancy found in age group {row['Age Group']}: Total Count = {total_count}, Expected = {total_patients}")
-
     # Prepare data for plotting
-    plot_data = pd.melt(classified_data, id_vars=['Age Group'], value_vars=['Not Progressed', 'Progressed', 'Cumulative Progression'],
+    plot_data = pd.melt(classified_data, id_vars=['Age Group'], 
+                        value_vars=['Not Progressed', 'Progressed', 'Cumulative Progression'],
                         var_name='Status', value_name='Count')
     plot_data['Total'] = plot_data.groupby('Age Group')['Count'].transform('sum')
 
-    # Create the triple bar plot with total count annotations
-    _, ax1 = plt.subplots(figsize=(10, 8))
-    barplot = sns.barplot(x="Age Group", y="Count", hue="Status", data=plot_data, order=age_groups)
+    # Create the plot
+    plt.figure(figsize=(10, 8))
+    ax = plt.gca()
+    
+    # Bar plot
+    bar_plot = sns.barplot(x="Age Group", y="Count", hue="Status", data=plot_data, order=age_groups, ax=ax)
+    
+    # Calculate bar centers for each group
+    n_groups = len(age_groups)
+    bar_width = bar_plot.containers[0][0].get_width()
+    
+    x_positions = np.arange(n_groups)
+
+    # Trend lines
+    for i, status in enumerate(['Not Progressed', 'Progressed', 'Cumulative Progression']):
+        status_data = plot_data[plot_data['Status'] == status]
+        y = status_data['Count'].values
+        x = x_positions + (i-1) * bar_width
+        
+        plt.plot(x, y, marker='o', label=f"{status} Trend")
+
+    # Customize the plot
+    plt.xlabel("Age Group", fontdict={"size": 15})
+    plt.ylabel("Count", fontdict={"size": 15})
+    plt.title("Patient Progression Status by Age Group", fontdict={"size": 20})
+    plt.legend(title='Status')
 
     # Add total count labels above bars
-    for p in barplot.patches:
+    for p in ax.patches:
         height = p.get_height()
-        barplot.annotate(f'{int(height)}', 
-                        (p.get_x() + p.get_width() / 2., height), 
-                        ha = 'center', va = 'center', 
-                        xytext = (0, 9), 
-                        textcoords = 'offset points')
-
-    ax1.set_xlabel("Age Group / Age Range [years]", fontdict={"size": 15}, labelpad=30)
-    ax1.set_ylabel("Count", fontdict={"size": 15})
-    ax1.set_title("Patient Progression Status by Age Group", fontdict={"size": 20})
-    ax1.legend(title='Status')
-    
-    age_ranges = ["0-2", "2-5", "5-11", "11-18", "18+"]
-    ax2 = ax1.twiny()
-    bar_centers = [rect.get_x() + rect.get_width() / 2 for rect in ax1.patches[::3]]
-    ax2.set_xticks(bar_centers)
-    ax2.set_xticklabels(age_ranges)
-    
-    ax2.spines["bottom"].set_visible(False)
-    ax2.tick_params(axis='x', which='both', length=0)
-    
-    ax2.xaxis.set_ticks_position("bottom")
-    ax2.xaxis.set_label_position("bottom")
-    ax2.spines["bottom"].set_position(("axes", -0.05))
+        ax.text(p.get_x() + p.get_width()/2., height + 0.5, f'{int(height)}',
+                ha="center", va="bottom")
     
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.15)
-    file_name = os.path.join(output_dir, "patient_progression_age_group.png")
+    file_name = os.path.join(output_dir, f"{endpoint}_patient_progression_age_group.png")
     plt.savefig(file_name, dpi=300)
 
-def plot_histo_progression(data, output_dir, time_bins, total_patients):
+def plot_histo_progression(data, output_dir, time_bins, endpoint):
     """
     Histogram of progression status.
     """
 
     classified_data = classify_patients_time_since_diagnosis(data, time_bins)
     
-    #for _, row in classified_data.iterrows():
-        #total_count = row['Not Progressed'] + row['Progressed'] + row['Cumulative Progression']
-        #if total_count != total_patients:
-        #    print(f"Discrepancy found in time bin {row['Time Since Diagnosis']}: Total Count = {total_count}, Expected = {total_patients}")
-
     # Prepare data for plotting
     plot_data = pd.melt(classified_data, id_vars=['Time Since Diagnosis'], value_vars=['Not Progressed', 'Progressed', 'Cumulative Progression'],
                         var_name='Status', value_name='Count')
@@ -1348,7 +1159,19 @@ def plot_histo_progression(data, output_dir, time_bins, total_patients):
     # Create the triple bar plot with total count annotations
     plt.figure(figsize=(10, 8))
     barplot = sns.barplot(x="Time Since Diagnosis", y="Count", hue="Status", data=plot_data, order=time_bins)
+    # Calculate bar centers for each group
+    n_groups = len(time_bins)
+    bar_width = barplot.containers[0][0].get_width()
+    x_positions = np.arange(n_groups)
 
+    # Trend lines
+    for i, status in enumerate(['Not Progressed', 'Progressed', 'Cumulative Progression']):
+        status_data = plot_data[plot_data['Status'] == status]
+        y = status_data['Count'].values
+        x = x_positions + (i-1) * bar_width
+        
+        plt.plot(x, y, marker='o', label=f"{status} Trend")
+    
     # Add total count labels above bars
     for p in barplot.patches:
         height = p.get_height()
@@ -1362,7 +1185,7 @@ def plot_histo_progression(data, output_dir, time_bins, total_patients):
     plt.ylabel("Count", fontdict={"size": 15})
     plt.title("Patient Progression Status Over Time", fontdict={"size": 20})
     plt.legend(title='Status')
-    file_name = os.path.join(output_dir, "patient_progression_status.png")
+    file_name = os.path.join(output_dir, f"{endpoint}_patient_progression_status.png")
     plt.savefig(file_name, dpi=300)
 
 def classify_patients_time_since_diagnosis(data, time_bins):
@@ -1375,31 +1198,17 @@ def classify_patients_time_since_diagnosis(data, time_bins):
 
     for idx, time_bin in enumerate(time_bins):        
         # Filter patients for the current time bin
-        bin_data = data[data['Time Since Diagnosis'] == time_bin]
+        bin_data = data[data['Time Since Diagnosis'] == time_bin].copy()
 
         # Update the status of patients who have progressed in the current time bin
         progressed_patient_ids = set(bin_data[bin_data['Progressed'] == 1]['Patient_ID'])
         progressed_count = len(progressed_patient_ids - patient_ids_previously_progressed)
         
-        if idx == 0:
-            # For the first time bin, consider patients who haven't progressed
-            not_progressed_patient_ids = all_patient_ids - progressed_patient_ids
-        else:
-            not_progressed_patient_ids = all_patient_ids - patient_ids_previously_progressed - progressed_patient_ids
-        
+        not_progressed_patient_ids = all_patient_ids - patient_ids_previously_progressed - progressed_patient_ids
         not_progressed_count = len(not_progressed_patient_ids)
         
         # Update the Cumulative Progression patients
-        bin_data.loc[bin_data['Patient_ID'].isin(patient_ids_previously_progressed), 'Cumulative Progression'] = 1
-        previously_progressed_count = len(patient_ids_previously_progressed)
-
-        cumulative_progression_count = previously_progressed_count + progressed_count
-        
-        #total_count = not_progressed_count + progressed_count + previously_progressed_count        
-        #print(f"Time Bin: {time_bin}, Total Count: {total_count}")
-        #print(f"  Not Progressed: {not_progressed_count}")
-        #print(f"  Progressed: {progressed_count}")
-        #print(f"  Cumulative Progression: {previously_progressed_count}")
+        cumulative_progression_count = len(patient_ids_previously_progressed) + progressed_count
 
         classifications.append({
             'Time Since Diagnosis': time_bin,
@@ -1423,30 +1232,17 @@ def classify_patients_age_group(data, age_groups):
 
     for idx, age_group in enumerate(age_groups):
         # Filter patients for the current age group
-        group_data = data[data['Age Group'] == age_group]
+        group_data = data[data['Age Group'] == age_group].copy()
 
         # Update the status of patients who have progressed in the current age group
         progressed_patient_ids = set(group_data[group_data['Progressed'] == 1]['Patient_ID'])
         progressed_count = len(progressed_patient_ids - patient_ids_previously_progressed)
-
-        if idx == 0:
-            # For the first age group, consider patients who haven't progressed
-            not_progressed_patient_ids = all_patient_ids - progressed_patient_ids
-        else:
-            not_progressed_patient_ids = all_patient_ids - patient_ids_previously_progressed - progressed_patient_ids
-
+        
+        not_progressed_patient_ids = all_patient_ids - patient_ids_previously_progressed - progressed_patient_ids
         not_progressed_count = len(not_progressed_patient_ids)
 
         # Update the Cumulative Progression patients
-        group_data.loc[group_data['Patient_ID'].isin(patient_ids_previously_progressed), 'Cumulative Progression'] = 1
-        previously_progressed_count = len(patient_ids_previously_progressed)
-
-        #total_count = not_progressed_count + progressed_count + previously_progressed_count
-        #print(f"Age Group: {age_group}, Total Count: {total_count}")
-        #print(f"  Not Progressed: {not_progressed_count}")
-        #print(f"  Progressed: {progressed_count}")
-        #print(f"  Cumulative Progression: {previously_progressed_count}")
-        cumulative_progression_count = previously_progressed_count + progressed_count
+        cumulative_progression_count = len(patient_ids_previously_progressed) + progressed_count
 
         classifications.append({
             'Age Group': age_group,
@@ -1460,6 +1256,175 @@ def classify_patients_age_group(data, age_groups):
 
     return pd.DataFrame(classifications)
 
+def plot_modified_progression(data, output_dir, variables, endpoint):
+    """
+    Refined modified histogram of progression status by age group with adjusted shaded areas and trend lines.
+    """
+    if "Infant" in variables: 
+        classified_data = classify_patients_age_group(data, variables)
+        id_vars = 'Age Group'
+    else:
+        classified_data = classify_patients_time_since_diagnosis(data, variables)
+        id_vars = 'Time Since Diagnosis'
+    
+    # Prepare data for plotting
+    plot_data = pd.melt(classified_data, id_vars=[id_vars], 
+                        value_vars=['Not Progressed', 'Progressed', 'Cumulative Progression'],
+                        var_name='Status', value_name='Count')
+    plot_data['Total'] = plot_data.groupby(id_vars)['Count'].transform('sum')
+
+    # Create the plot
+    plt.figure(figsize=(10, 8))
+    ax = plt.gca()
+    
+    # Calculate positions
+    n_groups = len(variables)
+    bar_width = 0.5
+    x_positions = np.arange(n_groups)
+    
+    # Calculate the start and end points for shading
+    x_start = x_positions[0] - bar_width/2
+    x_end = x_positions[-1] + bar_width/2
+    x_shade = np.linspace(x_start, x_end, 100)  # More points for smoother shading
+    
+    # Prepare data for each status
+    status_data = {status: plot_data[plot_data['Status'] == status].set_index(id_vars)['Count'] 
+                   for status in ['Not Progressed', 'Progressed', 'Cumulative Progression']}
+
+    # Ensure all status data have values for all age groups
+    for status in status_data:
+        status_data[status] = status_data[status].reindex(variables, fill_value=0)
+
+    # Define colors from NORD_PALETTE
+    colors = {
+        'Not Progressed': helper_functions_cfg.NORD_PALETTE[0],
+        'Progressed': helper_functions_cfg.NORD_PALETTE[1],
+        'Cumulative Progression': helper_functions_cfg.NORD_PALETTE[2]
+    }
+
+    # Interpolate data for smooth shading
+    def interpolate_data(data):
+        return np.interp(x_shade, x_positions, data)
+
+    # Shaded areas
+    plt.fill_between(x_shade, 0, interpolate_data(status_data['Not Progressed']), 
+                     alpha=0.3, color=colors['Not Progressed'], label='Not Progressed')
+    plt.fill_between(x_shade, 0, interpolate_data(status_data['Cumulative Progression']), 
+                     alpha=0.3, color=colors['Cumulative Progression'], label='Cumulative Progression')
+
+    # Bar plot for 'Progressed'
+    plt.bar(x_positions, status_data['Progressed'], color=colors['Progressed'], 
+            alpha=0.7, label='Progressed', width=bar_width)
+
+    # Trend lines
+    for status in ['Not Progressed', 'Progressed', 'Cumulative Progression']:
+        plt.plot(x_positions, status_data[status], marker='o', color=colors[status], label=f"{status} Trend")
+
+    # Add numbers with increased size and higher position
+    for status in ['Not Progressed', 'Progressed', 'Cumulative Progression']:
+        for x, y in zip(x_positions, status_data[status]):
+            plt.text(x, y + 1, f'{int(y)}', ha='center', va='bottom', fontsize=12, fontweight='bold')
+
+    # Customize the plot
+    plt.xlabel(id_vars, fontdict={"size": 15})
+    plt.ylabel("Count", fontdict={"size": 15})
+    plt.title("Modified Patient Progression Status by Age Group", fontdict={"size": 20})
+    plt.legend(title='Status')
+
+    plt.xticks(x_positions, variables)
+    plt.xlim(x_start, x_end)  # Set x-axis limits to match shading
+
+    plt.tight_layout()
+    file_name = os.path.join(output_dir, f"{endpoint}_modified_patient_progression_{id_vars.lower()}.png")
+    plt.savefig(file_name, dpi=300)
+    plt.close()
+
+def calculate_progression(group, progression_threshold, regression_threshold, volume_change_threshold, time_period_mapping):
+        """
+        Calculate the age at first progression and time to progression for each patient.
+        """
+        baseline_volume = group.iloc[0]["Baseline Volume"]
+        progression_threshold = baseline_volume * float(progression_threshold)
+        regression_threshold = baseline_volume * float(regression_threshold)
+        volume_change = baseline_volume * float(volume_change_threshold)
+
+        progression_mask = group["Volume"] >= progression_threshold
+        regression_mask = group["Volume"] <= regression_threshold
+        volume_change_mask = group["Volume"] >= volume_change
+
+        inverse_mapping = {v: k for k, v in time_period_mapping.items()}
+
+        if progression_mask.any():
+            first_progression_index = progression_mask.idxmax()
+            age_at_first_progression = group.loc[first_progression_index, "Age"]
+            age_at_first_diagnosis = group.iloc[0]["Age at First Diagnosis"]
+            time_to_progression = age_at_first_progression - age_at_first_diagnosis
+            
+            # calculate time period since diagnosis at progression
+            time_period_since_diagnosis_value  = group.loc[first_progression_index, "Time Period Since Diagnosis"]
+            time_period_since_diagnosis_numeric = get_time_period_numeric(time_period_since_diagnosis_value, time_period_mapping)
+            time_period_since_diagnosis_at_progression = inverse_mapping[time_period_since_diagnosis_numeric]
+        
+            # volume change calculations    
+            if volume_change_mask.any():
+                first_volume_change_index = volume_change_mask.idxmax()
+                age_at_volume_change = group.loc[first_volume_change_index, "Age"]
+                if (
+                    pd.notnull(age_at_first_progression)
+                    and age_at_first_progression > age_at_volume_change
+                ):
+                    time_gap = age_at_first_progression - age_at_volume_change
+                else:
+                    time_gap = 0
+            else:
+                time_gap = 0
+        
+        else:
+            age_at_first_progression = np.nan
+            age_at_volume_change = np.nan
+            time_period_since_diagnosis_numeric = group["Time Period Since Diagnosis"].map(time_period_mapping)
+            max_time_period_numeric = time_period_since_diagnosis_numeric.max()
+            time_period_since_diagnosis_at_progression = inverse_mapping[max_time_period_numeric]
+            time_to_progression = np.nan
+            time_gap = np.nan
+
+        if regression_mask.any():
+            first_regression_index = regression_mask.idxmax()
+            age_at_first_regression = group.loc[first_regression_index, "Age"]
+            time_to_regression = age_at_first_progression - age_at_first_regression
+        else:
+            age_at_first_regression = np.nan
+            time_to_regression = np.nan
+
+        time_to_progression_years = time_to_progression / 365.25 if pd.notnull(time_to_progression) else np.nan
+        time_to_regression_years = time_to_regression / 365.25 if pd.notnull(time_to_regression) else np.nan
+        time_gap_years = time_gap / 365.25 if pd.notnull(time_gap) else np.nan
+        
+        return pd.Series(
+            {
+                "Age at First Progression": age_at_first_progression,
+                "Age at First Regression": age_at_first_regression,
+                "Age at Volume Change": age_at_volume_change,
+                "Time to Progression": time_to_progression,
+                "Time to Regression": time_to_regression,
+                "Time to Progression Years": time_to_progression_years,
+                "Time to Regression Years": time_to_regression_years,
+                "Time Gap": time_gap,
+                "Time Gap Years": time_gap_years,
+                "Time Since Diagnosis": time_period_since_diagnosis_at_progression, 
+            }
+        )
+
+def get_time_period_numeric(time_period_value, category_mapping):
+       if isinstance(time_period_value, str):
+           return category_mapping.get(time_period_value, np.nan)
+       elif isinstance(time_period_value, (int, float)):
+           return time_period_value
+       elif isinstance(time_period_value, pd.Series):
+           return time_period_value.map(category_mapping).astype(float)
+       else:
+           return np.nan
+       
 ##################################
 # TUMOR STABILITY CLASSIFICATION #
 ##################################
