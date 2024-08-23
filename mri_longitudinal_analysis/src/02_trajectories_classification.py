@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.lines as lines
 from cfg.src import trajectories_cfg
 from cfg.utils import helper_functions_cfg
-from utils.helper_functions import classify_patient_volumetric, classify_patient_composite, calculate_progression, plot_histo_distributions
+from utils.helper_functions import classify_patient_volumetric, classify_patient_composite, calculate_progression, plot_histo_distributions, save_dataframe
 
 class TrajectoryClassification:
     def __init__(self, path_to_data, variables, cohort, sample_size):
@@ -623,4 +623,5 @@ if __name__ == "__main__":
     traj.classification_analysis(traj.data, output_dir)
     plot_histo_distributions(traj.data, output_dir, list_time_periods, age_groups, endpoint="volumetric")
     plot_histo_distributions(traj.data, output_dir, list_time_periods, age_groups, endpoint="composite")
+    save_dataframe(traj.data, output_dir, f"{cohort}_cohort_data_features_traj.csv")
 # %%
