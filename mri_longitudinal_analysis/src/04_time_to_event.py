@@ -14,12 +14,14 @@ from lifelines.statistics import logrank_test
 from lifelines.utils import concordance_index
 from lifelines.plotting import remove_ticks, remove_spines, move_spines # add_at_risk_counts ; just in case default should be used
 from itertools import combinations
-from utils.helper_functions import calculate_vif, calculate_progression
+from utils.helper_functions import calculate_vif
+from sklearn.preprocessing import StandardScaler
 
 
 class Time2Event:
     def __init__(self, data_path):
         self.data = pd.read_csv(data_path)
+        self.ref_cats = {}
     
     def time_to_event_analysis(self, prefix, output_dir, variables, duration_col, event_col, stratify_by=None, progression_type="composite"):
         """
@@ -319,7 +321,7 @@ class Time2Event:
         os.makedirs(surv_dir, exist_ok=True)
 
         print("\t\tPerforming univariate Cox proportional hazards analysis.")
-        results_uni, pooled_results = self.univariate_analysis(analysis_data, duration_col, event_col)
+        results_uni = self.univariate_analysis(analysis_data, duration_col, event_col, cat_vars)
         
         # 3. Plot the results
         self.plot_cox_proportional_hazards(results_uni, surv_dir, suffix="univariate")
@@ -344,7 +346,13 @@ class Time2Event:
 
         # 8. C-Index
         c_index, ci = self.calculate_c_index_with_ci(multivariate_model, analysis_data, duration_col, event_col)
-        print(f"\t\tC-index: {c_index:.3f} (95% CI: {ci[0]:.3f} - {ci[1]:.3f})")    
+        print(f"\t\tC-index: {c_index:.3f} (95% CI: {ci[0]:.3f} - {ci[1]:.3f})")  
+        
+        # 9. Combined Plot
+        results_uni['Analysis'] = 'Univariable'
+        results_multi['Analysis'] = 'Multivariable'
+        combined_results = pd.concat([results_uni, results_multi], axis=0)
+        self.plot_cox_proportional_hazards(combined_results, surv_dir, suffix="combined")  
 
     def preprocess_data_hz_model(self, data, variables, duration_col, event_col):
         """
@@ -366,15 +374,17 @@ class Time2Event:
                 continuous_columns.append(col)
         
         for var in categorical_columns:
+            ref_cat = analysis_data[var].mode()[0]
+            self.ref_cats[var] = ref_cat
             analysis_data[var] = analysis_data[var].astype('category')
             dummies = pd.get_dummies(analysis_data[var], prefix=var, drop_first=True)
             analysis_data = pd.concat([analysis_data, dummies], axis=1)
             analysis_data.drop(var, axis=1, inplace=True)
 
-        #scaler = StandardScaler()
-        #analysis_data[continuous_columns] = scaler.fit_transform(analysis_data[continuous_columns])         
         for col in continuous_columns:
             analysis_data[col] = pd.to_numeric(analysis_data[col], errors='coerce')
+        scaler = StandardScaler()
+        analysis_data[continuous_columns] = scaler.fit_transform(analysis_data[continuous_columns])
         
         # Handle missing and infinite values
         analysis_data = analysis_data.replace([np.inf, -np.inf], np.nan).dropna()
@@ -382,11 +392,9 @@ class Time2Event:
 
         return analysis_data, variables, categorical_columns, continuous_columns
 
-    def univariate_analysis(self, data, duration_col, event_col):
+    def univariate_analysis(self, data, duration_col, event_col, cat_vars):
         """Perform univariate Cox proportional hazards analysis."""
         results = {}
-        pooled_results = pd.DataFrame(columns=["Variable", "Subcategory", "HR", "Lower", "Upper", "p", "C-index"])
-
         for column in data.columns:
             if column not in [duration_col, event_col]:
                 try:
@@ -396,9 +404,6 @@ class Time2Event:
                             event_col=event_col)
                     
                     summary = model.summary
-                    
-                    #c_index, ci = self.calculate_c_index_with_ci(model, data, duration_col, event_col)
-                    
                     results[column] = {
                         'p_value': summary.loc[column, 'p'],
                         'hazard_ratio': summary.loc[column, 'exp(coef)'],
@@ -406,16 +411,11 @@ class Time2Event:
                             summary.loc[column, 'exp(coef) lower 95%'],
                             summary.loc[column, 'exp(coef) upper 95%']
                         ), 
-                        #'c_index': c_index, 
-                        #'c_index_ci_lower': ci[0],
-                        #'c_index_ci_upper': ci[1]
-                        
-                    }
-                              
+                    }                           
                 except Exception as e:
                     print(f"Error in univariate analysis for {column}: {str(e)}")
 
-        return pd.DataFrame(results).T, pooled_results
+        return pd.DataFrame(results).T
 
     def feature_selection(self, univariate_results, p_value_threshold=0.05):
         """Select features based on univariate analysis results."""
@@ -482,23 +482,19 @@ class Time2Event:
     ################
     def plot_cox_proportional_hazards(self, results, output_dir, suffix=""):
         """Forest plot of the Cox proportional hazards model."""
-        
-        hazard_ratios = results['hazard_ratio']
-        confidence_intervals = results['confidence_interval']
-        p_values = results['p_value']
+        if 'Analysis' not in results.columns:
+            results['Analysis'] = suffix.capitalize()
         # New sorting logic
-        sorted_vars = [(var.split('_')[0], var) for var in hazard_ratios.index]
+        sorted_vars = [(var.split('_')[0], var) for var in results.index.get_level_values(0).unique()]
         sorted_vars.sort(key=lambda x: (x[0], x[1]))
         sorted_order = [var[1] for var in sorted_vars]
         sorted_order = sorted_order[::-1]
 
         # Reorder the data based on the new sorting
-        hazard_ratios = hazard_ratios[sorted_order]
-        confidence_intervals = confidence_intervals.loc[sorted_order]
-        p_values = p_values.loc[sorted_order]
+        results = results.loc[sorted_order]
 
         # Extract main categories from variable names
-        main_categories = [var.split('_')[0] for var in hazard_ratios.index]
+        main_categories = [var.split('_')[0] for var in results.index.get_level_values(0).unique()]
         unique_main_categories = sorted(set(main_categories))
 
         # Create color map
@@ -508,26 +504,30 @@ class Time2Event:
 
         fig, ax = plt.subplots(figsize=(12, 10))
         plt.subplots_adjust(left=0.3, right=0.7)
-        y_pos = range(len(hazard_ratios))
-        
+        y_pos = range(len(results))
         # Plot points for hazard ratios and error bars with colors
-        for i, (var, hr) in enumerate(hazard_ratios.items()):
+        for i, (idx, row) in enumerate(results.iterrows()):
+            var = idx[0] if isinstance(idx, tuple) else idx
             category = var.split('_')[0]
+            #subcategory = var.split('_')[1] if len(var.split('_')) > 1 else "Continuous"
             color = category_colors[category]
-            
-            ci_lower, ci_upper = confidence_intervals.loc[var]
 
+            hr = row['hazard_ratio']
+            ci_lower, ci_upper = row['confidence_interval']
+
+            marker = 'o' if row['Analysis'] == 'Univariable' else 's'
             ax.errorbar(
                 1 if pd.isna(hr) else hr, i, 
                 xerr=[[0, 0]] if pd.isna(hr) else [[hr - ci_lower], [ci_upper - hr]],
-                fmt='^' if pd.isna(hr) else 'o',
+                fmt='^' if pd.isna(hr) else marker,
                 color=color,
                 ecolor=color,
                 capsize=5,
                 capthick=2,
                 markersize=6,
                 elinewidth=2,
-                zorder=2
+                zorder=2,
+                label=row['Analysis'] if i == 0 or (i > 0 and row['Analysis'] != results.iloc[i-1]['Analysis']) else "",
             )
 
         ax.axvline(x=1, color='r', linestyle='--', zorder=0)
@@ -536,7 +536,7 @@ class Time2Event:
         ax.set_ylabel('Variables', fontdict={'fontsize': 15})
         ax.set_title('Proportional Cox-Hazards Model', fontsize=20, fontweight='bold')
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(hazard_ratios.index, ha='right')
+        ax.set_yticklabels(results.index, ha='right')
         
         ax.set_xlim(0.1, 10)
 
@@ -546,9 +546,10 @@ class Time2Event:
         axes_width_inches = ax_bounds.width
         annotation_x_position = ax_bounds.x1 + 0.01 * fig_width_inches
 
-        for i, (var, hr) in enumerate(hazard_ratios.items()):
-            ci_lower, ci_upper = confidence_intervals.loc[var]
-            p_value = p_values.loc[var]
+        for i, (idx, row) in enumerate(results.iterrows()):
+            hr = row['hazard_ratio']
+            ci_lower, ci_upper = row['confidence_interval']
+            p_value = row['p_value']
             
             ax.text(
                 annotation_x_position + (0.75 * axes_width_inches),
@@ -569,7 +570,7 @@ class Time2Event:
                 transform=ax.transData,
             )
             ax.text(
-                annotation_x_position + (5.75 * axes_width_inches),
+                annotation_x_position + (6.75 * axes_width_inches),
                 i,
                 f"{p_value:.3f}" if p_value >= 0.01 else "<0.01",
                 ha="left",
@@ -580,7 +581,7 @@ class Time2Event:
 
         ax.text(1.05, 1.0, "HR", ha="left", va="center", fontsize=10, fontweight="bold", transform=ax.transAxes)
         ax.text(1.15, 1.0, "95% CI", ha="left", va="center", fontsize=10, fontweight="bold", transform=ax.transAxes)
-        ax.text(1.28, 1.0, "P-val", ha="left", va="center", fontsize=10, fontweight="bold", transform=ax.transAxes)
+        ax.text(1.3, 1.0, "P-val", ha="left", va="center", fontsize=10, fontweight="bold", transform=ax.transAxes)
         
         plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
         plt.tight_layout()
@@ -664,8 +665,7 @@ class Time2Event:
         print(f"\t\tSaved {plot_type} plots for covariates.")
         # Ensure all figures are closed at the end of the analysis
         plt.close('all')
-            
-        
+
         
 if __name__ == "__main__":
     cohort = time2event_cfg.COHORT
