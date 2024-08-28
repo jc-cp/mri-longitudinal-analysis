@@ -45,6 +45,7 @@ class Time2Event:
                 analysis_data_pre["Time to Progression"],
                 analysis_data_pre["Follow-Up Time"],
             )
+            output_dir = os.path.join(output_dir, "volumetric")
         elif progression_type == "composite":            
             # Define Event_Occurred and Duration for composite progression
             analysis_data_pre[event_col] = (
@@ -61,7 +62,9 @@ class Time2Event:
                 ),
                 analysis_data_pre["Follow-Up Time"]
             )
-            
+            output_dir = os.path.join(output_dir, "composite")
+        
+        os.makedirs(output_dir, exist_ok=True) 
         analysis_data_pre = analysis_data_pre.dropna(
             subset=[duration_col, event_col]
         )
@@ -529,7 +532,7 @@ class Time2Event:
 
         ax.axvline(x=1, color='r', linestyle='--', zorder=0)
         ax.set_xscale('log')
-        ax.set_xlabel('"<-- Lower Risk of Progression | Higher Risk of Progression -->"', fontdict={'fontsize': 15})
+        ax.set_xlabel('<-- Lower Risk of Progression | Higher Risk of Progression -->', fontdict={'fontsize': 15})
         ax.set_ylabel('Variables', fontdict={'fontsize': 15})
         ax.set_title('Proportional Cox-Hazards Model', fontsize=20, fontweight='bold')
         ax.set_yticks(y_pos)
@@ -661,79 +664,7 @@ class Time2Event:
         print(f"\t\tSaved {plot_type} plots for covariates.")
         # Ensure all figures are closed at the end of the analysis
         plt.close('all')
-        
-    def visualize_time_gap(self, output_dir):
-        """
-        Visualize the distribution of time gaps between volume change and progression.
-        """
-        print("\tVisualizing the distribution of time gaps between volume change and progression.")
-        progression_data = self.data.groupby("Patient_ID").apply(
-            self.calculate_progression
-        )
-        time_gap_data = progression_data["Time Gap"].dropna()
-        time_gap_data = time_gap_data[time_gap_data > 0]  # Filter out non-positive values
-        time_to_progression = progression_data["Time to Progression"].dropna()
-        time_to_progression = time_to_progression[time_to_progression > 0]  # Filter out non-positive values
-        
-        _, ax = plt.subplots(figsize=(8, 6))
-        sns.histplot(
-            time_gap_data, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax
-        )
-
-        plt.xlabel("Time Gap (Days)")
-        plt.ylabel("Frequency")
-        plt.title("Distribution of Time Gap between Volume Change and Progression")
-
-        # Add summary statistics to the plot
-        mean_gap = np.mean(time_gap_data)
-        median_gap = np.median(time_gap_data)
-        ax.axvline(
-            mean_gap, color="red", linestyle="--", label=f"Mean: {mean_gap:.2f} days"
-        )
-        ax.axvline(
-            median_gap,
-            color="green",
-            linestyle="--",
-            label=f"Median: {median_gap:.2f} days",
-        )
-        ax.legend()
-
-        surv_dir = os.path.join(output_dir, "survival_plots")
-        os.makedirs(surv_dir, exist_ok=True)
-        time_gap_plot = os.path.join(surv_dir, "time_gap_plot.png")
-        plt.savefig(time_gap_plot, dpi=300)
-        plt.close()
-
-        print("\t\tSaved time gap plot.")
-
-        _, ax = plt.subplots(figsize=(8, 6))
-        sns.histplot(
-            time_to_progression, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax
-        )
-        plt.xlabel("Time to Progression (Days)")
-        plt.ylabel("Frequency")
-        plt.title("Distribution of Time to Progression")
-        mean_progression = np.mean(time_to_progression)
-        median_progression = np.median(time_to_progression)
-        ax.axvline(
-            mean_progression,
-            color="red",
-            linestyle="--",
-            label=f"Mean: {mean_progression:.2f} days",
-        )
-        ax.axvline(
-            median_progression,
-            color="green",
-            linestyle="--",
-            label=f"Median: {median_progression:.2f} days",
-        )
-        ax.legend()
-        time_to_progression_plot = os.path.join(surv_dir, "time_to_progression_plot.png")
-        plt.savefig(time_to_progression_plot, dpi=300)
-        plt.close()
-        print("\t\tSaved time to progression plot.")
-
-    
+            
         
         
 if __name__ == "__main__":
@@ -747,3 +678,4 @@ if __name__ == "__main__":
     
     time2event = Time2Event(data_path)
     time2event.time_to_event_analysis(prefix=cohort, output_dir=output_dir, variables=baseline_vars, duration_col=duration_col, event_col=event_col, stratify_by=stratification_vars, progression_type="composite")
+    #time2event.time_to_event_analysis(prefix=cohort, output_dir=output_dir, variables=baseline_vars, duration_col=duration_col, event_col=event_col, stratify_by=stratification_vars, progression_type="volumetric")

@@ -509,6 +509,82 @@ class TrajectoryClassification:
         file_name = os.path.join(output_dir, "classification_bars.png")
         plt.savefig(file_name, dpi=300)
         plt.close(fig)   
+    
+    def visualize_time_gap(self, data, output_dir):
+        """
+        Visualize the distribution of time gaps between volume change and progression.
+        """
+        print("\tVisualizing the distribution of time gaps between volume change and progression.")
+
+        time_gap_data = data["Time Gap"].dropna()
+        time_gap_data = time_gap_data[time_gap_data > 0]  # Filter out non-positive values
+        time_to_progression = data["Time to Progression"].dropna()
+        time_to_progression = time_to_progression[time_to_progression > 0]  # Filter out non-positive values
+        
+        _, ax = plt.subplots(figsize=(8, 6))
+        sns.histplot(
+            time_gap_data, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax
+        )
+
+        plt.xlabel("Time Gap (Days)")
+        plt.ylabel("Frequency")
+        plt.title("Distribution of Time Gap between Volume Change and Progression")
+
+        # Add summary statistics to the plot
+        mean_gap = np.mean(time_gap_data)
+        median_gap = np.median(time_gap_data)
+        std_dev_gap = np.std(time_gap_data)
+        ax.axvline(
+            mean_gap, color="red", linestyle="--", label=f"Mean: {mean_gap:.2f} days"
+        )
+        ax.axvspan(mean_gap - std_dev_gap, mean_gap + std_dev_gap, alpha=0.2, color='red', label=f'Std Dev: ±{std_dev_gap:.3f}')
+        ax.axvline(
+            median_gap,
+            color="green",
+            linestyle="--",
+            label=f"Median: {median_gap:.2f} days",
+        )
+        
+        ax.legend()
+
+        surv_dir = os.path.join(output_dir, "time2progression")
+        os.makedirs(surv_dir, exist_ok=True)
+        time_gap_plot = os.path.join(surv_dir, "time_gap_plot.png")
+        plt.savefig(time_gap_plot, dpi=300)
+        plt.close()
+
+        print("\t\tSaved time gap plot.")
+
+        _, ax = plt.subplots(figsize=(8, 6))
+        sns.histplot(
+            time_to_progression, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax
+        )
+        plt.xlabel("Time to Progression (Days)")
+        plt.ylabel("Frequency")
+        plt.title("Distribution of Time to Progression")
+        mean_progression = np.mean(time_to_progression)
+        median_progression = np.median(time_to_progression)
+        std_dev_progression = np.std(time_to_progression)
+        ax.axvline(
+            mean_progression,
+            color="red",
+            linestyle="--",
+            label=f"Mean: {mean_progression:.2f} days",
+        )
+        ax.axvspan(mean_progression - std_dev_progression, mean_progression + std_dev_progression, alpha=0.2, color='red', label=f'Std Dev: ±{std_dev_progression:.3f}')
+        ax.axvline(
+            median_progression,
+            color="green",
+            linestyle="--",
+            label=f"Median: {median_progression:.2f} days",
+        )
+        ax.legend()
+        time_to_progression_plot = os.path.join(surv_dir, "time_to_progression_plot.png")
+        plt.savefig(time_to_progression_plot, dpi=300)
+        plt.close()
+        print("\t\tSaved time to progression plot.")
+
+
 
     # TODO: Implement the following method
     def analyze_tumor_stability(
@@ -624,4 +700,5 @@ if __name__ == "__main__":
     plot_histo_distributions(traj.data, output_dir, list_time_periods, age_groups, endpoint="volumetric")
     plot_histo_distributions(traj.data, output_dir, list_time_periods, age_groups, endpoint="composite")
     save_dataframe(traj.data, output_dir, f"{cohort}_cohort_data_features_traj.csv")
+    traj.visualize_time_gap(traj.data, output_dir)
 # %%

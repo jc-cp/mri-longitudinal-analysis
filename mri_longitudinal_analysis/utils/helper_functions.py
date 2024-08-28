@@ -559,7 +559,7 @@ def calculate_vif(X, categorical_columns):
     #print(X.dtypes)
     #print("\nData description:")
     #print(X.describe())
-    
+    X = X.copy()
     # Convert boolean columns to integer
     for col in X.select_dtypes(include=['bool']).columns:
         X[col] = X[col].astype(int)
@@ -1080,12 +1080,15 @@ def cv_distribution(data, output_dir, age_groups):
     Plot the distribution of the coefficient of variation.
     """
     data["CV"] = data.groupby("Patient_ID")["Volume"].transform(lambda x: x.std() / x.mean())
+    
+    median_cv_per_group = data.groupby("Age Group at Diagnosis")["CV"].median().sort_index()
     # Kruskal-Wallis H-test
     age_group_data = [group for _, group in data.groupby("Age Group at Diagnosis")["CV"]]
     h_statistic, p_value = kruskal(*age_group_data)
     print("\nKruskal-Wallis H-test Results:")
     print(f"H-statistic: {h_statistic}")
     print(f"p-value: {p_value}")
+    print(f"Median CV per group: {median_cv_per_group}")
     if p_value < 0.05:
         posthoc_results = posthoc_dunn(data, val_col='CV', group_col='Age Group at Diagnosis', p_adjust='bonferroni')
         print("\nPost-hoc Dunn's test results (p-values):")
@@ -1094,7 +1097,9 @@ def cv_distribution(data, output_dir, age_groups):
     plt.figure(figsize=(12, 8))
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, n_colors=len(age_groups)) 
     # Create boxplots for the coefficient of variation for each age group
-    sns.boxplot(x="Age Group at Diagnosis", y="CV", data=data, order=age_groups, hue="Age Group at Diagnosis", palette=palette)
+    plt.xticks(fontsize=15)
+    plt.yticks(fontsize=15)
+    sns.boxplot(x="Age Group at Diagnosis", y="CV", data=data, order=age_groups, hue="Age Group at Diagnosis", palette=palette,)
     plt.xlabel("Age Group at Diagnosis", fontdict={"size": 15}, labelpad=25)
     plt.ylabel("Coefficient of Variation", fontdict={"size": 15})
     plt.title("Distribution of Coefficient of Variation by Age Group", fontdict={"size": 20})
@@ -1105,11 +1110,18 @@ def cv_distribution(data, output_dir, age_groups):
     plt.close()
     
     cv_data = data.groupby("Patient_ID")["Coefficient of Variation"].first()
-    plt.figure(figsize=(8, 6))
+    cv_mean = cv_data.mean()
+    cv_median = cv_data.median()
+    cv_std = cv_data.std()
+    plt.figure(figsize=(10, 7))
     sns.histplot(cv_data, bins=20, kde=True)
     plt.xlabel("Coefficient of Variation", fontdict={"size": 15})
     plt.ylabel("Count", fontdict={"size": 15})
     plt.title("Distribution of Coefficient of Variation", fontdict={"size": 20})
+    plt.axvline(cv_mean, color='red', linestyle='--', label=f'Mean: {cv_mean:.3f}')
+    plt.axvspan(cv_mean - cv_std, cv_mean + cv_std, alpha=0.2, color='red', label=f'Std Dev: ±{cv_std:.3f}')
+    plt.axvline(cv_median, color='green', linestyle='-.', label=f'Median: {cv_median:.3f}')
+    plt.legend()
     file_name_cv = os.path.join(output_dir, "coefficient_of_variation.png")
     plt.savefig(file_name_cv, dpi=300)
     plt.close()
@@ -1348,10 +1360,10 @@ def plot_modified_progression(data, output_dir, variables, endpoint):
     # Customize the plot
     plt.xlabel(id_vars, fontdict={"size": 15})
     plt.ylabel("Count", fontdict={"size": 15})
-    plt.title("Modified Patient Progression Status by Age Group", fontdict={"size": 20})
+    plt.title(f"Patient Progression Status by {id_vars}", fontdict={"size": 20})
     plt.legend(title='Status')
 
-    plt.xticks(x_positions, variables)
+    plt.xticks(x_positions, variables, fontdict={"size": 15})
     plt.xlim(x_start, x_end)  # Set x-axis limits to match shading
 
     plt.tight_layout()
