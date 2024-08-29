@@ -4,7 +4,7 @@ Evaluation script for ARIMA model forecasts.
 import ast
 import os
 import warnings
-
+from scipy import stats
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -259,6 +259,45 @@ def win_loss(cohort_dataf, directory):
     plt.savefig(os.path.join(directory, f"win_loss_comparison_{cohort.lower()}.png"), dpi=300)
     plt.close()
 
+@staticmethod
+def paired_tests(metric, arima_values, arima_garch_values):
+    # Paired t-test
+    t_statistic, p_value_t = stats.ttest_rel(arima_values, arima_garch_values)
+    
+    # Wilcoxon signed-rank test
+    w_statistic, p_value_w = stats.wilcoxon(arima_values, arima_garch_values)
+    
+    print(f"{metric} - Paired t-test p-value: {p_value_t:.4f}")
+    print(f"{metric} - Wilcoxon signed-rank test p-value: {p_value_w:.4f}")
+
+@staticmethod
+def mcnemars_test(metric, arima_better, total_cases):
+    arima_garch_better = total_cases - arima_better
+    b = min(arima_better, arima_garch_better)
+    n = arima_better + arima_garch_better
+    p_value = stats.binomtest(b, n, p=0.5, alternative='two-sided').pvalue
+    print(f"{metric} - McNemar's test p-value: {p_value:.4f}")
+
+@staticmethod
+def statistical_tests(cohort_df):
+    metrics = ['AIC', 'BIC', 'HQIC', 'MAE', 'MSE', 'RMSE']
+    
+    print("Statistical Tests Results:")
+    print("---------------------------")
+    
+    for metric in metrics:
+        arima_values = cohort_df[f'ARIMA_{metric}']
+        arima_garch_values = cohort_df[f'ARIMA+GARCH_{metric}']
+        
+        paired_tests(metric, arima_values, arima_garch_values)
+        
+        # Calculate the number of cases where ARIMA is better
+        arima_better = sum(arima_values < arima_garch_values)
+        total_cases = len(arima_values)
+        
+        mcnemars_test(metric, arima_better, total_cases)
+        print("---------------------------")
+
 # Plotting
 roll_vs_val(cohort_df_filtered, output_dir)
 error_distrib(cohort_df_filtered, output_dir)
@@ -266,3 +305,5 @@ metrics_plot(cohort_df_filtered, output_dir)
 trend_plot(cohort_df_filtered, output_dir)
 win_loss(cohort_df_filtered, output_dir)
 print("Evaluation plots saved successfully!")
+
+statistical_tests(cohort_df_filtered)
