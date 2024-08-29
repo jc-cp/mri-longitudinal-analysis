@@ -1456,7 +1456,26 @@ def get_time_period_numeric(time_period_value, category_mapping):
            return time_period_value.map(category_mapping).astype(float)
        else:
            return np.nan
-       
+
+def create_histogram(data, title, xlabel, filename):
+    _, ax = plt.subplots(figsize=(8, 6))
+    sns.histplot(data, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax)
+    plt.xlabel(xlabel)
+    plt.ylabel("Frequency")
+    plt.title(title)
+    
+    mean_val = np.mean(data)
+    median_val = np.median(data)
+    std_dev_val = np.std(data)
+    
+    ax.axvline(mean_val, color="red", linestyle="--", label=f"Mean: {mean_val:.2f} days")
+    ax.axvspan(mean_val - std_dev_val, mean_val + std_dev_val, alpha=0.2, color='red', label=f'Std Dev: ±{std_dev_val:.3f}')
+    ax.axvline(median_val, color="green", linestyle="--", label=f"Median: {median_val:.2f} days")
+    
+    ax.legend()
+    plt.savefig(filename, dpi=300)
+    plt.close()
+    print(f"\t\tSaved {os.path.basename(filename)}.")
 ##################################
 # TUMOR STABILITY CLASSIFICATION #
 ##################################

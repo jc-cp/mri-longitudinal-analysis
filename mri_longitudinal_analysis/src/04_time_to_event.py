@@ -101,9 +101,11 @@ class Time2Event:
         if stratify_by and stratify_by in analysis_data_pre.columns:
             unique_categories = analysis_data_pre[stratify_by].unique()
             if len(unique_categories) > 1:
+                fig_width = max(8, len(unique_categories) * 2)  # Minimum width of 8, scales up with categories
+                fig_height = max(6, len(unique_categories) * 2)  # Minimum height of 6, scales up with categories
+                fig, ax = plt.subplots(figsize=(fig_width, fig_height))
                 groups = []
                 kmfs = []
-                fig, ax = plt.subplots(figsize=(8, 6))
                 for i, category in enumerate(unique_categories):
                     category_data = analysis_data_pre[analysis_data_pre[stratify_by] == category]
                     if category_data.empty:
@@ -119,7 +121,7 @@ class Time2Event:
                     kmfs.append(kmf)
                     groups.append((category, category_data))
                 
-                plt.title(f"Stratified Survival Function by {stratify_by}", fontsize=20)
+                plt.title(f"Survival Function for {stratify_by}", fontsize=20)
                 plt.xlabel("Months since Diagnosis", fontsize=15)
                 plt.ylabel("PFS Probability", fontsize=15)
                 plt.legend(title=stratify_by, loc="best", fontsize=12)
@@ -157,7 +159,7 @@ class Time2Event:
                     for cat1, cat2, display_p_value in pairwise_results:
                         f.write(f"{cat1} vs {cat2}\t{display_p_value}\n")
         else:
-            fig, ax = plt.subplots(figsize=(9, 8))
+            fig, ax = plt.subplots(figsize=(8, 6))
             kmf.fit(
                 analysis_data_pre["Duration_Months"],
                 event_observed=analysis_data_pre[event_col],
@@ -495,26 +497,28 @@ class Time2Event:
 
         # Extract main categories from variable names
         main_categories = [var.split('_')[0] for var in results.index.get_level_values(0).unique()]
-        unique_main_categories = sorted(set(main_categories))
+        #unique_main_categories = sorted(set(main_categories))
 
-        # Create color map
-        colormap = plt.get_cmap("tab20")
-        colors = [colormap(i) for i in range(len(unique_main_categories))]
-        category_colors = {cat: color for cat, color in zip(unique_main_categories, colors)}
-
+        y_pos = np.arange(len(results))
         fig, ax = plt.subplots(figsize=(12, 10))
         plt.subplots_adjust(left=0.3, right=0.7)
-        y_pos = range(len(results))
+                
+        # Define colors for univariable and multivariable analyses
+        uni_color = 'blue'
+        multi_color = 'red'
+        #colormap = plt.get_cmap("tab20")
+        #colors = [colormap(i) for i in range(len(unique_main_categories))]
+        #category_colors = {cat: color for cat, color in zip(unique_main_categories, colors)}
+        
         # Plot points for hazard ratios and error bars with colors
         for i, (idx, row) in enumerate(results.iterrows()):
-            var = idx[0] if isinstance(idx, tuple) else idx
-            category = var.split('_')[0]
-            #subcategory = var.split('_')[1] if len(var.split('_')) > 1 else "Continuous"
-            color = category_colors[category]
+            #var = idx[0] if isinstance(idx, tuple) else idx
+            #category = var.split('_')[0]
+            #color = category_colors[category]
 
+            color = uni_color if row['Analysis'] == 'Univariable' else multi_color
             hr = row['hazard_ratio']
             ci_lower, ci_upper = row['confidence_interval']
-
             marker = 'o' if row['Analysis'] == 'Univariable' else 's'
             ax.errorbar(
                 1 if pd.isna(hr) else hr, i, 

@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.lines as lines
 from cfg.src import trajectories_cfg
 from cfg.utils import helper_functions_cfg
-from utils.helper_functions import classify_patient_volumetric, classify_patient_composite, calculate_progression, plot_histo_distributions, save_dataframe
+from utils.helper_functions import classify_patient_volumetric, classify_patient_composite, calculate_progression, plot_histo_distributions, save_dataframe, create_histogram
 
 class TrajectoryClassification:
     def __init__(self, path_to_data, variables, cohort, sample_size):
@@ -516,74 +516,60 @@ class TrajectoryClassification:
         """
         print("\tVisualizing the distribution of time gaps between volume change and progression.")
 
-        time_gap_data = data["Time Gap"].dropna()
-        time_gap_data = time_gap_data[time_gap_data > 0]  # Filter out non-positive values
-        time_to_progression = data["Time to Progression"].dropna()
-        time_to_progression = time_to_progression[time_to_progression > 0]  # Filter out non-positive values
-        
-        _, ax = plt.subplots(figsize=(8, 6))
-        sns.histplot(
-            time_gap_data, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax
-        )
-
-        plt.xlabel("Time Gap (Days)")
-        plt.ylabel("Frequency")
-        plt.title("Distribution of Time Gap between Volume Change and Progression")
-
-        # Add summary statistics to the plot
-        mean_gap = np.mean(time_gap_data)
-        median_gap = np.median(time_gap_data)
-        std_dev_gap = np.std(time_gap_data)
-        ax.axvline(
-            mean_gap, color="red", linestyle="--", label=f"Mean: {mean_gap:.2f} days"
-        )
-        ax.axvspan(mean_gap - std_dev_gap, mean_gap + std_dev_gap, alpha=0.2, color='red', label=f'Std Dev: ±{std_dev_gap:.3f}')
-        ax.axvline(
-            median_gap,
-            color="green",
-            linestyle="--",
-            label=f"Median: {median_gap:.2f} days",
-        )
-        
-        ax.legend()
-
         surv_dir = os.path.join(output_dir, "time2progression")
         os.makedirs(surv_dir, exist_ok=True)
+        
+        # Filter data at the patient level
+        data = data.groupby('Patient_ID').agg({
+            'Time Gap': 'first',
+            'Time to Progression': 'first',
+            'Received Treatment': 'first',
+            'Age at First Treatment': 'first',
+            'Age at First Diagnosis': 'first',
+            'Age at First Progression': 'first',
+            'Age at Volume Change': 'first',
+            'Patient Classification Binary Composite': 'first', 
+            'Patient Classification Binary Volumetric': 'first'
+        }).reset_index()
+        
         time_gap_plot = os.path.join(surv_dir, "time_gap_plot.png")
-        plt.savefig(time_gap_plot, dpi=300)
-        plt.close()
-
-        print("\t\tSaved time gap plot.")
-
-        _, ax = plt.subplots(figsize=(8, 6))
-        sns.histplot(
-            time_to_progression, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax
-        )
-        plt.xlabel("Time to Progression (Days)")
-        plt.ylabel("Frequency")
-        plt.title("Distribution of Time to Progression")
-        mean_progression = np.mean(time_to_progression)
-        median_progression = np.median(time_to_progression)
-        std_dev_progression = np.std(time_to_progression)
-        ax.axvline(
-            mean_progression,
-            color="red",
-            linestyle="--",
-            label=f"Mean: {mean_progression:.2f} days",
-        )
-        ax.axvspan(mean_progression - std_dev_progression, mean_progression + std_dev_progression, alpha=0.2, color='red', label=f'Std Dev: ±{std_dev_progression:.3f}')
-        ax.axvline(
-            median_progression,
-            color="green",
-            linestyle="--",
-            label=f"Median: {median_progression:.2f} days",
-        )
-        ax.legend()
         time_to_progression_plot = os.path.join(surv_dir, "time_to_progression_plot.png")
-        plt.savefig(time_to_progression_plot, dpi=300)
-        plt.close()
+        time_gap_data = data["Time Gap"].dropna()
+        time_gap_data = time_gap_data[time_gap_data > 0]
+        time_to_progression = data["Time to Progression"].dropna()
+        time_to_progression = time_to_progression[time_to_progression > 0]
+        create_histogram(time_gap_data, 
+                        "Distribution of Time Gap between Volume Change and Progression",
+                        "Time Gap (Days)",
+                        time_gap_plot)
+        print("\t\tSaved time gap plot.")
+        create_histogram(time_to_progression, 
+                        "Distribution of Time to Volumetric Progression",
+                        "Time to Progression (Days)",
+                        time_to_progression_plot)
         print("\t\tSaved time to progression plot.")
+        
+        def calculate_clinical_progression_time(row):
+            if row['Patient Classification Binary Composite'] == 1:
+                if pd.notnull(row['Time to Progression']):
+                    return row['Time to Progression']
+                elif row['Received Treatment'] == 'Yes' and pd.notnull(row['Age at First Treatment']) and pd.notnull(row['Age at First Diagnosis']):
+                    return row['Age at First Treatment'] - row['Age at First Diagnosis']
+            return np.nan
 
+        data = data[data['Patient Classification Binary Composite'] == 1]
+        data['Time to Clinical Progression'] = data.apply(calculate_clinical_progression_time, axis=1)
+        clinical_time_to_progression_plot = os.path.join(surv_dir, "clinical_time_to_progression_plot.png")
+        clinical_time_to_progression = data["Time to Clinical Progression"].dropna()
+        clinical_time_to_progression = clinical_time_to_progression[clinical_time_to_progression > 0]
+
+        create_histogram(clinical_time_to_progression, 
+                        "Distribution of Time to Clinical Progression",
+                        "Time to Clinical Progression (Days)",
+                        clinical_time_to_progression_plot)
+
+        print("\tCompleted visualization of time gaps for volumetric and clinical progression.")
+        
 
 
     # TODO: Implement the following method
@@ -699,6 +685,6 @@ if __name__ == "__main__":
     traj.classification_analysis(traj.data, output_dir)
     plot_histo_distributions(traj.data, output_dir, list_time_periods, age_groups, endpoint="volumetric")
     plot_histo_distributions(traj.data, output_dir, list_time_periods, age_groups, endpoint="composite")
-    save_dataframe(traj.data, output_dir, f"{cohort}_cohort_data_features_traj.csv")
+    save_dataframe(traj.data, output_dir, f"{cohort}_trajectories")
     traj.visualize_time_gap(traj.data, output_dir)
 # %%

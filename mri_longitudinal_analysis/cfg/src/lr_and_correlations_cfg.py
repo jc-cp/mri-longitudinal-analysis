@@ -21,7 +21,7 @@ LR_VARS = [
             "Sex",
             "Age Group at Diagnosis",
             "Baseline Volume cm3",
-            "Age Median",
+            "Age at First Diagnosis (Years)",
         ]
 
 LR_COMBINATIONS = [LR_VARS,["2nd combination"]]
