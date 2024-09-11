@@ -802,5 +802,5 @@ if __name__ == '__main__':
     lr.lr_analysis(output_dir, lr_vars, lr_combinations, outcome_var, categorical_vars)
     # Initialize the correlation analysis
     corr = CorrelationAnalysis(cohort_data, cohort)
-    corr.correlation_analysis(cohort, output_dir, categorical_vars, numerical_vars)
+    #corr.correlation_analysis(cohort, output_dir, categorical_vars, numerical_vars)
     

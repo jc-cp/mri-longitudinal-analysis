@@ -13,7 +13,7 @@ import seaborn as sns
 warnings.filterwarnings("ignore")
 csv_path_bch = "/home/jc053/GIT/mri_longitudinal_analysis/data/output/arima_plots_bch/BCH_forecasts.csv"
 csv_path_cbtn = "/home/jc053/GIT/mri_longitudinal_analysis/data/output/arima_plots_cbtn/CBTN_forecasts.csv"
-output_dir = "/home/jc053/GIT/mri_longitudinal_analysis/data/output/arima_evaluation"
+output_dir = "/home/jc053/GIT/mri_longitudinal_analysis/data/output/06_volumetric_forecating_evaluation"
 os.makedirs(output_dir, exist_ok=True)
 cohort = "JOINT" # "BCH" or "CBTN or "JOINT"
 
@@ -298,12 +298,95 @@ def statistical_tests(cohort_df):
         mcnemars_test(metric, arima_better, total_cases)
         print("---------------------------")
 
+@staticmethod
+def safe_eval(x):
+    if isinstance(x, str):
+        try:
+            return ast.literal_eval(x)
+        except:
+            return x
+    return x
+
+@staticmethod
+def evaluate_confidence_intervals(df, output_dir):
+    """
+    Evaluate confidence intervals and mean forecasts for ARIMA and ARIMA+GARCH models.
+    
+    :param df: DataFrame containing the forecast data
+    :param output_dir: Directory to save the output plot
+    """
+    # Convert list strings to actual lists safely
+    list_columns = ['ARIMA_Forecast', 'ARIMA_Lower_CI', 'ARIMA_Upper_CI', 
+                    'ARIMA+GARCH_Forecast', 'ARIMA+GARCH_Lower_CI', 'ARIMA+GARCH_Upper_CI', 
+                    'Validation_Data']
+    for col in list_columns:
+        df[col] = df[col].apply(safe_eval)
+
+    # Calculate coverage and accuracy metrics
+    models = ['ARIMA', 'ARIMA+GARCH']
+    results = {}
+
+    for model in models:
+        within_ci = []
+        forecast_errors = []
+
+        for _, row in df.iterrows():
+            actual = np.array(row['Validation_Data'])
+            forecast = np.array(row[f'{model}_Forecast'])
+            lower_ci = np.array(row[f'{model}_Lower_CI'])
+            upper_ci = np.array(row[f'{model}_Upper_CI'])
+
+            within_ci.extend((actual >= lower_ci) & (actual <= upper_ci))
+            forecast_errors.extend(np.abs(forecast - actual))
+
+        results[model] = {
+            'coverage': np.mean(within_ci) * 100,
+            'mean_absolute_error': np.mean(forecast_errors)
+        }
+
+    # Print results
+    print("\nConfidence Interval Evaluation:")
+    print("--------------------------------")
+    for model, metrics in results.items():
+        print(f"{model}:")
+        print(f"  CI Coverage: {metrics['coverage']:.2f}%")
+        print(f"  Mean Absolute Error: {metrics['mean_absolute_error']:.4f}")
+    print("--------------------------------")
+
+    # Visualize results
+    plt.figure(figsize=(10, 6))
+    models = list(results.keys())
+    coverage = [results[model]['coverage'] for model in models]
+    mae = [results[model]['mean_absolute_error'] for model in models]
+
+    x = np.arange(len(models))
+    width = 0.35
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    ax2 = ax1.twinx()
+
+    rects1 = ax1.bar(x - width/2, coverage, width, label='CI Coverage (%)', color='skyblue')
+    rects2 = ax2.bar(x + width/2, mae, width, label='Mean Absolute Error', color='lightgreen')
+
+    ax1.set_ylabel('CI Coverage (%)')
+    ax2.set_ylabel('Mean Absolute Error')
+    ax1.set_title('Confidence Interval Evaluation')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(models)
+    ax1.legend(loc='upper left')
+    ax2.legend(loc='upper right')
+
+    fig.tight_layout()
+    plt.savefig(f"{output_dir}/confidence_interval_evaluation.png")
+    plt.close()
+
 # Plotting
 roll_vs_val(cohort_df_filtered, output_dir)
 error_distrib(cohort_df_filtered, output_dir)
 metrics_plot(cohort_df_filtered, output_dir)
 trend_plot(cohort_df_filtered, output_dir)
 win_loss(cohort_df_filtered, output_dir)
+#evaluate_confidence_intervals(cohort_df_filtered, output_dir)
 print("Evaluation plots saved successfully!")
 
 statistical_tests(cohort_df_filtered)
