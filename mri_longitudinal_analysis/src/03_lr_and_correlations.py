@@ -332,7 +332,7 @@ class LogisticRegressionAnalysis:
                     combo=combo,
                 )
                 pooled_results_multi.drop(pooled_results_multi.index, inplace=True) # enable to clear up th epooled results and not have a cumulative forest plot
-            except KeyError as e:
+            except Exception as e:
                 print(f"\t\tError fitting model with {combo}: {e}")
                 pass
         print("\t\tMulti-variate Analysis done! Forest Plots saved.")
@@ -352,7 +352,7 @@ class LogisticRegressionAnalysis:
                     result, variable, pooled_results_uni, cat_vars
                 )
                 print(f"\t\t\tModel fitted successfully with {variable}.")
-            except ExceptionGroup as e:
+            except Exception as e:
                 print(f"\t\tError fitting model with {variable}: {e}")
         else:
             print(f"\t\tNo data available for {variable}.")
@@ -776,7 +776,7 @@ class LogisticRegressionAnalysis:
                     result, variables, pooled_results_multi, cat_vars
                 )
 
-            except ExceptionGroup as e:
+            except Exception as e:
                 print(f"\t\tError fitting model with {variables}: {e}")
         else:
             print(f"\t\tNo data available for {variables}.")
@@ -802,5 +802,5 @@ if __name__ == '__main__':
     lr.lr_analysis(output_dir, lr_vars, lr_combinations, outcome_var, categorical_vars)
     # Initialize the correlation analysis
     corr = CorrelationAnalysis(cohort_data, cohort)
-    #corr.correlation_analysis(cohort, output_dir, categorical_vars, numerical_vars)
+    corr.correlation_analysis(cohort, output_dir, categorical_vars, numerical_vars)
     
