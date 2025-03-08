@@ -25,6 +25,15 @@ from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from scipy.interpolate import interp1d
 
+
+PLOT_FONTS = {
+        'title': 24,
+        'axis_label': 18,
+        'tick_label': 14,
+        'legend': 12,
+        'annotation': 16
+    }
+
 ######################################
 # SMOOTHING and FILTERING OPERATIONS #
 ######################################
@@ -581,23 +590,40 @@ def calculate_vif(X, categorical_columns):
     vif_data = []
     
     # Calculate VIF for continuous variables
-    for i, col in enumerate(continuous_columns):
-        try:
-            vif = variance_inflation_factor(X[continuous_columns].values, i)
-            vif_data.append({'Variable': col, 'VIF': vif})
-        except ExceptionGroup as e:
-            print(f"Error calculating VIF for {col}: {e}")
+    if continuous_columns:  # Only calculate if there are continuous variables
+        for i, col in enumerate(continuous_columns):
+            try:
+                X_cont = X[continuous_columns]
+                if X_cont.shape[1] > 1:  # Need at least 2 continuous variables for VIF
+                    vif = variance_inflation_factor(X_cont.values, i)
+                    vif_data.append({'Variable': col, 'VIF': vif})
+                else:
+                    print(f"\t\tSkipping VIF calculation for {col} - need at least 2 continuous variables")
+            except Exception as e:
+                print(f"Error calculating VIF for {col}: {e}")
+    else:
+        print("\t\tNo continuous variables found for VIF calculation")
     
     # Calculate VIF for each set of dummy variables
     for cat in categorical_columns:
         cat_dummies = [col for col in dummy_columns if col.startswith(cat + '_')]
-        try:
-            X_with_cat = X[continuous_columns + cat_dummies]
-            last_column_index = X_with_cat.shape[1] - 1
-            cat_vif = variance_inflation_factor(X_with_cat.values, last_column_index)
-            vif_data.append({'Variable': cat, 'VIF': cat_vif})
-        except ExceptionGroup as e:
-            print(f"Error calculating VIF for {cat}: {e}")
+        if cat_dummies:  # Only proceed if we found dummy variables for this category
+            try:
+                # For categorical variables, we include all variables to check multicollinearity
+                columns_to_use = continuous_columns + cat_dummies if continuous_columns else cat_dummies
+                if len(columns_to_use) > 1:  # Need at least 2 variables for VIF
+                    X_with_cat = X[columns_to_use]
+                    last_column_index = X_with_cat.shape[1] - 1
+                    cat_vif = variance_inflation_factor(X_with_cat.values, last_column_index)
+                    vif_data.append({'Variable': cat, 'VIF': cat_vif})
+                else:
+                    print(f"\t\tSkipping VIF calculation for {cat} - need at least 2 variables")
+            except Exception as e:
+                print(f"Error calculating VIF for {cat}: {e}")
+    
+    if not vif_data:
+        print("\nNo VIF calculations could be performed. Check if there are sufficient variables for analysis.")
+        return pd.DataFrame(columns=['Variable', 'VIF'])
     
     vif_df = pd.DataFrame(vif_data)
     print("\nVIF Calculation Results:")
@@ -701,11 +727,11 @@ def categorize_age_group(data, column):
         category =  "Preschool"
     elif age_years <= 13:
         category =  "School Age"
-    # elif age_years <= 18:
-    #     category =  "Adolescent"
-    else:
-        #category = "Young Adult"
+    elif age_years <= 18:
         category =  "Adolescent"
+    else:
+        category = "Young Adult"
+        #category =  "Adolescent"
     
     return category
 
@@ -1039,7 +1065,6 @@ def visualize_tumor_stability(data, output_dir, stability_threshold, change_thre
     plt.savefig(filename_scatter)
     plt.close()
 
-
 def annotate_plot(a_x):
     """Annotate the bar plot with the respective heights.
 
@@ -1096,13 +1121,14 @@ def cv_distribution(data, output_dir, age_groups):
     
     plt.figure(figsize=(12, 8))
     palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, n_colors=len(age_groups)) 
-    # Create boxplots for the coefficient of variation for each age group
-    plt.xticks(fontsize=15)
-    plt.yticks(fontsize=15)
-    sns.boxplot(x="Age Group at Diagnosis", y="CV", data=data, order=age_groups, hue="Age Group at Diagnosis", palette=palette,)
-    plt.xlabel("Age Group at Diagnosis", fontdict={"size": 15}, labelpad=25)
-    plt.ylabel("Coefficient of Variation", fontdict={"size": 15})
-    plt.title("Distribution of Coefficient of Variation by Age Group", fontdict={"size": 20})
+    
+    # Update font sizes
+    plt.xticks(fontsize=PLOT_FONTS['tick_label'])
+    plt.yticks(fontsize=PLOT_FONTS['tick_label'])
+    sns.boxplot(x="Age Group at Diagnosis", y="CV", data=data, order=age_groups, hue="Age Group at Diagnosis", palette=palette)
+    plt.xlabel("Age Group at Diagnosis", fontdict={"size": PLOT_FONTS['axis_label']}, labelpad=25)
+    plt.ylabel("Coefficient of Variation", fontdict={"size": PLOT_FONTS['axis_label']})
+    plt.title("Distribution of Coefficient of Variation by Age Group", fontdict={"size": PLOT_FONTS['title']})
     
     plt.tight_layout()
     file_name_cv_ = os.path.join(output_dir, "coefficient_of_variation_by_age_group_boxplots.png")
@@ -1115,13 +1141,13 @@ def cv_distribution(data, output_dir, age_groups):
     cv_std = cv_data.std()
     plt.figure(figsize=(10, 7))
     sns.histplot(cv_data, bins=20, kde=True)
-    plt.xlabel("Coefficient of Variation", fontdict={"size": 15})
-    plt.ylabel("Count", fontdict={"size": 15})
-    plt.title("Distribution of Coefficient of Variation", fontdict={"size": 20})
+    plt.xlabel("Coefficient of Variation", fontdict={"size": PLOT_FONTS['axis_label']})
+    plt.ylabel("Count", fontdict={"size": PLOT_FONTS['axis_label']})
+    plt.title("Distribution of Coefficient of Variation", fontdict={"size": PLOT_FONTS['title']})
     plt.axvline(cv_mean, color='red', linestyle='--', label=f'Mean: {cv_mean:.3f}')
     plt.axvspan(cv_mean - cv_std, cv_mean + cv_std, alpha=0.2, color='red', label=f'Std Dev: ±{cv_std:.3f}')
     plt.axvline(cv_median, color='green', linestyle='-.', label=f'Median: {cv_median:.3f}')
-    plt.legend()
+    plt.legend(fontsize=PLOT_FONTS['legend'])
     file_name_cv = os.path.join(output_dir, "coefficient_of_variation.png")
     plt.savefig(file_name_cv, dpi=300)
     plt.close()
@@ -1160,16 +1186,16 @@ def plot_histo_age_group(data, output_dir, age_groups, endpoint):
         plt.plot(x, y, marker='o', label=f"{status} Trend")
 
     # Customize the plot
-    plt.xlabel("Age Group", fontdict={"size": 15})
-    plt.ylabel("Count", fontdict={"size": 15})
-    plt.title("Patient Progression Status by Age Group", fontdict={"size": 20})
-    plt.legend(title='Status')
+    plt.xlabel("Age Group", fontdict={"size": PLOT_FONTS['axis_label']})
+    plt.ylabel("Count", fontdict={"size": PLOT_FONTS['axis_label']})
+    plt.title("Patient Progression Status by Age Group", fontdict={"size": PLOT_FONTS['title']})
+    plt.legend(title='Status', fontsize=PLOT_FONTS['legend'])
 
     # Add total count labels above bars
     for p in ax.patches:
         height = p.get_height()
         ax.text(p.get_x() + p.get_width()/2., height + 0.5, f'{int(height)}',
-                ha="center", va="bottom")
+                ha="center", va="bottom", fontsize=PLOT_FONTS['annotation'])
     
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.15)
@@ -1211,12 +1237,13 @@ def plot_histo_progression(data, output_dir, time_bins, endpoint):
                         (p.get_x() + p.get_width() / 2., height), 
                         ha = 'center', va = 'center', 
                         xytext = (0, 9), 
-                        textcoords = 'offset points')
+                        textcoords = 'offset points',
+                        fontsize=PLOT_FONTS['annotation'])
 
-    plt.xlabel("Time Since Diagnosis", fontdict={"size": 15})
-    plt.ylabel("Count", fontdict={"size": 15})
-    plt.title("Patient Progression Status Over Time", fontdict={"size": 20})
-    plt.legend(title='Status')
+    plt.xlabel("Time Since Diagnosis", fontdict={"size": PLOT_FONTS['axis_label']})
+    plt.ylabel("Count", fontdict={"size": PLOT_FONTS['axis_label']})
+    plt.title("Patient Progression Status Over Time", fontdict={"size": PLOT_FONTS['title']})
+    plt.legend(title='Status', fontsize=PLOT_FONTS['legend'])
     file_name = os.path.join(output_dir, f"{endpoint}_patient_progression_status.png")
     plt.savefig(file_name, dpi=300)
 
@@ -1355,15 +1382,15 @@ def plot_modified_progression(data, output_dir, variables, endpoint):
     # Add numbers with increased size and higher position
     for status in ['Not Progressed', 'Progressed', 'Cumulative Progression']:
         for x, y in zip(x_positions, status_data[status]):
-            plt.text(x, y + 1, f'{int(y)}', ha='center', va='bottom', fontsize=12, fontweight='bold')
+            plt.text(x, y + 1, f'{int(y)}', ha='center', va='bottom', fontsize=PLOT_FONTS['annotation'], fontweight='bold')
 
     # Customize the plot
-    plt.xlabel(id_vars, fontdict={"size": 15})
-    plt.ylabel("Count", fontdict={"size": 15})
-    plt.title(f"Patient Progression Status by {id_vars}", fontdict={"size": 20})
-    plt.legend(title='Status')
+    plt.xlabel(id_vars, fontdict={"size": PLOT_FONTS['axis_label']})
+    plt.ylabel("Count", fontdict={"size": PLOT_FONTS['axis_label']})
+    plt.title(f"Patient Progression Status by {id_vars}", fontdict={"size": PLOT_FONTS['title']})
+    plt.legend(title='Status', fontsize=PLOT_FONTS['legend'])
 
-    plt.xticks(x_positions, variables, fontdict={"size": 15})
+    plt.xticks(x_positions, variables, fontsize=PLOT_FONTS['tick_label'])
     plt.xlim(x_start, x_end)  # Set x-axis limits to match shading
 
     plt.tight_layout()
@@ -1458,21 +1485,25 @@ def get_time_period_numeric(time_period_value, category_mapping):
            return np.nan
 
 def create_histogram(data, title, xlabel, filename):
+    data_in_months = np.array(data) / 30.44  # Convert to months
+
     _, ax = plt.subplots(figsize=(8, 6))
-    sns.histplot(data, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax)
-    plt.xlabel(xlabel)
-    plt.ylabel("Frequency")
-    plt.title(title)
+    sns.histplot(data_in_months, bins=25, kde=True, color="skyblue", edgecolor="black", ax=ax)
+    plt.xlabel(xlabel, fontsize=PLOT_FONTS['axis_label'])
+    plt.ylabel("Frequency", fontsize=PLOT_FONTS['axis_label'])
+    plt.title(title, fontsize=PLOT_FONTS['title'])
+    plt.xticks(fontsize=PLOT_FONTS['tick_label'])
+    plt.yticks(fontsize=PLOT_FONTS['tick_label'])
     
-    mean_val = np.mean(data)
-    median_val = np.median(data)
-    std_dev_val = np.std(data)
+    mean_val = np.mean(data_in_months)
+    median_val = np.median(data_in_months)
+    std_dev_val = np.std(data_in_months)
     
-    ax.axvline(mean_val, color="red", linestyle="--", label=f"Mean: {mean_val:.2f} days")
+    ax.axvline(mean_val, color="red", linestyle="--", label=f"Mean: {mean_val:.2f} months")
     ax.axvspan(mean_val - std_dev_val, mean_val + std_dev_val, alpha=0.2, color='red', label=f'Std Dev: ±{std_dev_val:.3f}')
-    ax.axvline(median_val, color="green", linestyle="--", label=f"Median: {median_val:.2f} days")
+    ax.axvline(median_val, color="green", linestyle="--", label=f"Median: {median_val:.2f} months")
     
-    ax.legend()
+    ax.legend(fontsize=PLOT_FONTS['legend'])
     plt.savefig(filename, dpi=300)
     plt.close()
     print(f"\t\tSaved {os.path.basename(filename)}.")
