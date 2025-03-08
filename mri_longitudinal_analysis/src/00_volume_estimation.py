@@ -235,7 +235,7 @@ class VolumeEstimator:
             segmentation_array = sitk.GetArrayFromImage(segmentation)
             num_voxels = (segmentation_array > 0).sum()
             total_volume = num_voxels * voxel_volume
-        except ExceptionGroup as error:
+        except Exception as error:
             print(f"Error estimating volume for {segmentation_path}: {error}")
 
         return total_volume
