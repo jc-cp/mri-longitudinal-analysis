@@ -27,8 +27,9 @@ if "pipeline" not in st.session_state:
 if "terminal" not in st.session_state:
     st.session_state.terminal = TerminalOutput()
 
-if "edit_mode" not in st.session_state:
-    st.session_state.edit_mode = False
+# Remove edit mode from session state
+if "edit_mode" in st.session_state:
+    del st.session_state.edit_mode
 
 # Process any pending terminal output
 st.session_state.terminal.process_queue()
@@ -67,23 +68,6 @@ with cols[0]:
             st.image(pipeline_image, use_container_width=True, caption="Pipeline Overview")
         else:
             st.info("No pipeline overview image found. Add an image named 'pipeline_overview.png' to the app/images/ folder.")
-        
-        # Add edit mode instructions when edit mode is enabled
-        if st.session_state.edit_mode:
-            st.markdown("---")
-            st.markdown("""
-            ### 📝 Edit Mode Instructions
-            
-            Edit Mode allows you to customize the content for each pipeline step:
-            
-            1. **Select a step** from the sidebar
-            2. Add **custom notes** in the text area
-            3. Upload **custom images** if needed
-            4. Click **Save Custom Content** to store your changes
-            
-            Your customizations will be displayed alongside the step's default content and outputs.
-            """)
-        
     else:
         # Display current step information
         step_info = PIPELINE_STEPS[current_step]
@@ -93,45 +77,29 @@ with cols[0]:
         # Display step description
         st.markdown(step_info["description"])
         
-        # Custom content editor (only shown in edit mode)
-        if st.session_state.edit_mode:
-            st.subheader("Customize Step Content")
-            st.info("""
-            Add your custom notes and/or upload an image for this step. 
-            Click 'Save Custom Content' when you're done to save your changes.
-            """)
-            
-            custom_text = st.text_area(
-                "Custom Notes", 
-                value=step_info["custom_text"],
-                height=150,
-                key=f"custom_text_{current_step}"
-            )
-            
-            custom_image = st.file_uploader(
-                "Upload Custom Image", 
-                type=["png", "jpg", "jpeg"],
-                key=f"custom_image_{current_step}"
-            )
-            
-            if st.button("Save Custom Content", key=f"save_custom_{current_step}"):
-                st.session_state.pipeline.update_custom_content(
-                    current_step, 
-                    custom_text=custom_text,
-                    custom_image=custom_image
-                )
-                st.success("Custom content saved!")
-                st.rerun()
+        # Display step illustration image if available
+        if "illustration" in step_info and os.path.exists(step_info["illustration"]):
+            illustration_width = step_info.get("illustration_width", 500)
+            col1, col2, col3 = st.columns([1, 3, 1])
+            with col2:  # Use the middle column to center the image
+                st.image(step_info["illustration"], width=illustration_width)
         
         # Display output visualizations if available
-        if st.session_state.pipeline.get_step_status(current_step) in ["completed", "running"]:
-            utils.display_step_output(current_step)
+        utils.display_step_output(current_step)
         
         # Add execution button at the bottom
         st.markdown("---")
         if st.session_state.pipeline.get_step_status(current_step) == "pending":
-            if st.button("▶️ Execute Step", key=f"execute_{current_step}", use_container_width=True):
-                st.session_state.pipeline.run_step(current_step)
+            cols = st.columns(2)
+            with cols[0]:
+                if st.button("▶️ Execute Step", key=f"execute_{current_step}", use_container_width=True):
+                    st.session_state.pipeline.run_step(current_step)
+            
+            # Add "Omit Step" button for preprocessing and segmentation steps
+            with cols[1]:
+                if current_step in [0, 1]:  # Image Preprocessing and Tumor Segmentation steps
+                    if st.button("⏭️ Omit Step", key=f"omit_{current_step}", use_container_width=True):
+                        st.session_state.pipeline.omit_step(current_step)
         elif st.session_state.pipeline.get_step_status(current_step) == "running":
             st.info("⏳ Step is currently running...")
         elif st.session_state.pipeline.get_step_status(current_step) == "completed":
@@ -165,16 +133,6 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("Pipeline Steps")
-    
-    # Toggle edit mode with explanation
-    edit_mode = st.toggle(
-        "Edit Mode", 
-        value=st.session_state.edit_mode,
-        help="Enable to add custom notes and images to each step"
-    )
-    if edit_mode != st.session_state.edit_mode:
-        st.session_state.edit_mode = edit_mode
-        st.rerun()
     
     # Display pipeline progress
     progress = st.progress(st.session_state.pipeline.progress_percentage / 100)

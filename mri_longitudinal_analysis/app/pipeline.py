@@ -19,10 +19,11 @@ queue_lock = Lock()
 app_dir = os.path.dirname(os.path.abspath(__file__))
 images_dir = os.path.join(app_dir, "images")
 
+# Ensure images directory exists
+os.makedirs(images_dir, exist_ok=True)
 
 # Define the pipeline steps with descriptions derived from script documentation
 PIPELINE_STEPS = [
-    
     {
         "name": "Step 0.1: Image Preprocessing",
         "script": "mri_preprocess_3d.py",
@@ -39,12 +40,26 @@ PIPELINE_STEPS = [
         - Preprocessed images
         - Normalized, resampled, registered and brain-extracted images
         """,
-        "output_dir": "preprocessed_images",
-        "custom_text": "",
-        "custom_image": os.path.join(images_dir, "image_preprocessing.png")
+        "output_dir": "00_preprocessed_images",
+        "illustration": os.path.join(images_dir, "step/image_preprocessing.png"),
+        "illustration_width": 500,
     },
     {
-        "name": "Step 0.2: Volume Estimation",
+        "name": "Step 0.2: Tumor Segmentation",
+        "script": "00_tumor_segmentation.py",
+        "description": """
+        **Tumor Segmentation**
+        
+        This step performs tumor segmentation using a deep learning model. We have based this anylasis on the well established and validated model from the paper: Stepwise transfer learning for expert-level pediatric brain tumor MRI segmentation in a limited data scenario.
+        This work is also from our work group at the AI in Medicine Lab at Harvard Medical School.
+        
+        """,
+        "output_dir": "00_segmentation_plots",
+        "illustration": os.path.join(images_dir, "step/segmentation.png"),
+        "illustration_width": 500,
+    },
+    {
+        "name": "Step 0.3: Volume Estimation",
         "script": "00_volume_estimation.py",
         "description": """
         **Volume Estimation**
@@ -62,8 +77,11 @@ PIPELINE_STEPS = [
         - Volumetric statistics per patient
         """,
         "output_dir": "volume_plots",
-        "custom_text": "",
-        "custom_image": None
+        "illustration": os.path.join(images_dir, "volume_estimation.png"),
+        "example_outputs": [
+            os.path.join(images_dir, "output/trajectory_example.png"),
+        ],
+        "example_width": 800,
     },
     {
         "name": "Step 1: Joint Cohort Creation",
@@ -72,15 +90,19 @@ PIPELINE_STEPS = [
         **Joint Cohort Creation**
         
         This step creates a joint cohort of patients with the selected clinical data. This is very important since the features between the cohorts may be differnt and need to be harmonized. We use a matching AI algorithm to find the relevant columns automatically and create the expected output format for further analysis.
-        
         **Outputs:**
         - Cluster visualization plots (UMAP, t-SNE)
         - Heatmaps of cluster characteristics
         - Patient data EDA visualizations
         """,
         "output_dir": "clustering_plots",
-        "custom_text": "",
-        "custom_image": None
+        "illustration": os.path.join(images_dir, "cohort_creation.png"),
+        "example_outputs": [
+            os.path.join(images_dir, "umap_example.png"),
+            os.path.join(images_dir, "heatmap_example.png")
+        ],
+        "example_width": 600,
+        "output_width": 500,
     },
     {
         "name": "Step 2: Trajectory Classification",
@@ -98,8 +120,11 @@ PIPELINE_STEPS = [
         - Time-to-progression analysis
         """,
         "output_dir": "trajectory_plots",
-        "custom_text": "",
-        "custom_image": None
+        "illustration": os.path.join(images_dir, "trajectory_classification.png"),
+        "example_outputs": [
+            os.path.join(images_dir, "progression_example.png"),
+            os.path.join(images_dir, "time_to_progression_example.png")
+        ]
     },
     {
         "name": "Step 3: Logistic Regression & Correlations",
@@ -117,8 +142,11 @@ PIPELINE_STEPS = [
         - Statistical test visualizations
         """,
         "output_dir": "correlation_plots",
-        "custom_text": "",
-        "custom_image": None
+        "illustration": os.path.join(images_dir, "correlation_analysis.png"),
+        "example_outputs": [
+            os.path.join(images_dir, "forest_plot_example.png"),
+            os.path.join(images_dir, "correlation_heatmap_example.png")
+        ]
     },
     {
         "name": "Step 4: Time-to-Event Analysis",
@@ -136,11 +164,14 @@ PIPELINE_STEPS = [
         - Time-to-event distribution plots
         """,
         "output_dir": "survival_plots",
-        "custom_text": "",
-        "custom_image": None
+        "illustration": os.path.join(images_dir, "survival_analysis.png"),
+        "example_outputs": [
+            os.path.join(images_dir, "kaplan_meier_example.png"),
+            os.path.join(images_dir, "cox_hazard_example.png")
+        ]
     },
     {
-        "name": "Step 5: Voluemtric Forecasting",
+        "name": "Step 5: Volumetric Forecasting",
         "script": "05_volumetric_forecasting.py",
         "description": """
         **Volumetric Forecasting**
@@ -155,8 +186,11 @@ PIPELINE_STEPS = [
         - Forecasted volume plots
         """,
         "output_dir": "forecasting_plots",
-        "custom_text": "",
-        "custom_image": None
+        "illustration": os.path.join(images_dir, "forecasting.png"),
+        "example_outputs": [
+            os.path.join(images_dir, "forecast_example.png"),
+            os.path.join(images_dir, "prediction_accuracy_example.png")
+        ]
     }
 ]
 
@@ -254,11 +288,111 @@ class Pipeline:
         """Update the overall pipeline progress percentage."""
         completed_steps = self.steps_status.count("completed")
         self.progress_percentage = (completed_steps / len(PIPELINE_STEPS)) * 100
-    
-    def update_custom_content(self, step_index, custom_text=None, custom_image=None):
-        """Update custom content for a step."""
-        if 0 <= step_index < len(PIPELINE_STEPS):
-            if custom_text is not None:
-                PIPELINE_STEPS[step_index]["custom_text"] = custom_text
-            if custom_image is not None:
-                PIPELINE_STEPS[step_index]["custom_image"] = custom_image
+
+    def omit_step(self, step_index):
+        """Skip a specific pipeline step by simulating successful execution."""
+        if not self.can_run_step(step_index):
+            print(f"Cannot omit step {step_index}. Previous steps must be completed first.")
+            return
+        
+        self.current_step = step_index
+        self.steps_status[step_index] = "running"
+        
+        # Start the mock execution in a separate thread
+        thread = threading.Thread(
+            target=self._mock_execute_script,
+            args=(step_index,)
+        )
+        thread.daemon = True
+        thread.start()
+
+    def _mock_execute_script(self, step_index):
+        """Simulate execution of a script with mock output."""
+        try:
+            step = PIPELINE_STEPS[step_index]
+            
+            # Use the global queue instead of session state
+            with queue_lock:
+                output_queue.put(f"\n🔄 Omitting Step {step_index}: {step['name']}...\n")
+            
+            # Generate mock output based on the step
+            mock_output = self._generate_mock_output(step_index)
+            
+            # Stream mock output to queue with small delays to simulate processing
+            for line in mock_output.split('\n'):
+                with queue_lock:
+                    output_queue.put(line + '\n')
+                time.sleep(0.1)  # Small delay between lines
+            
+            # Mark step as completed
+            self.steps_status[step_index] = "completed"
+            
+            # Update progress percentage
+            self._update_progress()
+            
+        except Exception as e:
+            with queue_lock:
+                output_queue.put(f"Error in mock execution: {str(e)}\n")
+            self.steps_status[step_index] = "pending"
+
+    def _generate_mock_output(self, step_index):
+        """Generate mock output for a specific step."""
+        if step_index == 0:  # Image Preprocessing
+            return """Input directory: /home/juanqui55/git/mri-longitudinal-analysis/data/input/raw_images
+Output directory: /home/juanqui55/git/mri-longitudinal-analysis/data/output/00_preprocessed_images
+Bias field correction...
+Correction progress: 100%|██████████| 970/970 [01:23<00:00, 5.5s/it]
+Bias field correction complete!
+Resampling...
+Resampling progress: 100%|██████████| 970/970 [01:23<00:00, 5.5s/it]
+Resampling complete!
+Registering test data...
+Registration progress: 100%|██████████| 970/970 [01:23<00:00, 5.5s/it]
+Registration complete!
+Brain Extraction with HD-BET...
+Brain Extraction progress: 100%|██████████| 970/970 [01:23<00:00, 5.5s/it]
+Brain Extraction complete!
+All files processed successfully.
+Preprocessing complete!"""
+        
+        elif step_index == 1:  # Tumor Segmentation
+            return """Loading segmentation model...
+Model loaded successfully.
+Processing files from: /home/juanqui55/git/mri-longitudinal-analysis/data/output/00_preprocessed_images
+Segmentation progress: 100%|██████████| 970/970 [45:15<00:00, 9.0s/it]
+Saving segmentation masks...
+Post-processing segmentations...
+All segmentations completed successfully.
+Tumor segmentation complete!
+Output directory: /home/juanqui55/git/mri-longitudinal-analysis/data/output/00_segmentation_plots"""
+        
+        elif step_index == 2:  # Volume Estimation
+            return """Initializing Volume Estimator:
+\tAdjusted the clinical data.
+Processing files:
+\tNumber of unique patient IDs in the original CSV: 56
+\tNumber of unique patient IDs in the original CSV: 43
+\tNumber of unique patient IDs in the directory: 99
+\tNumber of unique patient IDs in the final CSV: 99
+\tNumber of reduced patient IDs: 0
+\tNumber of mismatched patient IDs: 0
+\tAll files processed.
+Generating plots:
+\tPlotted raw data!
+\tPlotted filtered data!
+\tPlotted poly_smoothing data!
+\tPlotted kernel_smoothing data!
+\tPlotted window_smoothing data!
+\tPlotted moving_average data!
+\tSaved all plots.
+Generating volume comparison:
+\tSaved comparison.
+Analyzing volume changes:
+\t95% CI for volume change: (-1250.45, 1876.32)
+\t95% CI for volume change rate per day: -0.87, 1.23
+\tAnalyzed volume changes.
+Generating time-series csv's.
+\tSaved all csv's."""
+        
+        else:
+            return f"Mock execution completed for step {step_index}."
