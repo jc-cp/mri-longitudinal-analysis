@@ -9,6 +9,10 @@ import numpy as np
 import pandas as pd
 from cfg.src import time2event_cfg
 from cfg.utils.helper_functions_cfg import NORD_PALETTE
+import scipy
+if not hasattr(scipy.integrate, 'trapz'):
+    from numpy import trapz
+    scipy.integrate.trapz = trapz
 from lifelines import KaplanMeierFitter, CoxPHFitter
 from lifelines.statistics import logrank_test
 from lifelines.utils import concordance_index
@@ -16,6 +20,7 @@ from lifelines.plotting import remove_ticks, remove_spines, move_spines # add_at
 from itertools import combinations
 from utils.helper_functions import calculate_vif
 from sklearn.preprocessing import StandardScaler
+
 
 
 class Time2Event:
@@ -329,11 +334,13 @@ class Time2Event:
         self.plot_cox_proportional_hazards(results_uni, surv_dir, suffix="univariate")
         
         # 4. Feature selection
-        selected_features = self.feature_selection(results_uni, p_value_threshold=0.05)
+        #selected_features = self.feature_selection(results_uni, p_value_threshold=0.05)
+        selected_features = results_uni.index.tolist()
         print(f"\t\tSelected features: {selected_features}")
         
         # 5. VIF Caclulation
-        calculate_vif(analysis_data[selected_features], cat_vars)
+        if len(selected_features) > 1:
+            calculate_vif(analysis_data[selected_features], cat_vars)
         
         # 6. Multivariate analysis
         print("\n\t\tPerforming multivariate Cox proportional hazards analysis.")
@@ -364,6 +371,10 @@ class Time2Event:
         list_of_columns = variables + [duration_col, event_col]
         analysis_data = data[list_of_columns].copy()
         
+        # Initialize variable mapping and reference categories
+        self.variable_mapping = {}
+        self.ref_cats = {}
+        
         # Identify column types
         categorical_columns = []
         continuous_columns = []
@@ -375,11 +386,32 @@ class Time2Event:
             else:
                 continuous_columns.append(col)
         
+        # Handle categorical variables
         for var in categorical_columns:
             ref_cat = analysis_data[var].mode()[0]
             self.ref_cats[var] = ref_cat
+            
+            # Store original variable name and reference category
+            self.variable_mapping[var] = {
+                'original_name': var,
+                'reference_category': ref_cat,
+                'reference': f"{var}_{ref_cat}",
+                'dummies': []  # Will be populated after dummy creation
+            }
+            
+            # Create dummy variables
             analysis_data[var] = analysis_data[var].astype('category')
-            dummies = pd.get_dummies(analysis_data[var], prefix=var, drop_first=True)
+            dummies = pd.get_dummies(analysis_data[var], prefix=var)
+            
+            # Store dummy variable names (excluding reference)
+            unique_cats = sorted(analysis_data[var].unique())
+            unique_cats.remove(ref_cat)
+            self.variable_mapping[var]['dummies'] = [f"{var}_{cat}" for cat in unique_cats]
+            
+            # Drop reference category column and original variable
+            if f"{var}_{ref_cat}" in dummies.columns:
+                dummies = dummies.drop(f"{var}_{ref_cat}", axis=1)
+            
             analysis_data = pd.concat([analysis_data, dummies], axis=1)
             analysis_data.drop(var, axis=1, inplace=True)
 
@@ -486,62 +518,117 @@ class Time2Event:
         """Forest plot of the Cox proportional hazards model."""
         if 'Analysis' not in results.columns:
             results['Analysis'] = suffix.capitalize()
-        # New sorting logic
-        sorted_vars = [(var.split('_')[0], var) for var in results.index.get_level_values(0).unique()]
-        sorted_vars.sort(key=lambda x: (x[0], x[1]))
-        sorted_order = [var[1] for var in sorted_vars]
-        sorted_order = sorted_order[::-1]
 
-        # Reorder the data based on the new sorting
-        results = results.loc[sorted_order]
+        # Create DataFrame for reference categories
+        ref_data = []
+        for var, mapping in self.variable_mapping.items():
+            ref_data.append({
+                'variable': mapping['reference'],
+                'original_var': mapping['original_name'],
+                'ref_category': mapping['reference_category'],
+                'hazard_ratio': 1.0,
+                'confidence_interval': (1.0, 1.0),
+                'p_value': float('nan'),
+                'Analysis': results['Analysis'].iloc[0],
+                'is_reference': True
+            })
 
-        # Extract main categories from variable names
-        main_categories = [var.split('_')[0] for var in results.index.get_level_values(0).unique()]
-        #unique_main_categories = sorted(set(main_categories))
+        # Convert results to DataFrame with additional reference info
+        results_df = results.copy()
+        results_df['variable'] = results_df.index
+        results_df['is_reference'] = False
+        results_df['original_var'] = results_df['variable'].apply(
+            lambda x: next((var for var in self.variable_mapping if x.startswith(f"{var}_")), x)
+        )
+        
+        # Combine reference and results data
+        combined_results = pd.concat([
+            pd.DataFrame(ref_data),
+            results_df
+        ]).reset_index(drop=True)
 
-        y_pos = np.arange(len(results))
+        # Define age group order
+        age_group_order = [
+            'Age Group at Diagnosis_School Age',  # Reference
+            'Age Group at Diagnosis_Infant',
+            'Age Group at Diagnosis_Preschool',
+            'Age Group at Diagnosis_Adolescent',
+            'Age Group at Diagnosis_Young Adult'
+        ]
+
+        # Sort variables alphabetically while maintaining reference categories with their groups
+        sorted_vars = []
+        # Get all unique original variables (excluding Age Group which will be handled separately)
+        unique_vars = sorted([var for var in self.variable_mapping.keys() 
+                             if not var.startswith('Age Group at Diagnosis')])
+        
+        # Add Age Group first (in specified order)
+        sorted_vars.extend(age_group_order)
+        
+        # Add other variables alphabetically with their reference categories
+        for var in unique_vars:
+            mapping = self.variable_mapping[var]
+            sorted_vars.append(mapping['reference'])
+            # Get dummy variables and sort them alphabetically
+            dummies = sorted(mapping['dummies'])
+            sorted_vars.extend(dummies)
+
+        # Add continuous variables (alphabetically)
+        continuous_vars = sorted([var for var in combined_results['variable'] 
+                                if not any(var.startswith(cat) for cat in self.variable_mapping.keys())])
+        sorted_vars.extend(continuous_vars)
+
+        # Sort the results based on the sorted_vars order
+        combined_results['sort_order'] = combined_results['variable'].map(
+            {var: i for i, var in enumerate(sorted_vars)}
+        )
+        combined_results = combined_results.sort_values('sort_order', ascending=False).reset_index(drop=True)
+
+        # Plotting code
+        y_pos = np.arange(len(combined_results))
         fig, ax = plt.subplots(figsize=(12, 10))
         plt.subplots_adjust(left=0.3, right=0.7)
-                
-        # Define colors for univariable and multivariable analyses
+
+        # Define colors
         uni_color = 'blue'
         multi_color = 'red'
-        #colormap = plt.get_cmap("tab20")
-        #colors = [colormap(i) for i in range(len(unique_main_categories))]
-        #category_colors = {cat: color for cat, color in zip(unique_main_categories, colors)}
-        
-        # Plot points for hazard ratios and error bars with colors
-        for i, (idx, row) in enumerate(results.iterrows()):
-            #var = idx[0] if isinstance(idx, tuple) else idx
-            #category = var.split('_')[0]
-            #color = category_colors[category]
+        ref_color = 'green'
 
-            color = uni_color if row['Analysis'] == 'Univariable' else multi_color
-            hr = row['hazard_ratio']
-            ci_lower, ci_upper = row['confidence_interval']
-            marker = 'o' if row['Analysis'] == 'Univariable' else 's'
-            ax.errorbar(
-                1 if pd.isna(hr) else hr, i, 
-                xerr=[[0, 0]] if pd.isna(hr) else [[hr - ci_lower], [ci_upper - hr]],
-                fmt='^' if pd.isna(hr) else marker,
-                color=color,
-                ecolor=color,
-                capsize=5,
-                capthick=2,
-                markersize=6,
-                elinewidth=2,
-                zorder=2,
-                label=row['Analysis'] if i == 0 or (i > 0 and row['Analysis'] != results.iloc[i-1]['Analysis']) else "",
-            )
+        # Plot points
+        for i, row in combined_results.iterrows():
+            if row['is_reference']:
+                # Plot reference category as green triangle
+                ax.plot(1.0, i, marker='^', color=ref_color, markersize=8, zorder=3,
+                       label='Reference' if i == 0 or not any(combined_results.iloc[:i]['is_reference']) else "")
+            else:
+                # Plot regular points
+                color = uni_color if row['Analysis'] == 'Univariable' else multi_color
+                hr = row['hazard_ratio']
+                ci_lower, ci_upper = row['confidence_interval']
+                marker = 'o' if row['Analysis'] == 'Univariable' else 's'
+                
+                ax.errorbar(
+                    hr, i,
+                    xerr=[[hr - ci_lower], [ci_upper - hr]],
+                    fmt=marker,
+                    color=color,
+                    ecolor=color,
+                    capsize=5,
+                    capthick=2,
+                    markersize=6,
+                    elinewidth=2,
+                    zorder=2,
+                    label=row['Analysis'] if i == 0 or (i > 0 and row['Analysis'] != combined_results.iloc[i-1]['Analysis']) else "",
+                )
 
-        ax.axvline(x=1, color='r', linestyle='--', zorder=0)
+        ax.axvline(x=1, color='g', linestyle='--', zorder=0)
         ax.set_xscale('log')
-        ax.set_xlabel('<-- Lower Risk of Progression | Higher Risk of Progression -->', fontdict={'fontsize': 15})
+        ax.set_xlabel('<-- Lower Risk of Progression | Higher Risk of Progression -->', fontdict={'fontsize': 18})
         ax.set_ylabel('Variables', fontdict={'fontsize': 15})
         ax.set_title('Proportional Cox-Hazards Model', fontsize=20, fontweight='bold')
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(results.index, ha='right')
-        
+        ax.set_yticklabels(combined_results['variable'], ha='right')
+
         ax.set_xlim(0.1, 10)
 
         fig.canvas.draw()
@@ -550,38 +637,69 @@ class Time2Event:
         axes_width_inches = ax_bounds.width
         annotation_x_position = ax_bounds.x1 + 0.01 * fig_width_inches
 
-        for i, (idx, row) in enumerate(results.iterrows()):
-            hr = row['hazard_ratio']
-            ci_lower, ci_upper = row['confidence_interval']
-            p_value = row['p_value']
-            
-            ax.text(
-                annotation_x_position + (0.75 * axes_width_inches),
-                i,
-                f"{hr:.2f}",
-                ha="left",
-                va="center",
-                fontsize=10,
-                transform=ax.transData,
-            )
-            ax.text(
-                annotation_x_position + (2.25 * axes_width_inches),
-                i,
-                f"({ci_lower:.2f}-{ci_upper:.2f})",
-                ha="left",
-                va="center",
-                fontsize=10,
-                transform=ax.transData,
-            )
-            ax.text(
-                annotation_x_position + (6.75 * axes_width_inches),
-                i,
-                f"{p_value:.3f}" if p_value >= 0.01 else "<0.01",
-                ha="left",
-                va="center",
-                fontsize=10,
-                transform=ax.transData,
-            )
+        for i, row in combined_results.iterrows():
+            if row['is_reference']:
+                # For reference categories
+                ax.text(
+                    annotation_x_position + (0.75 * axes_width_inches),
+                    i,
+                    "Reference",
+                    ha="left",
+                    va="center",
+                    fontsize=10,
+                    transform=ax.transData,
+                )
+                ax.text(
+                    annotation_x_position + (2.25 * axes_width_inches),
+                    i,
+                    "",  # Empty string instead of "(ref)"
+                    ha="left",
+                    va="center",
+                    fontsize=10,
+                    transform=ax.transData,
+                )
+                ax.text(
+                    annotation_x_position + (6.75 * axes_width_inches),
+                    i,
+                    "",  # Empty string instead of "-"
+                    ha="left",
+                    va="center",
+                    fontsize=10,
+                    transform=ax.transData,
+                )
+            else:
+                # For non-reference categories (keep existing code)
+                hr = row['hazard_ratio']
+                ci_lower, ci_upper = row['confidence_interval']
+                p_value = row['p_value']
+                
+                ax.text(
+                    annotation_x_position + (0.75 * axes_width_inches),
+                    i,
+                    f"{hr:.2f}",
+                    ha="left",
+                    va="center",
+                    fontsize=10,
+                    transform=ax.transData,
+                )
+                ax.text(
+                    annotation_x_position + (2.25 * axes_width_inches),
+                    i,
+                    f"({ci_lower:.2f}-{ci_upper:.2f})",
+                    ha="left",
+                    va="center",
+                    fontsize=10,
+                    transform=ax.transData,
+                )
+                ax.text(
+                    annotation_x_position + (6.75 * axes_width_inches),
+                    i,
+                    f"{p_value:.3f}" if p_value >= 0.01 else "<0.01",
+                    ha="left",
+                    va="center",
+                    fontsize=10,
+                    transform=ax.transData,
+                )
 
         ax.text(1.05, 1.0, "HR", ha="left", va="center", fontsize=10, fontweight="bold", transform=ax.transAxes)
         ax.text(1.15, 1.0, "95% CI", ha="left", va="center", fontsize=10, fontweight="bold", transform=ax.transAxes)
@@ -596,15 +714,7 @@ class Time2Event:
         print(f"\t\tSaved {suffix} Cox proportional hazards plot.")
 
     def plot_survival_curves(self, cph, analysis_data, output_dir, duration_col, event_col, plot_type="survival"):
-        """
-        Plot either survival curves or log-log curves for each covariate.
-        
-        Parameters:
-        - cph: Fitted CoxPHFitter model
-        - analysis_data: DataFrame containing the analysis data
-        - output_dir: Directory to save the plots
-        - plot_type: 'survival' for survival curves, 'log_log' for log-log plots
-        """
+        """Plot either survival curves or log-log curves for each covariate."""
         if plot_type not in ['survival', 'log_log']:
             raise ValueError("plot_type must be either 'survival' or 'log_log'")
         
@@ -613,33 +723,88 @@ class Time2Event:
         os.makedirs(log_log_dir, exist_ok=True)
         os.makedirs(survival_dir, exist_ok=True)
         
-        analysis_data = analysis_data.reset_index(drop=True)
-        categorical_vars = [col for col in analysis_data.columns if '_' in col]
-        continuous_vars = [col for col in analysis_data.columns if col not in categorical_vars + [duration_col, event_col]]
+        # Get categorical and continuous variables
+        categorical_vars = list(self.variable_mapping.keys())
+        continuous_vars = [col for col in analysis_data.columns 
+                          if col not in [duration_col, event_col] and 
+                          not any(col.startswith(f"{var}_") for var in categorical_vars)]
 
-        for var in categorical_vars + continuous_vars:
+        # Plot categorical variables
+        for var in categorical_vars:
             plt.figure(figsize=(10, 6))
             
-            if var in categorical_vars:
-                unique_values = analysis_data[var].unique()
-                if len(unique_values) <= 1:
-                    print(f"Skipping {var} as it has only one unique value.")
-                    plt.close()
-                    continue
-                values = [[unique_values[0]], [unique_values[1]]]
-            else:  # continuous variable
-                if analysis_data[var].dtype not in ['int64', 'float64']:
-                    print(f"Skipping {var} as it is not a numeric type.")
-                    plt.close()
-                    continue
-                q1, q3 = analysis_data[var].quantile([0.25, 0.75])
-                values = [[q1], [q3]]
+            # Get all dummy columns for this variable
+            dummy_cols = [col for col in analysis_data.columns if col.startswith(f"{var}_")]
+            if not dummy_cols:
+                print(f"No dummy columns found for {var}, skipping...")
+                plt.close()
+                continue
 
-            try:   
+            # Create base values (all zeros = reference category)
+            base_values = [0] * len(dummy_cols)
+            
+            # Create list to store all values for plotting
+            plot_values = [base_values]  # Start with reference category
+            categories = [self.ref_cats[var]]  # Start with reference category name
+            
+            # Create comparison values for each dummy variable
+            for i in range(len(dummy_cols)):
+                comp_values = base_values.copy()
+                comp_values[i] = 1
+                plot_values.append(comp_values)
+                categories.append(dummy_cols[i].replace(f"{var}_", ""))
+            
+            try:
+                if plot_type == 'survival':
+                    cph.plot_partial_effects_on_outcome(
+                        covariates=dummy_cols,
+                        values=plot_values,
+                        plot_baseline=False
+                    )
+                    plt.title(f"Survival Curves for {var}")
+                    plt.xlabel("Time")
+                    plt.ylabel("Survival Probability")
+                    # Add legend with proper category names
+                    plt.legend(categories, title=var)
+                    plot_dir = survival_dir
+                else:  # log_log
+                    cph.plot_partial_effects_on_outcome(
+                        covariates=dummy_cols,
+                        values=plot_values,
+                        plot_baseline=False,
+                        y="cumulative_hazard"
+                    )
+                    plt.title(f"Log-Log Plot for {var}")
+                    plt.xlabel("Time [years]")
+                    plt.ylabel("Log(-Log(Survival Probability))")
+                    # Add legend with proper category names
+                    plt.legend(categories, title=var)
+                    plot_dir = log_log_dir
+                
+                # Save the plot
+                var_name = var.replace(" / ", "_") if "/" in var else var
+                plot_filename = os.path.join(plot_dir, f"{var_name}.png")
+                plt.savefig(plot_filename, dpi=300)
+                
+            except Exception as e:
+                print(f"Error plotting {var}: {e}")
+            finally:
+                plt.close()
+
+        # Plot continuous variables (unchanged)
+        for var in continuous_vars:
+            plt.figure(figsize=(10, 6))
+            if analysis_data[var].dtype not in ['int64', 'float64']:
+                print(f"Skipping {var} as it is not a numeric type.")
+                plt.close()
+                continue
+            
+            try:
+                q1, q3 = analysis_data[var].quantile([0.25, 0.75])
                 if plot_type == 'survival':
                     cph.plot_partial_effects_on_outcome(
                         covariates=var,
-                        values=values,
+                        values=[[q1], [q3]],
                         plot_baseline=False
                     )
                     plt.title(f"Survival Curves for {var}")
@@ -649,7 +814,7 @@ class Time2Event:
                 else:  # log_log
                     cph.plot_partial_effects_on_outcome(
                         covariates=var,
-                        values=values,
+                        values=[[q1], [q3]],
                         plot_baseline=False,
                         y="cumulative_hazard"
                     )
@@ -657,17 +822,18 @@ class Time2Event:
                     plt.xlabel("Time [years]")
                     plt.ylabel("Log(-Log(Survival Probability))")
                     plot_dir = log_log_dir
-            except ExceptionGroup as e:
-                print(f"Error: {e}")
-            finally:
+                
                 # Save the plot
                 var_name = var.replace(" / ", "_") if "/" in var else var
                 plot_filename = os.path.join(plot_dir, f"{var_name}.png")
                 plt.savefig(plot_filename, dpi=300)
+                
+            except Exception as e:
+                print(f"Error plotting {var}: {e}")
+            finally:
                 plt.close()
 
         print(f"\t\tSaved {plot_type} plots for covariates.")
-        # Ensure all figures are closed at the end of the analysis
         plt.close('all')
 
         

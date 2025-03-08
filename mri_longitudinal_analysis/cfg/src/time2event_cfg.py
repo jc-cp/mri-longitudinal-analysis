@@ -5,8 +5,8 @@ from pathlib import Path
 from cfg.src.lr_and_correlations_cfg import LR_VARS
 
 COHORT = "JOINT"    # DF_BCH or CBTN or JOINT
-COHORT_DATAFRAME = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output/02_trajectories/JOINT_trajectories_cohort_data_features.csv")
-OUTPUT_DIR = Path("/home/jc053/GIT/mri_longitudinal_analysis/data/output/04_time_to_event")
+COHORT_DATAFRAME = Path("/home/juanqui55/git/mri-longitudinal-analysis/data/output/02_trajectories/JOINT_trajectories_cohort_data_features.csv")
+OUTPUT_DIR = Path("/home/juanqui55/git/mri-longitudinal-analysis/data/output/04_time_to_event")
 
 
 EVENT_COL = "Event_Occurred"
