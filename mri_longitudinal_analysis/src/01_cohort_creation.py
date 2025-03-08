@@ -786,25 +786,27 @@ class CohortStatistics:
             filtered_data = self.cohort_data[
                 self.cohort_data["Volume Change Rate"] != 0
             ]
-            median_volume_change_rate = filtered_data["Volume Change Rate"].median()
-            max_volume_change_rate = filtered_data["Volume Change Rate"].max()
-            min_volume_change_rate = filtered_data["Volume Change Rate"].min()
+            # Convert from per day to per month (multiply by average days in month)
+            days_per_month = 30.44  # average days in a month
+            median_volume_change_rate = filtered_data["Volume Change Rate"].median() * days_per_month
+            max_volume_change_rate = filtered_data["Volume Change Rate"].max() * days_per_month
+            min_volume_change_rate = filtered_data["Volume Change Rate"].min() * days_per_month
             write_stat(
-                f"\t\tMedian Volume Change Rate: {median_volume_change_rate/mm3_to_cm3} cm3/day"
+                f"\t\tMedian Volume Change Rate: {median_volume_change_rate/mm3_to_cm3:.3f} cm3/month"
             )
             write_stat(
-                f"\t\tMaximum Volume Change Rate: {max_volume_change_rate/mm3_to_cm3} cm3/day"
+                f"\t\tMaximum Volume Change Rate: {max_volume_change_rate/mm3_to_cm3:.3f} cm3/month"
             )
             write_stat(
-                f"\t\tMinimum Volume Change Rate: {min_volume_change_rate/mm3_to_cm3} cm3/day"
+                f"\t\tMinimum Volume Change Rate: {min_volume_change_rate/mm3_to_cm3:.3f} cm3/month"
             )
             filtered_data = self.cohort_data[self.cohort_data["Volume Change Rate Pct"] != 0]
-            median_volume_change_rate_pct = filtered_data["Volume Change Rate Pct"].median()
-            max_volume_change_rate_pct = filtered_data["Volume Change Rate Pct"].max()
-            min_volume_change_rate_pct = filtered_data["Volume Change Rate Pct"].min()
-            write_stat("\t\tMedian Volume Change Rate Pct: {:.2f} %/day".format(median_volume_change_rate_pct)) 
-            write_stat("\t\tMaximum Volume Change Rate Pct: {:.2f} %/day".format(max_volume_change_rate_pct))
-            write_stat("\t\tMinimum Volume Change Rate Pct: {:.2f} %/day".format(min_volume_change_rate_pct))
+            median_volume_change_rate_pct = filtered_data["Volume Change Rate Pct"].median() * days_per_month
+            max_volume_change_rate_pct = filtered_data["Volume Change Rate Pct"].max() * days_per_month
+            min_volume_change_rate_pct = filtered_data["Volume Change Rate Pct"].min() * days_per_month
+            write_stat("\t\tMedian Volume Change Rate Pct: {:.2f} %/month".format(median_volume_change_rate_pct))
+            write_stat("\t\tMaximum Volume Change Rate Pct: {:.2f} %/month".format(max_volume_change_rate_pct))
+            write_stat("\t\tMinimum Volume Change Rate Pct: {:.2f} %/month".format(min_volume_change_rate_pct))
 
             # Normalized Volume
             median_normalized_volume = self.cohort_data["Normalized Volume"].median()
@@ -897,12 +899,14 @@ class CohortStatistics:
         
         # Create a figure with subplots in a single column
         _, axs = plt.subplots(3, 1, figsize=(10, 20))
+        
         # Violin plot for "Follow-Up Time" distribution per dataset
         data["Follow-Up Time (Years)"] = data["Follow-Up Time"] / 365.25
         sns.boxplot(x="Dataset", y="Follow-Up Time (Years)", data=data, ax=axs[0], palette=palette)
         axs[0].set_title("Distribution of Follow-Up Time", fontsize=20)
         axs[0].set_xlabel("Dataset", fontsize=15)
-        axs[0].set_ylabel("Follow-Up Time [days]", fontsize=15)
+        axs[0].set_ylabel("Follow-Up Time [years]", fontsize=15)
+        
         # Violin plot for number of scans per patient per dataset
         scans_per_patient = (
             self.cohort_data.groupby(["Dataset", "Patient_ID"])
@@ -926,11 +930,15 @@ class CohortStatistics:
         axs[1].set_title("Distribution of Number of Scans per Patient", fontsize=20)
         axs[1].set_xlabel("Dataset", fontsize=15)
         axs[1].set_ylabel("Number of Scans", fontsize=15)
+        axs[1].set_ylim(bottom=2.5, top=32)
+        
         # Violin plot for follow-up interval distribution per dataset
-        sns.violinplot(y="Dataset", x="Days Between Scans", data=data, ax=axs[2], palette=palette)
+        # Convert days to months (using average month length of 30.44 days)
+        data["Months Between Scans"] = data["Days Between Scans"] / 30.44
+        sns.violinplot(y="Dataset", x="Months Between Scans", data=data, ax=axs[2], palette=palette)
         axs[2].set_title("Distribution of Follow-Up Intervals", fontsize=20)
         axs[2].set_ylabel("Dataset", fontsize=15)
-        axs[2].set_xlabel("Time Between Scans [days]", fontsize=15)
+        axs[2].set_xlabel("Time Between Scans [months]", fontsize=15)
         
         plt.tight_layout()
         # Display the plot
@@ -1021,8 +1029,7 @@ if __name__ == "__main__":
         data_paths = {
             "clinical_data_paths": cohort_creation_cfg.CLINICAL_CSV_PATHS,
             "volumes_data_paths": [
-                cohort_creation_cfg.VOLUMES_DATA_PATHS["df_bch"],
-                cohort_creation_cfg.VOLUMES_DATA_PATHS["cbtn"],
+                cohort_creation_cfg.VOLUMES_DATA_PATHS["joint"]
             ],
         }
     else:
