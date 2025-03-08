@@ -54,7 +54,7 @@ PIPELINE_STEPS = [
         This work is also from our work group at the AI in Medicine Lab at Harvard Medical School.
         
         """,
-        "output_dir": "00_segmentation_plots",
+        "output_dir": "00_segmentation_masks",
         "illustration": os.path.join(images_dir, "step/segmentation.png"),
         "illustration_width": 500,
     },
@@ -223,10 +223,16 @@ class Pipeline:
         # Other steps require previous step to be completed
         return self.steps_status[step_index - 1] == "completed"
     
-    def run_step(self, step_index):
+    def run_step(self, step_index, folder_path=""):
         """Run a specific pipeline step."""
         if not self.can_run_step(step_index):
             st.error(f"Cannot run step {step_index}. Previous steps must be completed first.")
+            return
+        
+        # Check if folder path is required but not provided
+        if step_index in [0, 1, 2] and not folder_path:
+            with queue_lock:
+                output_queue.put(f"\n⚠️ Warning: No input folder selected for step {step_index}. Please select a folder.\n")
             return
         
         self.current_step = step_index
@@ -235,12 +241,12 @@ class Pipeline:
         # Start the script execution in a separate thread
         thread = threading.Thread(
             target=self._execute_script,
-            args=(step_index,)
+            args=(step_index, folder_path)
         )
         thread.daemon = True  # Make thread a daemon so it exits when main thread exits
         thread.start()
     
-    def _execute_script(self, step_index):
+    def _execute_script(self, step_index, folder_path=""):
         """Execute the script for a specific step and update status."""
         try:
             step = PIPELINE_STEPS[step_index]
@@ -249,10 +255,18 @@ class Pipeline:
             # Use the global queue instead of session state
             with queue_lock:
                 output_queue.put(f"\n🚀 Starting Step {step_index}: {step['name']}...\n")
+                if folder_path:
+                    output_queue.put(f"Input folder: {folder_path}\n")
             
             # Execute the script and capture output
+            cmd = ["python", script_path]
+            
+            # Add folder path as argument if provided
+            if folder_path:
+                cmd.extend(["--input_dir", folder_path])
+            
             process = subprocess.Popen(
-                ["python", script_path],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -289,11 +303,24 @@ class Pipeline:
         completed_steps = self.steps_status.count("completed")
         self.progress_percentage = (completed_steps / len(PIPELINE_STEPS)) * 100
 
-    def omit_step(self, step_index):
+    def omit_step(self, step_index, folder_path=""):
         """Skip a specific pipeline step by simulating successful execution."""
         if not self.can_run_step(step_index):
-            print(f"Cannot omit step {step_index}. Previous steps must be completed first.")
+            with queue_lock:
+                output_queue.put(f"\n⚠️ Cannot omit step {step_index}. Previous steps must be completed first.\n")
             return
+        
+        # If no folder path is provided, use a default path based on the step
+        if not folder_path:
+            if step_index == 0:  # Image Preprocessing
+                folder_path = "/home/juanqui55/git/mri-longitudinal-analysis/data/input/raw_scans"
+            elif step_index == 1:  # Tumor Segmentation
+                folder_path = "/home/juanqui55/git/mri-longitudinal-analysis/data/output/00_preprocessed_images"
+            elif step_index == 2:  # Volume Estimation
+                folder_path = "/home/juanqui55/git/mri-longitudinal-analysis/data/output/00_segmentation_masks"
+        
+        # Update the folder path in session state
+        st.session_state[f"folder_path_{step_index}"] = folder_path
         
         self.current_step = step_index
         self.steps_status[step_index] = "running"
@@ -301,12 +328,12 @@ class Pipeline:
         # Start the mock execution in a separate thread
         thread = threading.Thread(
             target=self._mock_execute_script,
-            args=(step_index,)
+            args=(step_index, folder_path)
         )
         thread.daemon = True
         thread.start()
 
-    def _mock_execute_script(self, step_index):
+    def _mock_execute_script(self, step_index, folder_path=""):
         """Simulate execution of a script with mock output."""
         try:
             step = PIPELINE_STEPS[step_index]
@@ -314,15 +341,20 @@ class Pipeline:
             # Use the global queue instead of session state
             with queue_lock:
                 output_queue.put(f"\n🔄 Omitting Step {step_index}: {step['name']}...\n")
+                if folder_path:
+                    output_queue.put(f"Input folder: {folder_path}\n")
             
             # Generate mock output based on the step
-            mock_output = self._generate_mock_output(step_index)
+            mock_output = self._generate_mock_output(step_index, folder_path)
             
             # Stream mock output to queue with small delays to simulate processing
             for line in mock_output.split('\n'):
                 with queue_lock:
                     output_queue.put(line + '\n')
-                time.sleep(0.1)  # Small delay between lines
+                time.sleep(0.2)  # Small delay between lines for more realistic output
+            
+            # Add a small delay to simulate processing time
+            time.sleep(1)
             
             # Mark step as completed
             self.steps_status[step_index] = "completed"
@@ -330,12 +362,16 @@ class Pipeline:
             # Update progress percentage
             self._update_progress()
             
+            # Final success message
+            with queue_lock:
+                output_queue.put(f"\n✅ Step {step_index}: {step['name']} omitted successfully!\n")
+            
         except Exception as e:
             with queue_lock:
-                output_queue.put(f"Error in mock execution: {str(e)}\n")
+                output_queue.put(f"\n❌ Error in mock execution: {str(e)}\n")
             self.steps_status[step_index] = "pending"
 
-    def _generate_mock_output(self, step_index):
+    def _generate_mock_output(self, step_index, folder_path=""):
         """Generate mock output for a specific step."""
         if step_index == 0:  # Image Preprocessing
             return """Input directory: /home/juanqui55/git/mri-longitudinal-analysis/data/input/raw_images
@@ -346,7 +382,7 @@ Bias field correction complete!
 Resampling...
 Resampling progress: 100%|██████████| 970/970 [01:23<00:00, 5.5s/it]
 Resampling complete!
-Registering test data...
+Registering to template...
 Registration progress: 100%|██████████| 970/970 [01:23<00:00, 5.5s/it]
 Registration complete!
 Brain Extraction with HD-BET...
@@ -389,7 +425,7 @@ Generating volume comparison:
 \tSaved comparison.
 Analyzing volume changes:
 \t95% CI for volume change: (-1250.45, 1876.32)
-\t95% CI for volume change rate per day: -0.87, 1.23
+\t95% CI for volume change rate: -0.87, 1.23
 \tAnalyzed volume changes.
 Generating time-series csv's.
 \tSaved all csv's."""

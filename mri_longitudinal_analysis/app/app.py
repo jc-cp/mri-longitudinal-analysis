@@ -38,7 +38,26 @@ st.session_state.terminal.process_queue()
 st.title("MRI Longitudinal Analysis Pipeline 🧠")
 
 # Main layout with two columns at the top level - aligned at the same height
-cols = st.columns([2, 1])
+cols = st.columns([2, 1], gap="large")
+
+# Terminal output column (moved to the beginning to ensure it's rendered first)
+with cols[1]:
+    # Terminal output display
+    st.header("Terminal Output")
+    terminal_container = st.container(height=500, border=True)
+    
+    with terminal_container:
+        # Update terminal output
+        terminal_output = st.session_state.terminal.get_output()
+        if terminal_output:
+            st.code(terminal_output, language="bash")
+        else:
+            st.write("No output yet. Execute a step to see terminal output.")
+    
+    # Add clear button for terminal
+    if st.button("Clear Terminal", use_container_width=True):
+        st.session_state.terminal.clear()
+        st.rerun()
 
 # Main content column
 with cols[0]:
@@ -77,6 +96,17 @@ with cols[0]:
         # Display step description
         st.markdown(step_info["description"])
         
+        # Display folder selection for specific steps
+        if current_step in [0, 1, 2]:  # Image Preprocessing, Tumor Segmentation, Volume Estimation
+            folder_path = utils.select_input_folder(current_step)
+            
+            # Store the selected folder path in session state
+            if f"folder_path_{current_step}" not in st.session_state:
+                st.session_state[f"folder_path_{current_step}"] = ""
+            
+            if folder_path:
+                st.session_state[f"folder_path_{current_step}"] = folder_path
+        
         # Display step illustration image if available
         if "illustration" in step_info and os.path.exists(step_info["illustration"]):
             illustration_width = step_info.get("illustration_width", 500)
@@ -93,36 +123,20 @@ with cols[0]:
             cols = st.columns(2)
             with cols[0]:
                 if st.button("▶️ Execute Step", key=f"execute_{current_step}", use_container_width=True):
-                    st.session_state.pipeline.run_step(current_step)
+                    # Pass the folder path to the run_step method
+                    folder_path = st.session_state.get(f"folder_path_{current_step}", "")
+                    st.session_state.pipeline.run_step(current_step, folder_path)
             
             # Add "Omit Step" button for preprocessing and segmentation steps
             with cols[1]:
-                if current_step in [0, 1]:  # Image Preprocessing and Tumor Segmentation steps
+                if current_step in [0, 1, 2]:  # Image Preprocessing, Tumor Segmentation, and Volume Estimation steps
                     if st.button("⏭️ Omit Step", key=f"omit_{current_step}", use_container_width=True):
-                        st.session_state.pipeline.omit_step(current_step)
+                        folder_path = st.session_state.get(f"folder_path_{current_step}", "")
+                        st.session_state.pipeline.omit_step(current_step, folder_path)
         elif st.session_state.pipeline.get_step_status(current_step) == "running":
             st.info("⏳ Step is currently running...")
         elif st.session_state.pipeline.get_step_status(current_step) == "completed":
             st.success("✅ Step completed successfully!")
-
-# Terminal output column
-with cols[1]:
-    # Terminal output display
-    st.header("Terminal Output")
-    terminal_container = st.container(height=500, border=True)
-    
-    with terminal_container:
-        # Update terminal output
-        terminal_output = st.session_state.terminal.get_output()
-        if terminal_output:
-            st.code(terminal_output, language="bash")
-        else:
-            st.write("No output yet. Execute a step to see terminal output.")
-    
-    # Add clear button for terminal
-    if st.button("Clear Terminal", use_container_width=True):
-        st.session_state.terminal.clear()
-        st.rerun()
 
 # Sidebar for pipeline navigation and control
 with st.sidebar:

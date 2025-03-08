@@ -8,6 +8,9 @@ import os
 import glob
 import streamlit as st
 from pipeline import PIPELINE_STEPS
+import tkinter as tk
+from tkinter import filedialog
+import tempfile
 
 def display_step_output(step_index):
     """Display the output visualizations for a specific pipeline step."""
@@ -139,29 +142,46 @@ def categorize_images(image_files):
     return {k: v for k, v in categories.items() if v}
 
 def select_input_folder(step_index):
-    """Display a folder selection widget for input data."""
-    if step_index == 0:  # Image Preprocessing
-        st.subheader("Select Input Folder")
-        st.info("Please select the folder containing your MRI images.")
-        folder_path = st.text_input("Input folder path", 
-                                    placeholder="/path/to/your/mri/images",
-                                    key=f"folder_input_{step_index}")
-        return folder_path
+    """Allow user to select an input folder for specific pipeline steps."""
+    st.subheader("Input Selection")
     
-    elif step_index == 1:  # Tumor Segmentation
-        st.subheader("Select Preprocessed Images Folder")
-        st.info("Please select the folder containing your preprocessed MRI images.")
-        folder_path = st.text_input("Preprocessed images folder path", 
-                                    placeholder="/path/to/your/preprocessed/images",
-                                    key=f"folder_input_{step_index}")
-        return folder_path
+    # Create a more modern UI for folder selection
+    folder_path = st.session_state.get(f"folder_path_{step_index}", "")
     
-    elif step_index == 2:  # Volume Estimation
-        st.subheader("Select Segmentation Files Folder")
-        st.info("Please select the folder containing your segmentation files.")
-        folder_path = st.text_input("Segmentation files folder path", 
-                                    placeholder="/path/to/your/segmentation/files",
-                                    key=f"folder_input_{step_index}")
-        return folder_path
+    # Container with border for better visual appearance
+    with st.container(border=True):
+        col1, col2 = st.columns([4, 1])
+        
+        with col1:
+            # Display current path with placeholder
+            folder_display = st.text_input(
+                "Input Folder Path", 
+                value=folder_path,
+                placeholder="Select a folder...",
+                key=f"folder_display_{step_index}",
+                disabled=True
+            )
+        
+        with col2:
+            # Vertically center the browse button
+            st.write("")  # Add some space
+            if st.button("📂 Browse", key=f"browse_{step_index}", use_container_width=True):
+                # Use tkinter to open a folder selection dialog
+                root = tk.Tk()
+                root.withdraw()  # Hide the main window
+                root.attributes('-topmost', True)  # Bring the dialog to the front
+                
+                # Open the folder selection dialog
+                selected_folder = filedialog.askdirectory()
+                root.destroy()
+                
+                # Update the folder path if a folder was selected
+                if selected_folder:
+                    st.session_state[f"folder_path_{step_index}"] = selected_folder
+                    return selected_folder
     
-    return None
+    # Add a note about folder selection
+    if not folder_path:
+        st.info("Please select an input folder containing your MRI data files.")
+    
+    return folder_path
