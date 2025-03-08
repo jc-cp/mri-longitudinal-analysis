@@ -106,6 +106,13 @@ with cols[0]:
             
             if folder_path:
                 st.session_state[f"folder_path_{current_step}"] = folder_path
+        elif current_step == 3:  # Cohort Creation step
+            # Use the special cohort input selection
+            cohort_input = utils.select_cohort_inputs(current_step)
+            
+            # If a new input was selected, update the UI
+            if cohort_input:
+                st.rerun()
         
         # Display step illustration image if available
         if "illustration" in step_info and os.path.exists(step_info["illustration"]):

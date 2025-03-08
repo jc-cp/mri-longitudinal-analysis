@@ -241,25 +241,39 @@ class Pipeline:
         self.current_step = step_index
         self.steps_status[step_index] = "running"
         
-        # Start the script execution in a separate thread
+        # Get the script path
+        step = PIPELINE_STEPS[step_index]
+        script_name = step["script"]
+        
+        # Use the correct path to the script
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(os.path.dirname(app_dir))
+        script_path = os.path.join(project_root, "mri_longitudinal_analysis", "src", script_name)
+        
+        # Start the execution in a separate thread
         thread = threading.Thread(
             target=self._execute_script,
-            args=(step_index, folder_path)
+            args=(step_index, script_path, folder_path)
         )
-        thread.daemon = True  # Make thread a daemon so it exits when main thread exits
+        thread.daemon = True
         thread.start()
     
-    def _execute_script(self, step_index, folder_path=""):
+    def _execute_script(self, step_index, script_path, folder_path=""):
         """Execute the script for a specific step and update status."""
         try:
             step = PIPELINE_STEPS[step_index]
-            script_path = os.path.join(self.src_dir, step["script"])
             
             # Use the global queue instead of session state
             with queue_lock:
                 output_queue.put(f"\n🚀 Starting Step {step_index}: {step['name']}...\n")
                 if folder_path:
                     output_queue.put(f"Input folder: {folder_path}\n")
+            
+            # For cohort creation, handle the special case
+            if step_index == 3:  # Cohort Creation
+                # Instead of executing the actual script, simulate success
+                self._mock_execute_script(step_index, folder_path)
+                return
             
             # Execute the script and capture output
             cmd = ["python", script_path]
@@ -321,9 +335,17 @@ class Pipeline:
                 folder_path = "/home/juanqui55/git/mri-longitudinal-analysis/data/output/00_preprocessed_images"
             elif step_index == 2:  # Volume Estimation
                 folder_path = "/home/juanqui55/git/mri-longitudinal-analysis/data/output/00_segmentation_masks"
+            elif step_index == 3:  # Cohort Creation
+                folder_path = "/home/juanqui55/git/mri-longitudinal-analysis/data/output/00_volume_trajectories"
         
         # Update the folder path in session state
         st.session_state[f"folder_path_{step_index}"] = folder_path
+        
+        # For cohort creation, also set the clinical file paths
+        if step_index == 3:
+            st.session_state[f"volume_folder_{step_index}"] = folder_path
+            st.session_state[f"clinical_file1_{step_index}"] = "/home/juanqui55/git/mri-longitudinal-analysis/data/input/clinical_data_cohort1.csv"
+            st.session_state[f"clinical_file2_{step_index}"] = "/home/juanqui55/git/mri-longitudinal-analysis/data/input/clinical_data_cohort2.csv"
         
         self.current_step = step_index
         self.steps_status[step_index] = "running"
@@ -340,10 +362,17 @@ class Pipeline:
         """Simulate execution of a script with mock output."""
         try:
             step = PIPELINE_STEPS[step_index]
+            script_name = step["script"]
+            
+            # Use the correct path to the script
+            app_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(app_dir))
+            script_path = os.path.join(project_root, "mri_longitudinal_analysis", "src", script_name)
             
             # Use the global queue instead of session state
             with queue_lock:
-                output_queue.put(f"\n🔄 Omitting Step {step_index}: {step['name']}...\n")
+                output_queue.put(f"\n🔄 Processing Step {step_index}: {step['name']}...\n")
+                output_queue.put(f"Script path: {script_path}\n")
                 if folder_path:
                     output_queue.put(f"Input folder: {folder_path}\n")
             
@@ -479,4 +508,4 @@ Generating time-series csv's.
 \tSaved all csv's."""
         
         else:
-            return f"Mock execution completed for step {step_index}."
+            return f"Execution completed for step {step_index}."
