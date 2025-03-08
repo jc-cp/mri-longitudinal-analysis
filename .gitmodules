@@ -1,0 +1,3 @@
+[submodule "lib/HDBET_Code"]
+	path = lib/HDBET_Code
+	url = https://github.com/MIC-DKFZ/HD-BET.git

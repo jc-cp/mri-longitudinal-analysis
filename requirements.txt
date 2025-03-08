@@ -24,7 +24,7 @@ SimpleITK==2.3.1
 scikit-image==0.24.0
 statsmodels==0.14.0
 tifffile==2023.4.12
-torch==2.0.1
+torch>=2.1.2
 tqdm==4.65.0
 tslearn==0.6.2
 umap_learn==0.5.4

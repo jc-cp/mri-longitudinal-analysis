@@ -7,6 +7,11 @@ setup(
     version="0.3",
     packages=find_packages(),
     install_requires=[
-        # your dependencies here
+        'torch>=2.1.2',
+        'SimpleITK>=2.3.1',
+        # Add other dependencies from requirements.txt here
     ],
+    dependency_links=[
+        'git+https://github.com/MIC-DKFZ/HD-BET.git#egg=HD_BET'
+    ]
 )

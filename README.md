@@ -18,6 +18,27 @@ that might need medical intervention.
 The project is made up of two main steps, a data preparation one and a data analysis one. **Data preparation** consists of cohort selection, patients classification (package [here](https://github.com/jc-cp/mri-sequence-classification)), MRI imaging pre-processing (package [here](https://github.com/jc-cp/mri_preprocessing)), a segmentation algorithm based on a nnU-Net architecture (package [here](https://github.com/BoydAidan/nnUNet_pLGG)) and the first block of the analysis, a _volumetric analysis_. In this analysis 3D segmentation extracted by the previous countouring algorithms are plotted over time yield insights into the trajectory of the individual patients and the overall cohort. In the **data analysis** step we perform three distinct analysis, a _tumor classification analysis_, where clinical risk factors for progression defined by a curve increase are obtained, a _survival anaylsis_ based on a Kaplan Meier and a Cox-Hazards model and a _prediction analysis_, where we conduct a volumetric prediction of the tumors based on the historical data provided by the curves as well  as progression prediction based on random forests and mixed-effects models. 
 
 
+## Installation
+1. Clone the repository with submodules:
+```bash
+git clone --recursive https://github.com/your-username/mri-longitudinal-analysis.git
+cd mri-longitudinal-analysis
+
+```
+2. If you already cloned without `--recursive`, initialize submodules:
+```bash
+git submodule init
+git submodule update
+```
+3. Create and activate a virtual environment and install the dependencies:
+```bash
+python -m venv mri-longitudinal-analysis
+source mri-longitudinal-analysis/bin/activate
+pip install -r requirements.txt
+```
+
+
+
 ## Folder: _lib/_  
 This folder contains all external libraries that need to be installed separately in order to make use of all functuionalitites in the repository. They are listed below.
 
