@@ -11,7 +11,7 @@ import SimpleITK as sitk
 from cfg.src import preprocess_cfg
 from tqdm import tqdm
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))) 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from lib.HDBET_Code.HD_BET.hd_bet import hd_bet
 
 

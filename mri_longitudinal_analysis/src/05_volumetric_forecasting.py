@@ -9,7 +9,7 @@ import arch
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from cfg.src import arima_cfg
+from mri_longitudinal_analysis.cfg.src import volumetric_forecasting_cfg
 from pandas.plotting import autocorrelation_plot
 from pmdarima import auto_arima
 from scipy.interpolate import Akima1DInterpolator  # , PchipInterpolator, CubicSpline
@@ -75,7 +75,7 @@ class TimeSeriesDataHandler:
         self,
         dataframe_list: list[pd.DataFrame],
         file_names: list[str],
-        freq=arima_cfg.INTERPOLATION_FREQ,
+        freq=volumetric_forecasting_cfg.INTERPOLATION_FREQ,
     ) -> list[pd.DataFrame]:
         """
         Process and interpolate the series, keeping the original 'Age' structure intact
@@ -156,7 +156,7 @@ class TimeSeriesDataHandler:
             try:
                 volume_ts = ts_data[[target_column, 'Age']]
                 print(f"Preliminary check for patient: {file_names[idx]}")
-                if arima_cfg.PLOTTING:
+                if volumetric_forecasting_cfg.PLOTTING:
                     print(f"\tCreating Autocorrelation plot for: {file_names[idx]}")
                     arima_pred.generate_plot(volume_ts, "autocorrelation", file_names[idx])
                     print(f"\tCreating Partial Autocorrelation plot for: {file_names[idx]}")
@@ -184,7 +184,7 @@ class TimeSeriesDataHandler:
 
     def ensure_patient_folder_exists(self, patient_id):
         """Ensure that a folder for the patient's results exists. If not, create it."""
-        patient_folder_path = os.path.join(arima_cfg.OUTPUT_DIR, patient_id)
+        patient_folder_path = os.path.join(volumetric_forecasting_cfg.OUTPUT_DIR, patient_id)
         if not os.path.exists(patient_folder_path):
             os.makedirs(patient_folder_path)
         return patient_folder_path
@@ -286,7 +286,7 @@ class ArimaPrediction:
         self.patient_ids = {}
         self.cohort_summary = {}
         self.cohort_metrics = {"aic": [], "bic": [], "hqic": []}
-        os.makedirs(arima_cfg.OUTPUT_DIR, exist_ok=True)
+        os.makedirs(volumetric_forecasting_cfg.OUTPUT_DIR, exist_ok=True)
 
         self.plot_types = {
             "autocorrelation": {
@@ -1005,7 +1005,7 @@ class ArimaPrediction:
         """Saves the diagnostics plot."""
         model_fit.plot_diagnostics(figsize=(12, 8))
         plt.savefig(
-            os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_diagnostics_plot.png"))
+            os.path.join(volumetric_forecasting_cfg.OUTPUT_DIR, f"{patient_id}_diagnostics_plot.png"))
         plt.close()
 
     def save_forecasts_to_csv(self):
@@ -1045,11 +1045,11 @@ class ArimaPrediction:
 
         if forecast_df_list:
             all_forecasts_df = pd.concat(forecast_df_list, ignore_index=True)
-            filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.csv")
+            filename = os.path.join(volumetric_forecasting_cfg.OUTPUT_DIR, f"{volumetric_forecasting_cfg.COHORT}_forecasts.csv")
             all_forecasts_df.to_csv(filename, index=False)
             
             # Also save as pickle for easier loading later
-            pickle_filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.pkl")
+            pickle_filename = os.path.join(volumetric_forecasting_cfg.OUTPUT_DIR, f"{volumetric_forecasting_cfg.COHORT}_forecasts.pkl")
             with open(pickle_filename, 'wb') as f:
                 pickle.dump(all_forecasts_df, f)
             
@@ -1102,16 +1102,16 @@ class ArimaPrediction:
             # Save the summary DataFrame
             if not summary_df.empty:
                 # Save as CSV
-                csv_filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.csv")
+                csv_filename = os.path.join(volumetric_forecasting_cfg.OUTPUT_DIR, f"{volumetric_forecasting_cfg.COHORT}_cohort_summary.csv")
                 summary_df.to_csv(csv_filename, index=False)
                 
                 # Save as pickle
-                pickle_filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.pkl")
+                pickle_filename = os.path.join(volumetric_forecasting_cfg.OUTPUT_DIR, f"{volumetric_forecasting_cfg.COHORT}_cohort_summary.pkl")
                 with open(pickle_filename, 'wb') as f:
                     pickle.dump(summary_df, f)
                 
                 # Save full cohort data
-                cohort_filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_full_results.pkl")
+                cohort_filename = os.path.join(volumetric_forecasting_cfg.OUTPUT_DIR, f"{volumetric_forecasting_cfg.COHORT}_full_results.pkl")
                 with open(cohort_filename, 'wb') as f:
                     pickle.dump(self.cohort_summary, f)
                 
@@ -1142,7 +1142,7 @@ class ArimaPrediction:
     
     def ensure_patient_folder_exists(self, patient_id):
         """Ensure that a folder for the patient's results exists. If not, create it."""
-        patient_folder_path = os.path.join(arima_cfg.OUTPUT_DIR, patient_id)
+        patient_folder_path = os.path.join(volumetric_forecasting_cfg.OUTPUT_DIR, patient_id)
         if not os.path.exists(patient_folder_path):
             os.makedirs(patient_folder_path)
         return patient_folder_path
@@ -1310,7 +1310,7 @@ if __name__ == "__main__":
 
     print("Starting ARIMA:")
     ts_handler = TimeSeriesDataHandler(
-        arima_cfg.TIME_SERIES_DIR_COHORT, arima_cfg.LOADING_LIMIT
+        volumetric_forecasting_cfg.TIME_SERIES_DIR_COHORT, volumetric_forecasting_cfg.LOADING_LIMIT
     )
     ts_data_list, filenames = ts_handler.load_data()
     print("\tData loaded!")
