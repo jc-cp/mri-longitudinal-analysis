@@ -148,15 +148,21 @@ class TrajectoryClassification:
 
     def get_progression_data(self, progression_threshold, regression_threshold, volume_change_threshold, time_period_mapping):
         self.data.sort_values(by=["Patient_ID", "Age"], inplace=True)
-        progression_data = self.data.groupby("Patient_ID").apply(lambda x:
-            calculate_progression(x, progression_threshold, regression_threshold, volume_change_threshold, time_period_mapping)
+        # Create a copy of the data without the Patient_ID column for the groupby operation
+        temp_data = self.data.drop(columns=['Patient_ID'])
+        progression_data = self.data.groupby("Patient_ID").apply(
+            lambda x: calculate_progression(temp_data.loc[x.index], 
+                                         progression_threshold, 
+                                         regression_threshold, 
+                                         volume_change_threshold, 
+                                         time_period_mapping)
         )
         progression_data = progression_data.reset_index(drop=False)
         # consider on the one side the merging back to the first data frame and continue with the analysis dataframe at the same time
         self.data = pd.merge(
             self.data, progression_data, on="Patient_ID", how="left"
         )
-        self.data["Time Since Diagnosis"] = self.data["Time Since Diagnosis"].astype("category") # catefory version of Time Since First Scan
+        self.data["Time Since Diagnosis"] = self.data["Time Since Diagnosis"].astype("category")
         
     def classification_analysis(self, data, output_dir, column_name="Normalized Volume"):
         """
@@ -219,6 +225,7 @@ class TrajectoryClassification:
         print(unique_pat["Patient Classification Composite"].value_counts())
         print("\tSaved classification analysis plot.")
         self.plot_classification_bars(data, dir_name)
+        self.plot_detailed_progression_treatment(data, dir_name)
         print("\tSaved classification bars plot.")
 
     ############################## Plotting Functions ##############################
@@ -236,7 +243,7 @@ class TrajectoryClassification:
         - time_limit (int): Cutoff time in days for plotting data.
         - freq_days (int): Frequency in days for calculating median trajectories.
         """
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(10,8))
         
         if column in ["Normalized Volume","Volume Change", "Volume Change Rate", "Volume Change Pct"]:
             mean = np.mean(plot_data[column])
@@ -329,8 +336,8 @@ class TrajectoryClassification:
             # Combine custom category handles with the median trajectory handles
             combined_handles = legend_handles + handles[-(len(categories) + 1) :]
 
-            plt.title(f"{column} Trajectories by {category_column} (N={num_patients})", fontdict={"size": 18})
-            plt.legend(handles=combined_handles)
+            plt.title(f"{column} Trajectories by {category_column} (N={num_patients})", fontdict={"size": 24})
+            plt.legend(handles=combined_handles, fontsize=14)
 
         else:
             # Plot each patient's data
@@ -352,11 +359,13 @@ class TrajectoryClassification:
                 linestyle="--",
                 label="Median Trajectory",
             )
-            plt.title(f"Individual Tumor {column} Trajectories (N={num_patients})")
-            plt.legend()
+            plt.title(f"Individual Tumor {column} Trajectories (N={num_patients})", fontdict={"size": 24})
+            plt.legend(fontsize=14)
 
-        plt.xlabel("Days Since First Scan", fontdict={"size": 15})
-        plt.ylabel(f"Tumor {column} [{unit}]", fontdict={"size": 15})
+        plt.xlabel("Days Since First Scan", fontdict={"size": 18})
+        plt.ylabel(f"Tumor {column} [{unit}]", fontdict={"size": 18})
+        plt.xticks(fontsize=14)
+        plt.yticks(fontsize=14)
         plt.savefig(name, dpi=300)
         plt.close()
         if category_column:
@@ -373,7 +382,7 @@ class TrajectoryClassification:
         - output_filename: Name of the file to save the plot.
         """
         results = {}
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(10,8))
         if column_name == "Normalized Volume":
             mean = np.mean(data[column_name])
             std = np.std(data[column_name])
@@ -462,27 +471,30 @@ class TrajectoryClassification:
         num_patients = data["Patient_ID"].nunique()
         plt.axhline(y=0.75, color='blue', linestyle="-", label="-25% Volume Change")
         plt.axhline(y=1.25, color='red', linestyle="-", label="+25% Volume Change")
-        plt.xlabel("Days Since First Scan", fontdict={"size": 15})
-        plt.ylabel(f"Tumor {column_name} [{unit}]", fontdict={"size": 15})
-        plt.title(f"Patient Classification Trajectories (N={num_patients})", fontdict={"size": 20})
-        plt.legend()
+        plt.xlabel("Days Since First Scan", fontdict={"size": 18})
+        plt.ylabel(f"Tumor {column_name} [{unit}]", fontdict={"size": 18})
+        plt.title(f"Patient Classification Trajectories (N={num_patients})", fontdict={"size": 24})
+        plt.legend(fontsize=14)
+        plt.xticks(fontsize=14)
+        plt.yticks(fontsize=14)
         output_filename = os.path.join(output_dir, f"{prefix}_classification_analysis_{progression_type}.png")
         plt.savefig(output_filename, dpi=300)
         plt.close()
 
     def plot_classification_bars(self, data, output_dir):
-        fig, ax = plt.subplots(figsize=(9, 6))
+        fig, ax = plt.subplots(figsize=(10, 8))
         palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, 3)
         
-        # Prepare data for the horizontal bar plot
         classifications = [
             ("Patient Classification Volumetric", "Volumetric"),
-            ("Patient Classification Composite", "Clinical"),
             ("Received Treatment", "Treatment"),
+            ("Patient Classification Composite", "Clinical"),
         ]
         
-        y_positions = [2, 1, 0]  # Positions for the bars
-        colors = [[palette[1], palette[2], palette[0]], [palette[1], palette[0]], [palette[0], palette[1]]]  # Colors for each bar
+        y_positions = [2, 1, 0]
+        colors = [[palette[1], palette[2], palette[0]], 
+                 [palette[0], palette[1]], 
+                 [palette[1], palette[0]]]
         
         for (col, label), y_pos, color_set in zip(classifications, y_positions, colors):
             counts = data.drop_duplicates('Patient_ID')[col].value_counts()
@@ -491,25 +503,114 @@ class TrajectoryClassification:
             
             left = 0
             for category, percentage in percentages.items():
+                count = counts[category]
                 ax.barh(y_pos, percentage, left=left, height=0.5, 
-                        color=color_set[counts.index.get_loc(category) % len(color_set)], 
-                        label=f"{category} ({percentage:.1f}%)")
-                ax.text(left + percentage/2, y_pos, f"{category}\n{percentage:.1f}%", 
-                        ha='center', va='center', color='white', fontweight='bold', fontsize=14)
+                       color=color_set[counts.index.get_loc(category) % len(color_set)], 
+                       label=f"{category} ({percentage:.1f}%, n={count})")
+                ax.text(left + percentage/2, y_pos, 
+                       f"{category}\n{percentage:.1f}%\n(n={count})", 
+                       ha='center', va='center', color='white',
+                       fontweight='bold', fontsize=trajectories_cfg.PLOT_FONTS['annotation'])
                 left += percentage
         
         ax.set_yticks(y_positions)
-        ax.set_yticklabels([label for _, label in classifications], fontsize=15)
-        ax.set_xlabel("Percentage", fontsize=15)
-        ax.set_title("Patient Classifications and Treatment Distribution", fontsize=20)
+        ax.set_yticklabels([label for _, label in classifications], 
+                          fontsize=trajectories_cfg.PLOT_FONTS['axis_label'])
+        ax.set_xlabel("Percentage", fontsize=trajectories_cfg.PLOT_FONTS['axis_label'])
+        ax.set_title("Patient Classifications and Treatment Distribution", 
+                    fontsize=trajectories_cfg.PLOT_FONTS['title'])
+        
+        plt.xticks(fontsize=trajectories_cfg.PLOT_FONTS['tick_label'])
+        plt.yticks(fontsize=trajectories_cfg.PLOT_FONTS['tick_label'])
         
         plt.tight_layout()
         
-        # Display the plot
         file_name = os.path.join(output_dir, "classification_bars.png")
-        plt.savefig(file_name, dpi=300)
-        plt.close(fig)   
+        plt.savefig(file_name, dpi=300, bbox_inches='tight')
+        plt.close(fig)
     
+    def plot_detailed_progression_treatment(self, data, output_dir):
+        """
+        Creates a horizontal bar plot showing progression and treatment patterns.
+        """
+        fig, ax = plt.subplots(figsize=(10, 8))
+        palette = sns.color_palette(helper_functions_cfg.NORD_PALETTE, 2)
+        
+        # Get unique patients and their classifications
+        patient_data = data.drop_duplicates('Patient_ID')[
+            ['Patient_ID', 'Patient Classification Volumetric', 'Received Treatment']
+        ]
+        
+        # Create the progression categories
+        progressors = patient_data['Patient Classification Volumetric'] == 'Progressor'
+        non_progressors = ~progressors
+        
+        # Calculate counts for each combination
+        total_progressors = sum(progressors)
+        total_non_progressors = sum(non_progressors)
+        
+        prog_treat = sum(progressors & (patient_data['Received Treatment'] == 'Yes'))
+        prog_no_treat = sum(progressors & (patient_data['Received Treatment'] == 'No'))
+        nonprog_treat = sum(non_progressors & (patient_data['Received Treatment'] == 'Yes'))
+        nonprog_no_treat = sum(non_progressors & (patient_data['Received Treatment'] == 'No'))
+        
+        # Calculate percentages within each group
+        def get_percentage(count, total): return (count/total)*100 if total > 0 else 0
+        
+        # Create the stacked bars
+        y_positions = [1, 0]  # Non-progressors, Progressors
+        labels = ['Non-progressors', 'Progressors']
+        
+        # Plot the bars for treatment and no treatment
+        prog_data = [
+            (nonprog_treat, nonprog_no_treat, total_non_progressors),
+            (prog_treat, prog_no_treat, total_progressors)
+        ]
+        
+        for i, (treat, no_treat, total) in enumerate(prog_data):
+            # Treatment bar
+            treat_pct = get_percentage(treat, total)
+            ax.barh(y_positions[i], treat_pct, height=0.5, color=palette[1], 
+                   label='Treatment' if i == 0 else "")
+            # Add text for treatment
+            ax.text(treat_pct/2, y_positions[i],
+                   f"Treatment\n{treat_pct:.1f}%\n(n={treat})",
+                   ha='center', va='center', color='white',
+                   fontweight='bold', fontsize=trajectories_cfg.PLOT_FONTS['annotation'])
+            
+            # No treatment bar
+            no_treat_pct = get_percentage(no_treat, total)
+            ax.barh(y_positions[i], no_treat_pct, left=treat_pct, height=0.5,
+                   color=palette[0], 
+                   label='No Treatment' if i == 0 else "")
+            # Add text for no treatment
+            ax.text(treat_pct + no_treat_pct/2, y_positions[i],
+                   f"No Treatment\n{no_treat_pct:.1f}%\n(n={no_treat})",
+                   ha='center', va='center', color='white',
+                   fontweight='bold', fontsize=trajectories_cfg.PLOT_FONTS['annotation'])
+        
+        # Customize the plot
+        ax.set_yticks(y_positions)
+        ax.set_yticklabels([f"{label}\n(n={total_non_progressors if i==0 else total_progressors})" 
+                           for i, label in enumerate(labels)], 
+                          fontsize=trajectories_cfg.PLOT_FONTS['axis_label'])
+        ax.set_xlabel("Percentage", fontsize=trajectories_cfg.PLOT_FONTS['axis_label'])
+        ax.set_title("Distribution of Treatment by Progression Status", 
+                    fontsize=trajectories_cfg.PLOT_FONTS['title'])
+        
+        plt.xticks(fontsize=trajectories_cfg.PLOT_FONTS['tick_label'])
+        plt.yticks(fontsize=trajectories_cfg.PLOT_FONTS['tick_label'])
+        
+        # Add legend
+        # plt.legend(fontsize=trajectories_cfg.PLOT_FONTS['legend'])
+        
+        plt.tight_layout()
+        
+        # Save the plot
+        file_name = os.path.join(output_dir, "progression_treatment_patterns.png")
+        plt.savefig(file_name, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
     def visualize_time_gap(self, data, output_dir):
         """
         Visualize the distribution of time gaps between volume change and progression.
@@ -540,12 +641,12 @@ class TrajectoryClassification:
         time_to_progression = time_to_progression[time_to_progression > 0]
         create_histogram(time_gap_data, 
                         "Distribution of Time Gap between Volume Change and Progression",
-                        "Time Gap (Days)",
+                        "Time Gap (Months)",
                         time_gap_plot)
         print("\t\tSaved time gap plot.")
         create_histogram(time_to_progression, 
                         "Distribution of Time to Volumetric Progression",
-                        "Time to Progression (Days)",
+                        "Time to Progression (Months)",
                         time_to_progression_plot)
         print("\t\tSaved time to progression plot.")
         
@@ -565,7 +666,7 @@ class TrajectoryClassification:
 
         create_histogram(clinical_time_to_progression, 
                         "Distribution of Time to Clinical Progression",
-                        "Time to Clinical Progression (Days)",
+                        "Time to Clinical Progression (Months)",
                         clinical_time_to_progression_plot)
 
         print("\tCompleted visualization of time gaps for volumetric and clinical progression.")
@@ -687,4 +788,13 @@ if __name__ == "__main__":
     plot_histo_distributions(traj.data, output_dir, list_time_periods, age_groups, endpoint="composite")
     save_dataframe(traj.data, output_dir, f"{cohort}_trajectories")
     traj.visualize_time_gap(traj.data, output_dir)
+
+    # Get the oldest age at progression
+    oldest_progression_age = traj.data['Age at First Progression'].max()
+    print(f"Oldest age at progression: {oldest_progression_age:.2f} days")
+
+    # If you want more detailed statistics:
+    progression_stats = traj.data.groupby('Patient_ID')['Age at First Progression'].first().describe()
+    print("\nProgression age statistics:")
+    print(progression_stats)
 # %%
