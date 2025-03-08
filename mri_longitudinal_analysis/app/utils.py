@@ -15,42 +15,22 @@ import tempfile
 def display_step_output(step_index):
     """Display the output visualizations for a specific pipeline step."""
     step = PIPELINE_STEPS[step_index]
+    step_status = st.session_state.pipeline.get_step_status(step_index)
     
     # Get the correct paths
     app_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(app_dir))
     output_dir = os.path.join(project_root, "data", "output", step["output_dir"])
     
-    # Display example outputs if available (for steps that haven't been run yet)
-    if "example_outputs" in step and st.session_state.pipeline.get_step_status(step_index) == "pending":
-        st.markdown("### Output")
-        
-        # Get the width from the step parameters
-        image_width = step.get("example_width", 400)
-        
-        example_images = [img for img in step["example_outputs"] if os.path.exists(img)]
-        
-        if example_images:
-            for i in range(0, len(example_images), 2):
-                cols = st.columns([1, 3, 3, 1])  # Use 4 columns for better centering
-                
-                # First image in the second column
-                with cols[1]:
-                    if i < len(example_images):
-                        img_path = example_images[i]
-                        st.image(img_path, caption=os.path.basename(img_path), width=image_width)
-                
-                # Second image in the third column
-                with cols[2]:
-                    if i + 1 < len(example_images):
-                        img_path = example_images[i + 1]
-                        st.image(img_path, caption=os.path.basename(img_path), width=image_width)
-        else:
-            st.info("Example outputs are defined but image files not found. Add them to the app/images directory.")
+    # Only show example outputs if the step is pending AND we're not showing actual outputs
+    # This prevents showing examples before the step is run
+    if step_status == "pending":
+        # Don't show any outputs if the step hasn't been run yet
+        return
     
     # Check if output directory exists for actual outputs
     if not os.path.exists(output_dir):
-        if st.session_state.pipeline.get_step_status(step_index) in ["completed", "running"]:
+        if step_status in ["completed", "running"]:
             st.warning(f"Output directory not found: {output_dir}")
         return
     
@@ -60,7 +40,7 @@ def display_step_output(step_index):
         image_files.extend(glob.glob(os.path.join(output_dir, f"*{ext}")))
     
     if not image_files:
-        if st.session_state.pipeline.get_step_status(step_index) in ["completed", "running"]:
+        if step_status in ["completed", "running"]:
             st.info("No visualization outputs found for this step yet.")
         return
     
@@ -87,6 +67,13 @@ def display_image_grid(image_files, width=400):
     """Display images in a responsive grid with specified width."""
     # Sort files by name for consistent display
     image_files = sorted(image_files)
+    
+    # For a single image, use a centered layout
+    if len(image_files) == 1:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:  # Center column
+            st.image(image_files[0], caption=os.path.basename(image_files[0]), width=width)
+        return
     
     # Display images in a 2-column grid
     for i in range(0, len(image_files), 2):

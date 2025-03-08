@@ -11,6 +11,7 @@ import threading
 import streamlit as st
 import queue
 from threading import Lock
+import shutil
 
 # Define a global queue for thread-safe communication
 output_queue = queue.Queue()
@@ -76,12 +77,14 @@ PIPELINE_STEPS = [
         - Longitudinal database per patient
         - Volumetric statistics per patient
         """,
-        "output_dir": "volume_plots",
-        "illustration": os.path.join(images_dir, "volume_estimation.png"),
+        "output_dir": "00_volume_trajectories",
+        "illustration": os.path.join(images_dir, "step/curve_creation.png"),
+        "illustration_width": 800,
         "example_outputs": [
             os.path.join(images_dir, "output/trajectory_example.png"),
         ],
-        "example_width": 800,
+        "example_width": 600,
+        "output_width": 600,
     },
     {
         "name": "Step 1: Joint Cohort Creation",
@@ -91,18 +94,18 @@ PIPELINE_STEPS = [
         
         This step creates a joint cohort of patients with the selected clinical data. This is very important since the features between the cohorts may be differnt and need to be harmonized. We use a matching AI algorithm to find the relevant columns automatically and create the expected output format for further analysis.
         **Outputs:**
-        - Cluster visualization plots (UMAP, t-SNE)
-        - Heatmaps of cluster characteristics
-        - Patient data EDA visualizations
+        - Dataset comparison plots
+        - Joint cohort data in a csv file
+        - Joint cohort statistics 
+        - Feature significance and p-values
         """,
-        "output_dir": "clustering_plots",
-        "illustration": os.path.join(images_dir, "cohort_creation.png"),
+        "output_dir": "01_cohort_data",
         "example_outputs": [
-            os.path.join(images_dir, "umap_example.png"),
-            os.path.join(images_dir, "heatmap_example.png")
+            os.path.join(images_dir, "output/cohort_details.png"),
+            os.path.join(images_dir, "output/stats.png")
         ],
-        "example_width": 600,
-        "output_width": 500,
+        "example_width": 700,
+        "output_width": 700,
     },
     {
         "name": "Step 2: Trajectory Classification",
@@ -353,6 +356,9 @@ class Pipeline:
                     output_queue.put(line + '\n')
                 time.sleep(0.2)  # Small delay between lines for more realistic output
             
+            # Create mock output files
+            self._create_mock_output_files(step_index)
+            
             # Add a small delay to simulate processing time
             time.sleep(1)
             
@@ -370,6 +376,48 @@ class Pipeline:
             with queue_lock:
                 output_queue.put(f"\n❌ Error in mock execution: {str(e)}\n")
             self.steps_status[step_index] = "pending"
+
+    def _create_mock_output_files(self, step_index):
+        """Create mock output files for visualization after omitting a step."""
+        step = PIPELINE_STEPS[step_index]
+        
+        # Get the correct paths
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(os.path.dirname(app_dir))
+        output_dir = os.path.join(project_root, "data", "output", step["output_dir"])
+        
+        # Create the output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Copy example images to the output directory if they exist
+        if "example_outputs" in step:
+            for example_path in step["example_outputs"]:
+                if os.path.exists(example_path):
+                    # Get the filename without the path
+                    filename = os.path.basename(example_path)
+                    # Create the destination path
+                    dest_path = os.path.join(output_dir, filename)
+                    # Copy the file
+                    shutil.copy(example_path, dest_path)
+                    
+                    with queue_lock:
+                        output_queue.put(f"Created output file: {dest_path}\n")
+        
+        # If no example outputs are defined, create some generic output files
+        elif step_index == 0:  # Image Preprocessing
+            # Create a simple text file as a placeholder
+            with open(os.path.join(output_dir, "preprocessing_complete.txt"), "w") as f:
+                f.write("Preprocessing completed successfully")
+        
+        elif step_index == 1:  # Tumor Segmentation
+            # Create a simple text file as a placeholder
+            with open(os.path.join(output_dir, "segmentation_complete.txt"), "w") as f:
+                f.write("Segmentation completed successfully")
+        
+        elif step_index == 2:  # Volume Estimation
+            # Create a simple text file as a placeholder
+            with open(os.path.join(output_dir, "volume_estimation_complete.txt"), "w") as f:
+                f.write("Volume estimation completed successfully")
 
     def _generate_mock_output(self, step_index, folder_path=""):
         """Generate mock output for a specific step."""
@@ -400,7 +448,7 @@ Saving segmentation masks...
 Post-processing segmentations...
 All segmentations completed successfully.
 Tumor segmentation complete!
-Output directory: /home/juanqui55/git/mri-longitudinal-analysis/data/output/00_segmentation_plots"""
+Output directory: /home/juanqui55/git/mri-longitudinal-analysis/data/output/00_segmentation_masks"""
         
         elif step_index == 2:  # Volume Estimation
             return """Initializing Volume Estimator:
