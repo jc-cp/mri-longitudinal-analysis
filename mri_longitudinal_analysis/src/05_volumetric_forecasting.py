@@ -17,6 +17,22 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tools.sm_exceptions import ConvergenceWarning
 from statsmodels.tsa.stattools import acf, adfuller, pacf
+import json
+import pickle
+
+class NumpyEncoder(json.JSONEncoder):
+    """Special json encoder for numpy types."""
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+            np.int16, np.int32, np.int64, np.uint8,
+            np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float_, np.float16, np.float32, 
+            np.float64)):
+            return float(obj)
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
 
 class TimeSeriesDataHandler:
     """Loads time-series data and processes it for the prediction."""
@@ -54,20 +70,6 @@ class TimeSeriesDataHandler:
         except (FileNotFoundError, IOError) as error:
             print(f"Error loading time series: {error}")
             return []
-
-    def load_data_generator(self):
-        """Generate time series data on-the-fly for memory efficiency."""
-        if os.path.isdir(self.directory):
-            for filename in os.listdir(self.directory):
-                if filename.endswith(".csv"):
-                    filepath = os.path.join(self.directory, filename)
-                    ts_data = pd.read_csv(
-                        filepath,
-                        dtype={"Age": np.int64, "Volume": np.float64},
-                        parse_dates=["Age"],
-                        infer_datetime_format=False,
-                    )
-                    yield ts_data, os.path.splitext(filename)[0]
 
     def process_and_interpolate_series(
         self,
@@ -194,39 +196,59 @@ class TimeSeriesDataHandler:
             patient_folder_path, f"{patient_id}_adf_test.txt"
         )
         volume_data = data["Volume"]
-        # Augmented Dickey-Fuller test
-        result = adfuller(volume_data)
-        adf_stat = result[0]
-        p_value = result[1]
-        used_lag = result[2]
-        n_obs = result[3]
-        critical_values = result[4]
-        icbest = result[5]
-        is_stationary = p_value < 0.05
-        with open(
-            adf_test_file_path,
-            "w",
-            encoding="utf-8",
-        ) as file:
-            file.write(f"ADF Statistic for patient {patient_id}: {adf_stat}\n")
-            file.write(f"p-value for patient {patient_id}: {p_value}\n")
-            file.write(f"Used lags for patient {patient_id}: {used_lag}\n")
-            file.write(
-                f"Number of observations for patient {patient_id}: {n_obs} (len(series)-"
-                " used_lags)\n"
-            )
-            for key, value in critical_values.items():
+        
+        # Check for constant series
+        volume_std = volume_data.std()
+        volume_mean = volume_data.mean()
+        
+        if volume_std < 1e-10 or volume_std/volume_mean < 1e-5:
+            # Handle constant series
+            with open(adf_test_file_path, "w", encoding="utf-8") as file:
+                file.write(f"Series for patient {patient_id} is constant or near-constant\n")
+                file.write(f"Mean value: {volume_mean}\n")
+                file.write(f"Standard deviation: {volume_std}\n")
+                file.write("ADF test cannot be performed on constant series\n")
+            
+            # Return False to indicate non-stationarity (though technically constant series are stationary)
+            return False
+        
+        try:
+            # Augmented Dickey-Fuller test
+            result = adfuller(volume_data)
+            adf_stat = result[0]
+            p_value = result[1]
+            used_lag = result[2]
+            n_obs = result[3]
+            critical_values = result[4]
+            icbest = result[5]
+            is_stationary = p_value < 0.05
+            
+            with open(adf_test_file_path, "w", encoding="utf-8") as file:
+                file.write(f"ADF Statistic for patient {patient_id}: {adf_stat}\n")
+                file.write(f"p-value for patient {patient_id}: {p_value}\n")
+                file.write(f"Used lags for patient {patient_id}: {used_lag}\n")
                 file.write(
-                    f"Critical Value ({key}) for patient {patient_id}: {value}\n"
+                    f"Number of observations for patient {patient_id}: {n_obs} (len(series)-"
+                    " used_lags)\n"
                 )
-            file.write(f"IC Best for patient {patient_id}: {icbest}\n")
+                for key, value in critical_values.items():
+                    file.write(
+                        f"Critical Value ({key}) for patient {patient_id}: {value}\n"
+                    )
+                file.write(f"IC Best for patient {patient_id}: {icbest}\n")
 
-            if is_stationary:
-                file.write(f"The series is stationary for patient {patient_id}.\n")
-            else:
-                file.write(f"The series is not stationary for patient {patient_id}.\n")
+                if is_stationary:
+                    file.write(f"The series is stationary for patient {patient_id}.\n")
+                else:
+                    file.write(f"The series is not stationary for patient {patient_id}.\n")
 
-        return is_stationary
+            return is_stationary
+        
+        except ValueError as e:
+            print(f"\tError in ADF test for {patient_id}: {str(e)}")
+            with open(adf_test_file_path, "w", encoding="utf-8") as file:
+                file.write(f"Error in ADF test: {str(e)}\n")
+            return False
 
     @staticmethod
     def plot_original_and_interpolated(
@@ -425,13 +447,19 @@ class ArimaPrediction:
             ax.plot(data['Age'], data['Volume'], label="Historical Data", color="blue")
             
             # Rolling predictions plot
-            if rolling_predictions:
+            if isinstance(rolling_predictions, (np.ndarray, list)) and len(rolling_predictions) > 0:
                 rolling_index = data['Age'].iloc[split_idx:split_idx + len(rolling_predictions)]
                 ax.plot(rolling_index, rolling_predictions, label="Rolling Predictions", color="green", linestyle="--")
             
             # Future forecasts plot
             last_age = data['Age'].iloc[-1]
             future_index = np.arange(last_age + 1, last_age + 1 + forecast_steps)
+            
+            # Ensure all arrays are numpy arrays and have the same length
+            forecast_mean = np.asarray(forecast_mean)
+            lower_bounds = np.asarray(lower_bounds)
+            upper_bounds = np.asarray(upper_bounds)
+            
             min_len = min(len(future_index), len(forecast_mean), len(lower_bounds), len(upper_bounds))
             future_index = future_index[:min_len]
             forecast_mean = forecast_mean[:min_len]
@@ -513,278 +541,340 @@ class ArimaPrediction:
         plt.plot(predictions, color="red")
         plt.savefig("test_arima.png")
 
-    def arima_prediction(
-        self,
-        data,
-        patient_id,
-        is_stationary=False,
-        autoarima=True,
-        p_value=0,
-        d_value=0,
-        q_value=0,
-        forecast_steps=3,
-        p_range=range(5),
-        q_range=range(5),
-        rolling_forecast_size=0.8,
-    ):
-        """Actual arima prediction method. Gets the corresponding
-        p,d,q values from analysis and performs a prediction."""
-
-        # Make series stationary and gets the differencing d_value
-        if not is_stationary:
-            stationary_data, d_value = self._make_series_stationary(data)
-            self.plot_differencing_effect(patient_id, data["Volume"], d_value)
-            print("\tMade data stationary! D-value:", d_value)
-            if d_value > 1:
-                d_value = 1
-
-        else:
-            stationary_data = data["Volume"]
-            d_value = 0
-
+    def arima_prediction(self, data, patient_id, is_stationary=False, rolling_forecast_size=0.8):
+        """
+        Fits ARIMA and ARIMA+GARCH models to the data and saves predictions.
+        """
         try:
-            # Split the data
-            original_index = stationary_data.index
+            # 1. Data Preparation and Stationarity Check
+            if data["Volume"].std() == 0:
+                print(f"\tWarning: Constant series detected for {patient_id}. Adding small noise.")
+                data["Volume"] = data["Volume"] + np.random.normal(0, data["Volume"].mean() * 0.001, len(data["Volume"]))
+
+            original_series = data["Volume"].copy()
+
+            # 2. Make series stationary if needed
+            if not is_stationary:
+                stationary_data, d_value = self._make_series_stationary(data)
+                d_value = min(d_value, 2)  # Limit differencing to 1
+                print(f"\tMade data stationary! D-value: {d_value}")
+            else:
+                stationary_data = original_series.copy()
+                d_value = 0
+
+            # 3. Split data for model validation
             split_idx = int(len(stationary_data) * rolling_forecast_size)
             training_data = stationary_data.iloc[:split_idx]
             testing_data = stationary_data.iloc[split_idx:]
 
-            # other values
-            p_value, max_p = self._determine_p_from_pacf(stationary_data)
-            q_value, max_q = self._determine_q_from_acf(stationary_data)
-
-            rolling_predictions_arima = []
-            rolling_predictions_combined = []
-            accumulated_diffs = []
-            if autoarima:
+            # 4. Model Parameter Selection and Fitting
+            try:
                 auto_model = auto_arima(
                     training_data,
-                    start_p=p_value,
-                    start_q=q_value,
-                    max_p=max_p,
-                    max_q=max_q,
+                    start_p=0, start_q=0,
+                    max_p=5, max_q=5,
                     d=d_value,
                     seasonal=False,
-                    trace=True,
-                    error_action="ignore",
+                    error_action='ignore',
                     suppress_warnings=True,
                     stepwise=True,
-                    scoring="mse",
-                    information_criterion="aic",
-                    with_intercept="auto",
+                    method='lbfgs',
                 )
                 best_order = auto_model.order
-            else:
-                print("\tSuggested p_value: ", p_value)
-                p_range = range(max(0, p_value - 2), p_value + 3)
-                print("\tp_range: ", p_range)
-                print("\tSuggested q_value:", q_value)
-                q_range = range(max(0, q_value - 2), q_value + 3)
-                print("\tq_range: ", q_range)
+                print(f"\tBest ARIMA order found for {patient_id}: {best_order}")
+            except Exception as e:
+                print(f"\tAuto ARIMA failed: {e}. Using default order.")
+                best_order = (1, d_value, 1)
 
-                # Get the best ARIMA order based on training data
-                p_value, d_value, q_value = self.find_best_arima_order(
-                    training_data, p_range, d_value, q_range
-                )
-                best_order = (p_value, d_value, q_value)
-                print(f"\tBest ARIMA order: ({p_value}, {d_value}, {q_value})")
-
-            if d_value > 0:
-                trend_option = "n"  # No trend
-            else:
-                trend_option = "c"  # Include a constant as trend
-
-            for t in range(len(testing_data)):
-                train_model = ARIMA(training_data, order=best_order, trend=trend_option)
-                train_model_fit = train_model.fit()
-                yhat_arima = train_model_fit.get_forecast(steps=1)
-                yhat_arima = yhat_arima.predicted_mean.iloc[0]
-                accumulated_diffs.append(yhat_arima)
-
-                # GARCH model on ARIMA residuals
-                residuals = train_model_fit.resid
-                garch_model = arch.arch_model(residuals, vol="Garch", p=p_value, q=q_value)
-                garch_result = garch_model.fit(disp='off')
-                garch_forecast = garch_result.forecast(horizon=1)
-                garch_variance = garch_forecast.variance.values[-1, -1]
-                yhat_combined = yhat_arima + sqrt(garch_variance)
+            # 5. Generate rolling predictions
+            rolling_predictions_arima = []
+            rolling_predictions_combined = []
+            original_test = original_series.iloc[split_idx:]
+            
+            for i in range(len(testing_data)):
+                try:
+                    # Get training window
+                    train_end = split_idx + i
+                    if train_end <= d_value:  # Skip if we don't have enough data points
+                        continue
+                    
+                    # For ARIMA, use stationary data for training
+                    train_stationary = stationary_data.iloc[:train_end]
+                    if len(train_stationary) <= d_value + 1:  # Ensure enough data points for differencing
+                        continue
+                    
+                    # Fit ARIMA model on stationary data
+                    try:
+                        model = ARIMA(train_stationary, order=best_order)
+                        model_fit = model.fit()
+                    except (ValueError, np.linalg.LinAlgError) as e:
+                        print(f"\tARIMA fitting failed at step {i}: {e}")
+                        if rolling_predictions_arima:
+                            pred_arima = rolling_predictions_arima[-1]
+                        else:
+                            pred_arima = float(original_series.iloc[train_end-1])
+                        rolling_predictions_arima.append(pred_arima)
+                        rolling_predictions_combined.append(pred_arima)
+                        continue
+                    
+                    # Make one-step ahead prediction in stationary space
+                    try:
+                                            
+                        forecast_result = model_fit.forecast(steps=1)
+                        
+                        # Handle different return types from forecast
+                        if isinstance(forecast_result, pd.Series):
+                            pred_stationary = forecast_result.iloc[0]
+                        elif isinstance(forecast_result, np.ndarray):
+                            pred_stationary = forecast_result[0]
+                        else:
+                            pred_stationary = forecast_result
+                                                
+                        # Validate prediction
+                        if pred_stationary is None or (isinstance(pred_stationary, (int, float)) and pred_stationary == 0):
+                            raise ValueError(f"Invalid forecast value: {pred_stationary}")
+                        
+                        if not np.isfinite(float(pred_stationary)):
+                            raise ValueError(f"Non-finite forecast value: {pred_stationary}")
+                            
+                    except Exception as e:
+                        print(f"\tForecast failed at step {i}: {e}")
+                        print(f"\tModel fit parameters: {model_fit.params}")
+                        print(f"\tModel fit AIC: {model_fit.aic}")
+                        if rolling_predictions_arima:
+                            pred_arima = rolling_predictions_arima[-1]
+                        else:
+                            pred_arima = float(original_series.iloc[train_end-1])
+                        rolling_predictions_arima.append(pred_arima)
+                        rolling_predictions_combined.append(pred_arima)
+                        continue
+                    
+                    # If we differenced the data, we need to invert the transformation
+                    if d_value > 0:
+                        try:
+                            # Get the appropriate window of original data for inverting
+                            original_window = original_series.iloc[max(0, train_end-d_value):train_end]
+                            if len(original_window) < d_value:
+                                raise ValueError("Not enough data points for inverting differencing")
+                                
+                            # Invert the differencing
+                            pred_original = self.invert_differencing(
+                                original_window,
+                                np.array([pred_stationary]),
+                                d_value
+                            )
+                            pred_arima = float(pred_original[-1])
+                        except Exception as e:
+                            print(f"\tInverting differencing failed at step {i}: {e}")
+                            if rolling_predictions_arima:
+                                pred_arima = rolling_predictions_arima[-1]
+                            else:
+                                pred_arima = float(original_series.iloc[train_end-1])
+                    else:
+                        pred_arima = float(pred_stationary)
+                    
+                    rolling_predictions_arima.append(pred_arima)
+                    
+                    # GARCH prediction
+                    try:
+                        residuals = model_fit.resid
+                        if isinstance(residuals, pd.Series):
+                            residuals = residuals.values
+                        if len(residuals) < 4:  # Minimum required for GARCH(1,1)
+                            raise ValueError("Not enough residuals for GARCH modeling")
+                            
+                        garch_model = arch.arch_model(residuals, vol='Garch', p=1, q=1)
+                        garch_result = garch_model.fit(disp='off', show_warning=False)
+                        garch_forecast = garch_result.forecast(horizon=1)
+                        garch_variance = float(garch_forecast.variance.values[-1, -1])
+                        
+                        pred_combined = pred_arima + float(np.sqrt(garch_variance))
+                        rolling_predictions_combined.append(pred_combined)
+                    except Exception as e:
+                        print(f"\tGARCH prediction failed at step {i}: {e}")
+                        rolling_predictions_combined.append(pred_arima)
                 
-                if len(accumulated_diffs) == d_value:
-                    diff_data = data["Volume"].iloc[split_idx + t - d_value + 1 : split_idx + t + 1]
-                    yhat_arima_inverted = self.invert_differencing(
-                        diff_data,
-                        accumulated_diffs,
-                        d_value,
-                    )
-                    yhat_combined_inverted = self.invert_differencing(
-                        diff_data,
-                        [yhat_combined] + accumulated_diffs[:-1],
-                        d_value,
-                    )
-                    rolling_predictions_arima.append(yhat_arima_inverted[-1])
-                    rolling_predictions_combined.append(yhat_combined_inverted[-1])
-                    accumulated_diffs.pop(0)
+                except Exception as e:
+                    print(f"\tError in rolling prediction {i}: {e}")
+                    # Use last prediction or original value if no predictions yet
+                    if rolling_predictions_arima:
+                        last_pred_arima = rolling_predictions_arima[-1]
+                        last_pred_combined = rolling_predictions_combined[-1]
+                    else:
+                        last_pred_arima = float(original_series.iloc[max(0, train_end-1)])
+                        last_pred_combined = last_pred_arima
+                    
+                    rolling_predictions_arima.append(last_pred_arima)
+                    rolling_predictions_combined.append(last_pred_combined)
 
-                next_index = original_index[split_idx + t]
-                new_observation = pd.Series(testing_data.iloc[t], index=[next_index])
-                training_data = pd.concat([training_data, new_observation])
+            # Ensure predictions match test data length
+            rolling_predictions_arima = np.array(rolling_predictions_arima)
+            rolling_predictions_combined = np.array(rolling_predictions_combined)
+            print(f"\tRolling predictions for {patient_id} done!")
+            # Ensure test values are properly aligned
+            test_values = original_series.iloc[split_idx:split_idx + len(rolling_predictions_arima)].values
 
-            # Metrics
-            actual_observed_values = data["Volume"].iloc[
-                split_idx : split_idx + len(rolling_predictions_arima)
-            ].values
+            # 6. Calculate performance metrics using aligned data
+            metrics_arima = {
+                'mse': mean_squared_error(test_values, rolling_predictions_arima),
+                'rmse': np.sqrt(mean_squared_error(test_values, rolling_predictions_arima)),
+                'mae': mean_absolute_error(test_values, rolling_predictions_arima)
+            }
             
-            mse_arima = mean_squared_error(actual_observed_values, rolling_predictions_arima)
-            rmse_arima = sqrt(mse_arima)
-            mae_arima = mean_absolute_error(actual_observed_values, rolling_predictions_arima)
-            mse_combined = mean_squared_error(actual_observed_values, rolling_predictions_combined)
-            rmse_combined = sqrt(mse_combined)
-            mae_combined = mean_absolute_error(actual_observed_values, rolling_predictions_combined)
-            print(f"\nRolling Forecast Comparison for patient {patient_id}:")
-            print(f"ARIMA - MSE: {mse_arima:.4f}, RMSE: {rmse_arima:.4f}, MAE: {mae_arima:.4f}")
-            print(f"ARIMA+GARCH - MSE: {mse_combined:.4f}, RMSE: {rmse_combined:.4f}, MAE: {mae_combined:.4f}")
+            metrics_combined = {
+                'mse': mean_squared_error(test_values, rolling_predictions_combined),
+                'rmse': np.sqrt(mean_squared_error(test_values, rolling_predictions_combined)),
+                'mae': mean_absolute_error(test_values, rolling_predictions_combined)
+            }
 
-            
-            # Final model fitting and out-of-sample forecasting
+            # 7. Final forecast using full data
             final_model = ARIMA(stationary_data, order=best_order)
             final_model_fit = final_model.fit()
-            residuals = final_model_fit.resid
-            forecast_steps = self._get_adaptive_forecast_steps(data["Volume"])
-            # ARIMA-only forecast
+            
+            forecast_steps = max(1, int(len(data) * 0.25))
             forecast_arima = final_model_fit.get_forecast(steps=forecast_steps)
             forecast_mean_arima = forecast_arima.predicted_mean
-            stderr_arima = forecast_arima.se_mean
             conf_int_arima = forecast_arima.conf_int()
-            forecast_mean_arima = self.invert_differencing(
-                data["Volume"][-d_value:], forecast_mean_arima, d_value
-            )[: len(conf_int_arima)]
-            (upper_b_arima, lower_b_arima) = self._adjust_confidence_intervals(
-                data["Volume"], forecast_mean_arima, conf_int_arima, d_value
+
+            # 8. Invert differencing for final forecasts if needed
+            if d_value > 0:
+                forecast_mean_arima = self.invert_differencing(
+                    original_series[-d_value:],
+                    forecast_mean_arima,
+                    d_value
+                )
+                lower_b_arima, upper_b_arima = self._adjust_confidence_intervals(
+                    original_series,
+                    forecast_mean_arima,
+                    conf_int_arima,
+                    d_value
+                )
+            else:
+                lower_b_arima = conf_int_arima.iloc[:, 0]
+                upper_b_arima = conf_int_arima.iloc[:, 1]
+
+            print(f"\tFinal ARIMA forecast done.")
+            # 9. Generate GARCH forecasts
+            try:
+                residuals = final_model_fit.resid
+                # Ensure residuals are properly aligned
+                if isinstance(residuals, pd.Series):
+                    residuals = residuals.values
+                
+                garch_model = arch.arch_model(residuals, vol='Garch', p=1, q=1)
+                garch_result = garch_model.fit(disp='off')
+                garch_forecast = garch_result.forecast(horizon=forecast_steps)
+                garch_variance = garch_forecast.variance.values[-1, :forecast_steps]
+                
+                # Ensure arrays are the same length before combining
+                min_len = min(len(forecast_mean_arima), len(garch_variance))
+                forecast_mean_arima = forecast_mean_arima[:min_len]
+                garch_variance = garch_variance[:min_len]
+                
+                # Combine ARIMA and GARCH forecasts
+                forecast_combined = forecast_mean_arima + np.sqrt(garch_variance)
+                
+                # Calculate combined confidence intervals
+                stderr_combined = np.sqrt(forecast_arima.se_mean[:min_len]**2 + garch_variance)
+                lower_b_combined = forecast_combined - 1.96 * stderr_combined
+                upper_b_combined = forecast_combined + 1.96 * stderr_combined
+                
+                # Ensure all arrays are the same length
+                lower_b_arima = lower_b_arima[:min_len]
+                upper_b_arima = upper_b_arima[:min_len]
+                
+            except Exception as e:
+                print(f"\tGARCH fitting failed: {e}")
+                forecast_combined = forecast_mean_arima
+                lower_b_combined = lower_b_arima
+                upper_b_combined = upper_b_arima
+            
+            print(f"\tFinal GARCH forecast done.")
+
+            # 10. Save results and visualization
+            arima_model_metrics = self._collect_model_metrics(final_model_fit)
+            garch_model_metrics = self._collect_model_metrics(garch_result)
+            combined_metrics = self._collect_combined_metrics(
+                arima_model_metrics, 
+                garch_model_metrics, 
+                len(data)
             )
-            print(f"\tModel fit for patient {patient_id}.")
             
-
-            # ARIMA+GARCH forecast
-            model_garch = arch.arch_model(residuals, vol="Garch", p=p_value, q=q_value) 
-            result_garch = model_garch.fit()
-            forecast_garch = result_garch.forecast(horizon=forecast_steps)
-            forecast_garch_var = forecast_garch.variance.values[-1, :]
-            inverted_garch_var = self.invert_differencing(data["Volume"][-d_value:], forecast_garch_var, d_value)[:len(forecast_mean_arima)]
-            forecast_combined = forecast_mean_arima + np.sqrt(inverted_garch_var)
-            stderr_combined = np.sqrt(stderr_arima**2 + forecast_garch_var)
-            lower_b_comb = forecast_combined - 1.96 * stderr_combined
-            upper_b_comb = forecast_combined + 1.96 * stderr_combined
-
-            # Information criteria  
-            aic_arima = final_model_fit.aic
-            bic_arima = final_model_fit.bic
-            hqic_arima = final_model_fit.hqic
-            aic_garch = result_garch.aic
-            bic_garch = result_garch.bic
-            aic_combined = aic_arima + aic_garch
-            bic_combined = bic_arima + bic_garch
-
-            # Estimate HQIC for combined model
-            # HQIC = -2 * log-likelihood + 2 * k * log(log(n))
-            # where k is the number of parameters and n is the sample size
-            n = len(data)
-            k_arima = final_model_fit.df_model
-            k_garch = result_garch.num_params
-            k_combined = k_arima + k_garch
-            log_likelihood_combined = final_model_fit.llf + result_garch.loglikelihood
-            hqic_combined = -2 * log_likelihood_combined + 2 * k_combined * np.log(np.log(n))
-            
-            if arima_cfg.DIAGNOSTICS:
-                self._diagnostics(final_model_fit, patient_id)
-                # print(
-                #     f"ARIMA model summary for patient {patient_id}:\n{final_model_fit.summary()}"
-                # )
-                # Plot residual errors
-                self.generate_plot(residuals, "residuals", patient_id)
-                self.generate_plot(residuals, "density", patient_id)
-                print(residuals.describe())
-                print(f"AIC: {aic_arima}, BIC: {bic_arima}, HQIC: {hqic_arima}")
-            comparison_results = {
-                'comparison':{
-                    "ARIMA": {
-                        "rolling_predictions": rolling_predictions_arima,
-                        "rolling_mse": mse_arima,
-                        "rolling_rmse": rmse_arima,
-                        "rolling_mae": mae_arima,
-                        "final_forecast": forecast_mean_arima.tolist(),
-                        "stderr": stderr_arima.tolist(),
-                        "conf_int_lower": lower_b_arima.tolist(),
-                        "conf_int_upper": upper_b_arima.tolist(),
-                        "aic": aic_arima,
-                        "bic": bic_arima,
-                        "hqic": hqic_arima
-                    },
-                    "ARIMA+GARCH": {
-                        "rolling_predictions": rolling_predictions_combined,
-                        "rolling_mse": mse_combined,
-                        "rolling_rmse": rmse_combined,
-                        "rolling_mae": mae_combined,
-                        "final_forecast": forecast_combined.tolist(),
-                        "stderr": stderr_combined.tolist(),
-                        "conf_int_lower": lower_b_comb.tolist(),
-                        "conf_int_upper": upper_b_comb.tolist(),
-                        "aic": aic_combined,
-                        "bic": bic_combined,
-                        "hqic": hqic_combined
-                    }
-                },
-                "validation_data" : actual_observed_values,
+            # Collect all results
+            results = {
+                'arima': self._collect_forecast_results(
+                    rolling_predictions_arima,
+                    metrics_arima,
+                    forecast_mean_arima,
+                    forecast_arima.se_mean,
+                    lower_b_arima,
+                    upper_b_arima,
+                    arima_model_metrics
+                ),
+                'combined': self._collect_forecast_results(
+                    rolling_predictions_combined,
+                    metrics_combined,
+                    forecast_combined,
+                    stderr_combined,
+                    lower_b_combined,
+                    upper_b_combined,
+                    combined_metrics
+                ),
+                'metadata': {
+                    'split_idx': split_idx,
+                    'forecast_steps': forecast_steps,
+                    'original_data': data['Volume'].tolist(),
+                    'validation_data': original_test.tolist() if isinstance(original_test, (pd.Series, np.ndarray)) else original_test,  # Convert to list if needed,
+                    'timestamps': data['Age'].tolist()
                 }
-            # Save forecasts plots
-            self._save_arima_fig(
-                data,
-                rolling_predictions_arima,
-                rolling_predictions_combined,
-                forecast_mean_arima,
-                forecast_combined,
-                forecast_steps,
-                lower_b_arima,
-                upper_b_arima,
-                lower_b_comb,
-                upper_b_comb,
-                patient_id,
-                split_idx,
-            )
-            print("Figures with forecast saved!")
-
+            }
             
-            # Saving to df
-            self.cohort_summary[patient_id] = comparison_results
-            metrics_arima = {'aic': aic_arima, 'bic': bic_arima, 'hqic': hqic_arima}
-            metrics_combined = {'aic': aic_combined, 'bic': bic_combined, 'hqic': hqic_combined}
-            self.update_cohort_metrics(metrics_arima, metrics_combined)
+            # Save all results
+            self._save_results(patient_id, data, results)
 
-        except (IOError, ValueError) as error:
-            print("An error occurred:", str(error))
+            print(f"\nRolling Forecast Comparison for patient {patient_id}:")
+            print(f"ARIMA - MSE: {metrics_arima['mse']:.4f}, RMSE: {metrics_arima['rmse']:.4f}, MAE: {metrics_arima['mae']:.4f}")
+            print(f"ARIMA+GARCH - MSE: {metrics_combined['mse']:.4f}, RMSE: {metrics_combined['rmse']:.4f}, MAE: {metrics_combined['mae']:.4f}")
+
+
+
+        except Exception as e:
+            print(f"Failed to process {patient_id}: {str(e)}")
+            return None
 
     ###########################
     # ARIMA variables methods #
     ###########################
 
-    def _make_series_stationary(
-        self,
-        data,
-        max_diff=3,
-    ):
-        """
-        Returns the differenced series until it becomes stationary or reaches max
-        allowed differencing.
-        """
+    def _make_series_stationary(self, data, max_diff=3):
+        """Returns the differenced series until it becomes stationary."""
         volume_data = data["Volume"]
-        d_value = 0  # Track differencing order
-        result = adfuller(volume_data)
-        p_value = result[1]
-
-        while p_value >= 0.05 and d_value < max_diff:
-            volume_data = volume_data.diff().dropna()
+        
+        # Check for constant series
+        if volume_data.std() < 1e-10:
+            return volume_data, 0
+        
+        d_value = 0
+        try:
             result = adfuller(volume_data)
             p_value = result[1]
-            d_value += 1
+        except ValueError as e:
+            if "constant" in str(e):
+                return volume_data, 0
+            raise e
+
+        while p_value >= 0.05 and d_value < max_diff:
+            try:
+                volume_data = volume_data.diff().dropna()
+                if len(volume_data) < 2:  # Check if too many values were lost
+                    break
+                result = adfuller(volume_data)
+                p_value = result[1]
+                d_value += 1
+            except ValueError as e:
+                if "constant" in str(e):
+                    break
+                raise e
 
         return volume_data, d_value
 
@@ -915,65 +1005,58 @@ class ArimaPrediction:
         """Saves the diagnostics plot."""
         model_fit.plot_diagnostics(figsize=(12, 8))
         plt.savefig(
-            os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_diagnostics_plot.png")
-        )
+            os.path.join(arima_cfg.OUTPUT_DIR, f"{patient_id}_diagnostics_plot.png"))
         plt.close()
 
     def save_forecasts_to_csv(self):
         """Save the forecasts for both ARIMA and ARIMA+GARCH to a .csv file."""
         forecast_df_list = []
-        for patient_id, metrics in self.cohort_summary.items():
-            comparison = metrics.get('comparison', {})
-            arima_metrics = comparison.get('ARIMA', {})
-            combined_metrics = comparison.get('ARIMA+GARCH', {})
-
+        for patient_id, results in self.cohort_summary.items():
+            arima_results = results['arima']
+            combined_results = results['combined']
+            
             forecast_df = pd.DataFrame({
                 'Patient_ID': [patient_id],
-                'ARIMA_Forecast': [arima_metrics.get('final_forecast', [])],
-                'ARIMA_Stderr': [arima_metrics.get('stderr', [])],
-                'ARIMA_Lower_CI': [arima_metrics.get('conf_int_lower', [])],
-                'ARIMA_Upper_CI': [arima_metrics.get('conf_int_upper', [])],
-                'ARIMA_Rolling_Predictions': [arima_metrics.get('rolling_predictions', [])],
-                'ARIMA_MSE': [arima_metrics.get('rolling_mse', None)],
-                'ARIMA_RMSE': [arima_metrics.get('rolling_rmse', None)],
-                'ARIMA_MAE': [arima_metrics.get('rolling_mae', None)],
-                'ARIMA_AIC': [arima_metrics.get('aic', None)],
-                'ARIMA_BIC': [arima_metrics.get('bic', None)],
-                'ARIMA_HQIC': [arima_metrics.get('hqic', None)],
-                'ARIMA+GARCH_Forecast': [combined_metrics.get('final_forecast', [])],
-                'ARIMA+GARCH_Stderr': [combined_metrics.get('stderr', [])],
-                'ARIMA+GARCH_Lower_CI': [combined_metrics.get('conf_int_lower', [])],
-                'ARIMA+GARCH_Upper_CI': [combined_metrics.get('conf_int_upper', [])],
-                'ARIMA+GARCH_Rolling_Predictions': [combined_metrics.get('rolling_predictions', [])],
-                'ARIMA+GARCH_MSE': [combined_metrics.get('rolling_mse', None)],
-                'ARIMA+GARCH_RMSE': [combined_metrics.get('rolling_rmse', None)],
-                'ARIMA+GARCH_MAE': [combined_metrics.get('rolling_mae', None)],
-                'ARIMA+GARCH_AIC': [combined_metrics.get('aic', None)],
-                'ARIMA+GARCH_BIC': [combined_metrics.get('bic', None)],
-                'ARIMA+GARCH_HQIC': [combined_metrics.get('hqic', None)],
-                'Validation_Data': [metrics.get('validation_data', [])]
+                'ARIMA_Rolling_Predictions': [arima_results['rolling_predictions']],
+                'ARIMA_MSE': [arima_results['rolling_metrics']['mse']],
+                'ARIMA_RMSE': [arima_results['rolling_metrics']['rmse']],
+                'ARIMA_MAE': [arima_results['rolling_metrics']['mae']],
+                'ARIMA_Forecast': [arima_results['forecast']['mean']],
+                'ARIMA_Lower_CI': [arima_results['forecast']['conf_int_lower']],
+                'ARIMA_Upper_CI': [arima_results['forecast']['conf_int_upper']],
+                'ARIMA_AIC': [arima_results['model_metrics']['aic']],
+                'ARIMA_BIC': [arima_results['model_metrics']['bic']],
+                'ARIMA_HQIC': [arima_results['model_metrics']['hqic']],
+                'ARIMA+GARCH_Rolling_Predictions': [combined_results['rolling_predictions']],
+                'ARIMA+GARCH_MSE': [combined_results['rolling_metrics']['mse']],
+                'ARIMA+GARCH_RMSE': [combined_results['rolling_metrics']['rmse']],
+                'ARIMA+GARCH_MAE': [combined_results['rolling_metrics']['mae']],
+                'ARIMA+GARCH_Forecast': [combined_results['forecast']['mean']],
+                'ARIMA+GARCH_Lower_CI': [combined_results['forecast']['conf_int_lower']],
+                'ARIMA+GARCH_Upper_CI': [combined_results['forecast']['conf_int_upper']],
+                'ARIMA+GARCH_AIC': [combined_results['model_metrics']['aic']],
+                'ARIMA+GARCH_BIC': [combined_results['model_metrics']['bic']],
+                'ARIMA+GARCH_HQIC': [combined_results['model_metrics']['hqic']],
+                'Original_Data': [results['metadata']['original_data']],
+                'Validation_Data': [results['metadata']['validation_data']],
+                'Timestamps': [results['metadata']['timestamps']]
             })
-            
             forecast_df_list.append(forecast_df)
 
-        if not forecast_df_list:
-            print("Warning: No forecasts to save. forecast_df_list is empty.")
-            return
-
-        try:
-            # Concatenate all individual DataFrames into one
+        if forecast_df_list:
             all_forecasts_df = pd.concat(forecast_df_list, ignore_index=True)
-            filename = os.path.join(
-                arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.csv"
-            )
+            filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.csv")
             all_forecasts_df.to_csv(filename, index=False)
-            print(f"Forecasts saved to {filename}")
-        except ExceptionGroup as e:
-            print(f"Error in save_forecasts_to_csv: {str(e)}")
-            print(f"Number of DataFrames in forecast_df_list: {len(forecast_df_list)}")
-            for i, df in enumerate(forecast_df_list):
-                print(f"DataFrame {i} shape: {df.shape}")
-                
+            
+            # Also save as pickle for easier loading later
+            pickle_filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_forecasts.pkl")
+            with open(pickle_filename, 'wb') as f:
+                pickle.dump(all_forecasts_df, f)
+            
+            print(f"Forecasts saved to {filename} and {pickle_filename}")
+        else:
+            print("Warning: No forecasts to save.")
+
     def update_cohort_metrics(self, metrics_arima, metrics_combined):
         """Updates the cohort metrics for both ARIMA and ARIMA+GARCH models."""
         for model, metrics in [('arima', metrics_arima), ('arimagarch', metrics_combined)]:
@@ -984,7 +1067,7 @@ class ArimaPrediction:
                 self.cohort_metrics[key].append(metrics[metric])
 
     def print_and_save_cohort_summary(self):
-        """Calculates and prints/saves cohort-wide summary statistics for both ARIMA and ARIMA+GARCH models."""
+        """Calculates and prints/saves cohort-wide summary statistics."""
         summary_data = []
         
         # List of metrics and models
@@ -1015,13 +1098,27 @@ class ArimaPrediction:
         if not summary_df.empty:
             print("\nCohort Summary Statistics:")
             print(summary_df.to_string(index=False))
-        
-            # Save the summary to a CSV file
-            filename = os.path.join(
-                arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.csv"
-            )
-            summary_df.to_csv(filename, index=False)
-            print(f"\nCohort summary saved to: {filename}")
+            
+            # Save the summary DataFrame
+            if not summary_df.empty:
+                # Save as CSV
+                csv_filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.csv")
+                summary_df.to_csv(csv_filename, index=False)
+                
+                # Save as pickle
+                pickle_filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_cohort_summary.pkl")
+                with open(pickle_filename, 'wb') as f:
+                    pickle.dump(summary_df, f)
+                
+                # Save full cohort data
+                cohort_filename = os.path.join(arima_cfg.OUTPUT_DIR, f"{arima_cfg.COHORT}_full_results.pkl")
+                with open(cohort_filename, 'wb') as f:
+                    pickle.dump(self.cohort_summary, f)
+                
+                print(f"\nResults saved to:")
+                print(f"- CSV: {csv_filename}")
+                print(f"- Summary pickle: {pickle_filename}")
+                print(f"- Full results pickle: {cohort_filename}")
         else:
             print("No summary data available.")
 
@@ -1050,8 +1147,163 @@ class ArimaPrediction:
             os.makedirs(patient_folder_path)
         return patient_folder_path
 
+    def _collect_model_metrics(self, model_fit):
+        """
+        Collect basic model metrics for both ARIMA and GARCH models.
+        
+        Parameters:
+            model_fit: Either ARIMAResults or ARCHModelResult object
+        """
+        if hasattr(model_fit, 'aic'):  # Common attribute for both
+            metrics = {
+                'aic': model_fit.aic,
+                'bic': model_fit.bic,
+            }
+            
+            # ARIMA specific attributes
+            if hasattr(model_fit, 'df_model'):
+                metrics.update({
+                    'hqic': getattr(model_fit, 'hqic', None),
+                    'df_model': model_fit.df_model,
+                    'llf': model_fit.llf
+                })
+            # GARCH specific attributes
+            else:
+                metrics.update({
+                    'hqic': getattr(model_fit, 'hqic', None),
+                    'df_model': model_fit.num_params,  # GARCH uses num_params instead of df_model
+                    'llf': model_fit.loglikelihood  # GARCH uses loglikelihood instead of llf
+                })
+            
+            return metrics
+        else:
+            # Return default values if model doesn't have these attributes
+            return {
+                'aic': None,
+                'bic': None,
+                'hqic': None,
+                'df_model': 0,
+                'llf': 0
+            }
 
-if __name__ == "__main__":    
+    def _collect_combined_metrics(self, arima_metrics, garch_metrics, n_samples):
+        """
+        Compute combined metrics for ARIMA+GARCH.
+        
+        Parameters:
+            arima_metrics: Dict of ARIMA model metrics
+            garch_metrics: Dict of GARCH model metrics
+            n_samples: Number of samples in the dataset
+        
+        Returns:
+            Dict of combined model metrics
+        """
+        # Start with basic combined metrics
+        combined = {
+            'aic': arima_metrics['aic'] + garch_metrics['aic'],
+            'bic': arima_metrics['bic'] + garch_metrics['bic'],
+        }
+        
+        # Calculate combined HQIC if we have all necessary components
+        if all(metric is not None for metric in [arima_metrics['df_model'], 
+                                               garch_metrics['df_model'], 
+                                               arima_metrics['llf'], 
+                                               garch_metrics['llf']]):
+            k_combined = arima_metrics['df_model'] + garch_metrics['df_model']
+            llf_combined = arima_metrics['llf'] + garch_metrics['llf']
+            combined['hqic'] = -2 * llf_combined + 2 * k_combined * np.log(np.log(n_samples))
+        else:
+            combined['hqic'] = None
+        
+        # Add additional combined metrics
+        combined.update({
+            'df_model': arima_metrics['df_model'] + garch_metrics['df_model'],
+            'llf': arima_metrics['llf'] + garch_metrics['llf']
+        })
+        
+        return combined
+
+    def _collect_forecast_results(self, predictions, metrics, forecast_mean, stderr, lower_bounds, upper_bounds, model_metrics):
+        """
+        Collect all results for a single model and ensure they're JSON serializable.
+        
+        Parameters should be numpy arrays, pandas Series, or basic Python types.
+        Returns a dictionary with all values converted to lists or basic Python types.
+        """
+        def to_serializable(obj):
+            """Convert an object to a JSON serializable format."""
+            if isinstance(obj, (pd.Series, pd.DataFrame)):
+                return obj.tolist()
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, (np.float32, np.float64)):
+                return float(obj)
+            elif isinstance(obj, (np.int32, np.int64)):
+                return int(obj)
+            elif isinstance(obj, dict):
+                return {k: to_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [to_serializable(item) for item in obj]
+            return obj
+
+        return {
+            "rolling_predictions": to_serializable(predictions),
+            "rolling_metrics": {
+                "mse": to_serializable(metrics['mse']),
+                "rmse": to_serializable(metrics['rmse']),
+                "mae": to_serializable(metrics['mae'])
+            },
+            "forecast": {
+                "mean": to_serializable(forecast_mean),
+                "stderr": to_serializable(stderr),
+                "conf_int_lower": to_serializable(lower_bounds),
+                "conf_int_upper": to_serializable(upper_bounds)
+            },
+            "model_metrics": to_serializable(model_metrics)
+        }
+
+    def _save_results(self, patient_id, data, results_dict, save_plots=True):
+        """Save all results for a patient."""
+        # Save to class attribute for later use
+        self.cohort_summary[patient_id] = results_dict
+        
+        # Create patient directory if it doesn't exist
+        patient_folder_path = self.ensure_patient_folder_exists(patient_id)
+        
+        # Save patient results to JSON
+        results_file = os.path.join(patient_folder_path, f"{patient_id}_results.json")
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(results_dict, f, indent=4, cls=NumpyEncoder)
+        
+        # Save patient results to pickle (preserves numpy arrays)
+        pickle_file = os.path.join(patient_folder_path, f"{patient_id}_results.pkl")
+        with open(pickle_file, 'wb') as f:
+            pickle.dump(results_dict, f)
+        
+        # Update cohort metrics
+        self.update_cohort_metrics(
+            results_dict['arima']['model_metrics'],
+            results_dict['combined']['model_metrics']
+        )
+        
+        # Save plots if requested
+        if save_plots:
+            self._save_arima_fig(
+                data=data,
+                rolling_predictions_arima=results_dict['arima']['rolling_predictions'],
+                rolling_predictions_combined=results_dict['combined']['rolling_predictions'],
+                forecast_mean_arima=results_dict['arima']['forecast']['mean'],
+                forecast_combined=results_dict['combined']['forecast']['mean'],
+                forecast_steps=len(results_dict['arima']['forecast']['mean']),
+                lower_bounds_arima=results_dict['arima']['forecast']['conf_int_lower'],
+                upper_bounds_arima=results_dict['arima']['forecast']['conf_int_upper'],
+                lower_bounds_combined=results_dict['combined']['forecast']['conf_int_lower'],
+                upper_bounds_combined=results_dict['combined']['forecast']['conf_int_upper'],
+                patient_id=patient_id,
+                split_idx=results_dict['metadata']['split_idx']
+            )
+
+if __name__ == "__main__":
     warnings.filterwarnings("ignore")
 
     arima_prediction = ArimaPrediction()
