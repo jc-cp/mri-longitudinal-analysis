@@ -88,12 +88,8 @@ def display_image_grid(image_files, width=400):
     
     # Display each image in a centered layout, one below the other
     for img_path in image_files:
-        # Create a 3-column layout with the middle column wider for centering
-        col1, col2, col3 = st.columns([1, 2, 1])
-        
-        # Display the image in the center column
-        with col2:
-            st.image(img_path, caption=os.path.basename(img_path), width=width)
+        # Use full container width for larger images
+        st.image(img_path, caption=os.path.basename(img_path), use_container_width=True)
 
 def categorize_images(image_files):
     """Categorize images based on filename patterns."""

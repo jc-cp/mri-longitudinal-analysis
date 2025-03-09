@@ -115,11 +115,20 @@ with cols[0]:
                 st.rerun()
         
         # Display step illustration image if available
-        if "illustration" in step_info and os.path.exists(step_info["illustration"]):
-            illustration_width = step_info.get("illustration_width", 500)
-            col1, col2, col3 = st.columns([1, 3, 1])
-            with col2:  # Use the middle column to center the image
-                st.image(step_info["illustration"], width=illustration_width)
+        if "illustration" in step_info:
+            if isinstance(step_info["illustration"], list):
+                # Handle multiple illustrations
+                illustration_width = step_info.get("illustration_width", 500)
+                for illustration in step_info["illustration"]:
+                    if os.path.exists(illustration):
+                        # Use full container width for larger images
+                        st.image(illustration, width=illustration_width, use_container_width=True)
+            else:
+                # Handle single illustration
+                if os.path.exists(step_info["illustration"]):
+                    illustration_width = step_info.get("illustration_width", 500)
+                    # Use full container width for larger images
+                    st.image(step_info["illustration"], width=illustration_width, use_container_width=True)
         
         # Display output visualizations if available
         utils.display_step_output(current_step)

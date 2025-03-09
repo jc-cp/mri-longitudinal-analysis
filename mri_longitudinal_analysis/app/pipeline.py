@@ -83,8 +83,8 @@ PIPELINE_STEPS = [
         "example_outputs": [
             os.path.join(images_dir, "output/trajectory_example.png"),
         ],
-        "example_width": 600,
-        "output_width": 600,
+        "example_width": 900,
+        "output_width": 900,
     },
     {
         "name": "Step 1: Joint Cohort Creation",
@@ -100,6 +100,8 @@ PIPELINE_STEPS = [
         - Feature significance and p-values
         """,
         "output_dir": "01_cohort_data",
+        "illustration": os.path.join(images_dir, "step/cohort_creation.png"),
+        "illustration_width": 1600,
         "example_outputs": [
             os.path.join(images_dir, "output/cohort_details.png"),
             os.path.join(images_dir, "output/stats.png")
@@ -108,74 +110,62 @@ PIPELINE_STEPS = [
         "output_width": 700,
     },
     {
-        "name": "Step 2: Trajectory Classification",
+        "name": "Step 2: Trajectories & Classification",
         "script": "02_trajectories_classification.py",
         "description": """
-        **Trajectory Classification**
+        **Trajectories & Classification**
         
-        This step classifies tumor growth trajectories based on volumetric changes.
-        It categorizes patients as progressors or non-progressors based on predefined
-        criteria and visualizes the different trajectory patterns.
+        This step classifies tumor growth trajectories based on volumetric changes into three different categories:
+        - Stable
+        - Progressing
+        - Non-progressing
+        
+        It uses two different endpoints to classify the trajectories:
+        - Volumetric: considering if the volume grew or shrank +/-25\% since the initial scan.
+        - Composite: considering the voluemtric endpoint and whether treatment was initiated or not.
         
         **Outputs:**
-        - Classification trajectory plots
-        - Progression status distribution
-        - Time-to-progression analysis
+        - Classification of trajectories
+        - Classification plots
+        - Progression status
         """,
         "output_dir": "trajectory_plots",
-        "illustration": os.path.join(images_dir, "trajectory_classification.png"),
+        "illustration": os.path.join(images_dir, "step/trajectories_anaylsis.png"),
+        "illustration_width": 1200,
         "example_outputs": [
-            os.path.join(images_dir, "progression_example.png"),
-            os.path.join(images_dir, "time_to_progression_example.png")
-        ]
+            os.path.join(images_dir, "output/trajectories.png"),
+            os.path.join(images_dir, "output/progression_status.png")
+        ],
+        "example_width": 700,
+        "output_width": 700,
     },
     {
-        "name": "Step 3: Logistic Regression & Correlations",
-        "script": "03_lr_and_correlations.py",
-        "description": """
-        **Logistic Regression & Correlations Analysis**
-        
-        This step performs statistical analysis to identify correlations between 
-        clinical variables and tumor progression. It includes univariate and 
-        multivariate logistic regression to identify risk factors.
-        
-        **Outputs:**
-        - Forest plots for univariate and multivariate analyses
-        - Correlation heatmaps
-        - Statistical test visualizations
-        """,
-        "output_dir": "correlation_plots",
-        "illustration": os.path.join(images_dir, "correlation_analysis.png"),
-        "example_outputs": [
-            os.path.join(images_dir, "forest_plot_example.png"),
-            os.path.join(images_dir, "correlation_heatmap_example.png")
-        ]
-    },
-    {
-        "name": "Step 4: Time-to-Event Analysis",
+        "name": "Step 3: Time-to-Event Analysis",
         "script": "04_time_to_event.py",
         "description": """
         **Time-to-Event Analysis**
         
         This step performs survival analysis using Kaplan-Meier curves and Cox 
         proportional hazards models to analyze time to progression or treatment.
-        It identifies factors that influence progression timing.
+        It identifies factors that influence progression timing in a univariate and multivariate analysis.
         
         **Outputs:**
         - Kaplan-Meier survival curves
         - Cox hazard ratio forest plots
-        - Time-to-event distribution plots
         """,
         "output_dir": "survival_plots",
-        "illustration": os.path.join(images_dir, "survival_analysis.png"),
+        "illustration": os.path.join(images_dir, "step/survival_and_time_to_event.png"),
+        "illustration_width": 600,
         "example_outputs": [
-            os.path.join(images_dir, "kaplan_meier_example.png"),
-            os.path.join(images_dir, "cox_hazard_example.png")
-        ]
+            os.path.join(images_dir, "output/kaplan_meier_curves.png"),
+            os.path.join(images_dir, "output/cox_model.png"),
+        ],
+        "example_width": 700,
+        "output_width": 700,
     },
     {
-        "name": "Step 5: Volumetric Forecasting",
-        "script": "05_volumetric_forecasting.py",
+        "name": "Step 4: Volumetric Forecasting",
+        "script": "06_forecasting_evaluation.py",
         "description": """
         **Volumetric Forecasting**
         
@@ -189,11 +179,14 @@ PIPELINE_STEPS = [
         - Forecasted volume plots
         """,
         "output_dir": "forecasting_plots",
-        "illustration": os.path.join(images_dir, "forecasting.png"),
+        "illustration": [os.path.join(images_dir, "step/volumetric_forecasting.png"),
+                        os.path.join(images_dir, "step/figure5_A.png")],
         "example_outputs": [
-            os.path.join(images_dir, "forecast_example.png"),
-            os.path.join(images_dir, "prediction_accuracy_example.png")
-        ]
+            os.path.join(images_dir, "output/figure5_B.png"),
+            os.path.join(images_dir, "output/figure5_C.png")
+        ],
+        "example_width": 700,
+        "output_width": 700,
     }
 ]
 
